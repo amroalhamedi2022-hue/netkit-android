@@ -37,6 +37,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -415,6 +417,7 @@ private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop:
     var password by remember { mutableStateOf(core.hotspot.preferredPassword) }
     var band by remember { mutableStateOf(core.hotspot.preferredBand) }
     var feedback by remember { mutableStateOf("") }
+    var revealPassword by remember { mutableStateOf(false) }
     Text("🫧 Smart Hotspot", fontSize = 25.sp, fontWeight = FontWeight.Bold)
     MutedText("أنشئ شبكة نقل محلية من التطبيق نفسه بدون مشاركة إنترنت.")
     Spacer(Modifier.height(15.dp))
@@ -423,7 +426,10 @@ private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop:
         Spacer(Modifier.height(10.dp))
         if (core.hotspot.state.active) {
             Text("SSID: ${core.hotspot.state.ssid}", color = Color.White)
-            Text("Password: ${core.hotspot.state.password}", color = muted)
+            Text("Password: " + if (revealPassword) core.hotspot.state.password else "••••••••", color = muted)
+            OutlinedButton(onClick = { revealPassword = !revealPassword }) {
+                Text(if (revealPassword) "إخفاء كلمة المرور" else "إظهار كلمة المرور")
+            }
             Spacer(Modifier.height(7.dp))
             MutedText("النطاق المحدد في إعدادات Android: ${core.hotspot.state.configuredBand}")
             MutedText("قد يختلف النطاق الفعلي الذي يستخدمه الجهاز. هذا ليس قياسًا لسرعة Wi-Fi.")
@@ -446,6 +452,12 @@ private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop:
                 enabled = !core.hotspot.state.active && !core.hotspot.state.starting)
             OutlinedTextField(password, { password = it.take(63) }, label = { Text("WPA2 • كلمة المرور (8–63)") },
                 modifier = Modifier.fillMaxWidth(), singleLine = true,
+                visualTransformation = if (revealPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    TextButton(onClick = { revealPassword = !revealPassword }) {
+                        Text(if (revealPassword) "إخفاء" else "إظهار")
+                    }
+                },
                 enabled = !core.hotspot.state.active && !core.hotspot.state.starting)
             Text("النطاق المفضّل", color = Color.White)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
