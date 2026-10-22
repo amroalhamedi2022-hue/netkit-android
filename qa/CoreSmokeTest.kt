@@ -30,8 +30,23 @@ fun main(args: Array<String>) {
     val unknown = ByteArray(88_888) { (it % 247).toByte() }
     val unknownId = "ea54390d-ec27-43bf-acad-5131494470f1"
     val uploaded = mutableMapOf<String, ByteArray>()
+    val folderId = "bd8819ba-cafb-45b4-ae70-3ec73580d78d"
+    val nestedId = "72c9c931-e477-4a92-a1e7-78b79b85130d"
     var uploadsAllowed = true
-    val store = object : ShareStorage {
+    val store = object : ShareStorage, DirectoryShareStorage {
+        override fun hasSharedDirectory() = true
+        override fun browseDirectory(directoryId: String, offset: Int, limit: Int): ShareBrowsePage {
+            val rows = when (directoryId) {
+                "root" -> listOf(ShareBrowseEntry(folderId, "Photos", true, null))
+                folderId -> listOf(ShareBrowseEntry(nestedId, "image.png", false, initial.size.toLong()))
+                else -> emptyList()
+            }
+            return ShareBrowsePage(rows.drop(offset).take(limit), null)
+        }
+        override fun directoryItem(id: String): ShareItem? =
+            if (id == nestedId) ShareItem(nestedId, "image.png", initial.size.toLong()) else null
+        override fun openDirectoryItem(id: String): SharedStream? =
+            if (id == nestedId) SharedStream(ByteArrayInputStream(initial), initial.size.toLong()) else null
         override fun items() = listOf(ShareItem(itemId, "shared.txt", initial.size.toLong()), ShareItem(unknownId, "unknown.bin", null))
         override fun open(id: String) = when (id) {
             itemId -> SharedStream(ByteArrayInputStream(initial), initial.size.toLong())
@@ -83,6 +98,14 @@ fun main(args: Array<String>) {
         check(request(root + "/").first == 200)
         val listing = request(root + "/list")
         check(listing.first == 200 && String(listing.second).contains("shared.txt"))
+        val folderRoot = request(root + "/browse?dir=root")
+        check(folderRoot.first == 200 && String(folderRoot.second).contains("Photos"))
+        val folderFiles = request(root + "/browse?dir=$folderId")
+        check(folderFiles.first == 200 && String(folderFiles.second).contains("image.png"))
+        check(request(root + "/browse-file/$nestedId").second.contentEquals(initial))
+        check(request(root + "/browse-file/$nestedId", range = "bytes=3-8").first == 206)
+        check(request(root + "/browse-file/$folderId").first == 404)
+        check(request("https://127.0.0.1:${engine.port}/s/guess/browse").first == 404)
         val dl = request(root + "/file/$itemId")
         check(dl.first == 200 && dl.second.contentEquals(initial))
         // Resumable downloads: known-length SAF streams support single byte ranges.
