@@ -109,18 +109,21 @@ fun NetKitApp(
         if (uri != null) {
             runCatching {
                 context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                onStopShare()
                 core.shareDirectory(uri)
             }
         }
     }
     val allFilesPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
+            onStopShare()
             runCatching { core.shareSharedStorage() }
         }
     }
     val requestSharedStorage = {
         if (Build.VERSION.SDK_INT >= 30) {
             if (Environment.isExternalStorageManager()) {
+                onStopShare()
                 runCatching { core.shareSharedStorage() }
             } else {
                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
@@ -154,7 +157,7 @@ fun NetKitApp(
                             chooseFolder = { directoryPicker.launch(null) },
                             chooseSharedFolder = { sharedFolderPicker.launch(null) },
                             shareAll = requestSharedStorage,
-                            stopSharedFolder = { core.stopDirectoryShare() },
+                            stopSharedFolder = { onStopShare(); core.stopDirectoryShare() },
                             startShare = onStartShare, stopShare = onStopShare,
                             copy = { copy(context, it) }, shareLink = { shareLink(context, it) })
                         2 -> DiagnosticsScreen(core, palette)
@@ -163,7 +166,7 @@ fun NetKitApp(
                         else -> SettingsScreen(core, palette,
                             selectFolder = { sharedFolderPicker.launch(null) },
                             allStorage = requestSharedStorage,
-                            stopFolder = { core.stopDirectoryShare() },
+                            stopFolder = { onStopShare(); core.stopDirectoryShare() },
                             chooseReceive = { directoryPicker.launch(null) },
                             changeTheme = { tab = 4 },
                             hotspotSettings = { tab = 3 })
