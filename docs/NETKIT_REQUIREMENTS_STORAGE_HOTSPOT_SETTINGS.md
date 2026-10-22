@@ -11,7 +11,7 @@ Approved 2026-10-22. This amendment is **binding** and expands the M2/M4/M7 crit
 
 ## Local hotspot configuration
 1. User can set, persist, and validate preferred SSID, WPA2 password and **Auto / 2.4 GHz / 5 GHz** for supported Android versions; the app must show preference and the actual applied values distinctly.
-2. **On Android API 36+**, use `WifiManager.startLocalOnlyHotspotWithConfiguration(SoftApConfiguration, Executor, Callback)` for public custom configuration, validating device band support and handling failure explicitly.
+2. **On Android API 36.1+**, use `WifiManager.startLocalOnlyHotspotWithConfiguration(SoftApConfiguration, Executor, Callback)` for public custom configuration, validating device band support and handling failure explicitly.
 3. **On Xiaomi Pad 5 Android 13 (API 33)**, `startLocalOnlyHotspot()` chooses random credentials/band. Normal non-system apps CANNOT force fixed SSID/password/5GHz with this API. Do not display editable settings as actually applied. Provide an honest compatibility explanation plus system hotspot settings option where appropriate; system **tethering** may share Internet and isn't the same as LocalOnlyHotspot.
 4. Preferences never imply control until supported; show effective SSID/passphrase/band returned by Android. Do not log passwords.
 
@@ -27,3 +27,18 @@ No milestone M2/M7 passes before above feature-specific device tests. Update tra
 - https://developer.android.com/training/data-storage/shared/documents-files
 - https://developer.android.com/training/data-storage/manage-all-files
 - https://developer.android.com/reference/android/net/wifi/WifiManager#startLocalOnlyHotspotWithConfiguration(android.net.wifi.SoftApConfiguration,java.util.concurrent.Executor,android.net.wifi.WifiManager.LocalOnlyHotspotCallback)
+
+## Implementation cross-check — 2026-10-22
+- [x] SAF folder chooser and persisted permission; lazy nested directory browser (`SharedDirectoryBrowser.kt`), URL-token HTTPS routes `/browse` and `/browse-file/{id}`, browser UI navigation.
+- [x] Opt-in `MANAGE_EXTERNAL_STORAGE` Settings flow for the *shared* internal storage root only. This cannot expose protected app-private Android directories.
+- [x] Server restarts/revokes old session when changing shared folder or storage scope; separate receiver folder and selectable read-only / incoming-upload controls.
+- [x] Saved upload setting and per-file maximum upload size (512 MiB, 2 GiB, 16 GiB), server rejects files above limit (HTTP 413).
+- [x] Hotspot configuration persistence with AndroidKeyStore password encryption on supported 36.1+ systems, password masked by default.
+- [x] Explicit Android 13/Pad 5 note that local-only SSID/password/band are system-controlled. No false 5GHz override.
+- [x] New AndroidSettings page for operational settings of currently implemented features and retained appearance control.
+- [x] JVM TLS protocol tests expanded for authenticated folder navigation, byte range download, uploads above configured limit.
+- [ ] Real-device acceptance: SAF folder tree, **full shared-storage root**, Browser↔Pad5 downloads, encrypted password persistence on 36.1 device, all permission denial paths, and actual hotspot 2.4/5 GHz settings on compatible device.
+- [ ] Professional Liquid Aurora design beyond basic cards (M1 visual contract), full queue/resume, FTP/SFTP and other planned modules.
+- [ ] No real Pad5 UX acceptance or user-facing new release until device test gate.
+
+**Correction to original assumption:** `startLocalOnlyHotspotWithConfiguration` is Android API 36, but the public builder setters for SSID and passphrase are specifically added in Android **36.1**; avoid describing fixed settings as available on 36.0.
