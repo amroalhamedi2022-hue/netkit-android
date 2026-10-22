@@ -33,7 +33,9 @@ fun main(args: Array<String>) {
     val folderId = "bd8819ba-cafb-45b4-ae70-3ec73580d78d"
     val nestedId = "72c9c931-e477-4a92-a1e7-78b79b85130d"
     var uploadsAllowed = true
+    var uploadLimit = 16L * 1024 * 1024 * 1024
     val store = object : ShareStorage, DirectoryShareStorage {
+        override fun maxUploadSize(): Long = uploadLimit
         override fun hasSharedDirectory() = true
         override fun browseDirectory(directoryId: String, offset: Int, limit: Int): ShareBrowsePage {
             val rows = when (directoryId) {
@@ -153,6 +155,10 @@ fun main(args: Array<String>) {
         uploadsAllowed = false
         check(request(root + "/upload", "POST", byteArrayOf(1), "refused.bin").first == 409)
         uploadsAllowed = true
+        uploadLimit = 1
+        check(request(root + "/upload", "POST", byteArrayOf(1, 2), "too-large.bin").first == 413)
+        check("too-large.bin" !in uploaded)
+        uploadLimit = 16L * 1024 * 1024 * 1024
         // Reject an advertised upload beyond guard without reading gigabytes.
         val socket = clientSsl.socketFactory.createSocket("127.0.0.1", engine.port) as SSLSocket
         socket.use {
