@@ -39,7 +39,7 @@ def main():
         shutil.rmtree(OUT)
     OUT.mkdir()
     shutil.copy2(APK, OUT / APK_NAME)
-    with zipfile.ZipFile(OUT / SRC_NAME, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    with zipfile.ZipFile(OUT / SRC_NAME, "w", zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as z:
         for p in sorted(ROOT.rglob("*")):
             if not p.is_file() or any(part in EXCLUDE for part in p.relative_to(ROOT).parts):
                 continue
