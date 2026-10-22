@@ -36,12 +36,13 @@ class HotspotManager(context: Context) {
         private set
 
     init {
-        if (preferredPassword.isBlank()) {
+        if (supportsCustomSettings && preferredPassword.isBlank()) {
             val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
             val random = java.security.SecureRandom()
             val password = (1..16).map { alphabet[random.nextInt(alphabet.length)] }.joinToString("")
-            prefs.update(preferredName, password, preferredBand)
-            preferredPassword = password
+            if (runCatching { prefs.update(preferredName, password, preferredBand) }.isSuccess) {
+                preferredPassword = password
+            }
         }
     }
 
@@ -122,7 +123,7 @@ class HotspotManager(context: Context) {
                     onUnavailable?.invoke()
                 }
             }
-            if (supportsCustomSettings) startWithUserConfiguration(callback)
+            if (supportsCustomSettings && preferredPassword.isNotBlank()) startWithUserConfiguration(callback)
             else wifi.startLocalOnlyHotspot(callback, Handler(Looper.getMainLooper()))
         } catch (exception: Exception) {
             requestPending = false
