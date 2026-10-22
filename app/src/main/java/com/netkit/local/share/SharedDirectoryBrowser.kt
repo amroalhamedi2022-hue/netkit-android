@@ -27,11 +27,16 @@ class SharedDirectoryBrowser(private val context: Context) {
 
     init {
         val pref = context.getSharedPreferences("netkit_shared_folder", Context.MODE_PRIVATE)
-        val stored = pref.getString("uri", null)
-        if (stored != null) {
-            val uri = Uri.parse(stored)
-            if (context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }) {
-                setSafFolder(uri)
+        val mode = pref.getString("mode", "saf")
+        if (mode == "shared" && (Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager())) {
+            runCatching { setSharedStorage() }
+        } else if (mode == "saf") {
+            val stored = pref.getString("uri", null)
+            if (stored != null) {
+                val uri = Uri.parse(stored)
+                if (context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }) {
+                    runCatching { setSafFolder(uri) }
+                }
             }
         }
     }
@@ -42,7 +47,7 @@ class SharedDirectoryBrowser(private val context: Context) {
         root = Handle.Saf(folder)
         description = "مجلد: ${folder.name ?: "بدون اسم"} (مع المجلدات الفرعية)"
         context.getSharedPreferences("netkit_shared_folder", Context.MODE_PRIVATE)
-            .edit().putString("uri", uri.toString()).apply()
+            .edit().putString("uri", uri.toString()).putString("mode", "saf").apply()
         resetHandles()
     }
 
@@ -55,7 +60,7 @@ class SharedDirectoryBrowser(private val context: Context) {
         root = Handle.Local(volume)
         description = "مساحة التخزين الداخلية المشتركة (قراءة فقط)"
         context.getSharedPreferences("netkit_shared_folder", Context.MODE_PRIVATE)
-            .edit().remove("uri").apply()
+            .edit().remove("uri").putString("mode", "shared").apply()
         resetHandles()
     }
 
@@ -63,7 +68,7 @@ class SharedDirectoryBrowser(private val context: Context) {
         root = null
         description = "مشاركة المجلدات متوقفة"
         context.getSharedPreferences("netkit_shared_folder", Context.MODE_PRIVATE)
-            .edit().remove("uri").apply()
+            .edit().remove("uri").putString("mode", "none").apply()
         resetHandles()
     }
 
