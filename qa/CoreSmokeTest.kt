@@ -1,0 +1,147 @@
+package com.netkit.local.qa
+
+import com.netkit.local.share.*
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.io.InputStream
+import java.net.URI
+import java.security.KeyStore
+import java.security.SecureRandom
+import java.security.MessageDigest
+import java.security.cert.X509Certificate
+import javax.net.ssl.*
+
+/** TEST ONLY. The trust-all verifier MUST NEVER be imported into the Android app. */
+fun main(args: Array<String>) {
+    val ks = KeyStore.getInstance("PKCS12")
+    val password = "temporary-test-only".toCharArray()
+    File(args[0]).inputStream().use { ks.load(it, password) }
+    val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
+    kmf.init(ks, password)
+    val serverSsl = SSLContext.getInstance("TLS").apply { init(kmf.keyManagers, null, SecureRandom()) }
+    val trustOnlyForTest = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+    }
+    val clientSsl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trustOnlyForTest), SecureRandom()) }
+    val itemId = "94285ca7-7903-4b88-8e6d-d69079e0b324"
+    val initial = "NetKit test payload 🫧".toByteArray()
+    val unknown = ByteArray(88_888) { (it % 247).toByte() }
+    val unknownId = "ea54390d-ec27-43bf-acad-5131494470f1"
+    val uploaded = mutableMapOf<String, ByteArray>()
+    var uploadsAllowed = true
+    val store = object : ShareStorage {
+        override fun items() = listOf(ShareItem(itemId, "shared.txt", initial.size.toLong()), ShareItem(unknownId, "unknown.bin", null))
+        override fun open(id: String) = when (id) {
+            itemId -> SharedStream(ByteArrayInputStream(initial), initial.size.toLong())
+            unknownId -> SharedStream(ByteArrayInputStream(unknown), null)
+            else -> null
+        }
+        override fun canUpload() = uploadsAllowed
+        override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String {
+            val result = ByteArray(length.toInt())
+            var read = 0
+            while (read < result.size) {
+                val n = body.read(result, read, result.size - read)
+                if (n < 0) error("Truncated upload")
+                read += n; progress(read.toLong())
+            }
+            if (expectedSha256 != null) {
+                val actual = MessageDigest.getInstance("SHA-256").digest(result).joinToString("") { "%02x".format(it) }
+                if (!actual.equals(expectedSha256, ignoreCase = true)) throw UploadHashMismatchException()
+            }
+            uploaded[fileName] = result
+            return fileName
+        }
+    }
+    TransferHttpEngine(serverSsl.serverSocketFactory, store).use { engine ->
+        engine.start()
+        val root = "https://127.0.0.1:${engine.port}/s/${engine.token}"
+        var lastContentRange: String? = null
+        fun request(path: String, method: String = "GET", bytes: ByteArray? = null, filename: String? = null,
+                    range: String? = null, sha256: String? = null): Pair<Int, ByteArray> {
+            val con = URI(path).toURL().openConnection() as HttpsURLConnection
+            con.sslSocketFactory = clientSsl.socketFactory
+            con.hostnameVerifier = HostnameVerifier { _, _ -> true }
+            con.requestMethod = method
+            if (range != null) con.setRequestProperty("Range", range)
+            if (bytes != null) {
+                con.doOutput = true
+                con.setFixedLengthStreamingMode(bytes.size)
+                con.setRequestProperty("X-File-Name", filename!!)
+                if (sha256 != null) con.setRequestProperty("X-Content-SHA256", sha256)
+                con.setRequestProperty("Content-Type", "application/octet-stream")
+                con.outputStream.use { it.write(bytes) }
+            }
+            val code = con.responseCode
+            lastContentRange = con.getHeaderField("Content-Range")
+            val data = (if (code < 400) con.inputStream else con.errorStream)?.use { it.readBytes() } ?: byteArrayOf()
+            con.disconnect()
+            return code to data
+        }
+        check(request(root + "/").first == 200)
+        val listing = request(root + "/list")
+        check(listing.first == 200 && String(listing.second).contains("shared.txt"))
+        val dl = request(root + "/file/$itemId")
+        check(dl.first == 200 && dl.second.contentEquals(initial))
+        // Resumable downloads: known-length SAF streams support single byte ranges.
+        val part = request(root + "/file/$itemId", range = "bytes=4-9")
+        check(part.first == 206 && part.second.contentEquals(initial.copyOfRange(4, 10)))
+        check(lastContentRange == "bytes 4-9/${initial.size}")
+        val tail = request(root + "/file/$itemId", range = "bytes=-5")
+        check(tail.first == 206 && tail.second.contentEquals(initial.takeLast(5).toByteArray()))
+        val rest = request(root + "/file/$itemId", range = "bytes=10-")
+        check(rest.first == 206 && rest.second.contentEquals(initial.copyOfRange(10, initial.size)))
+        val beyondEnd = request(root + "/file/$itemId", range = "bytes=0-999999")
+        check(beyondEnd.first == 206 && beyondEnd.second.contentEquals(initial))
+        check(request(root + "/file/$itemId", range = "bytes=999999-").first == 416)
+        check(lastContentRange == "bytes */${initial.size}")
+        check(request(root + "/file/$itemId", range = "bytes=8-3").first == 416)
+        check(request(root + "/file/$itemId", range = "bytes=0-2,5-7").first == 416)
+        check(request(root + "/file/$itemId", range = "bytes=-0").first == 416)
+        check(request(root + "/file/$itemId", range = "bytes=0-").first == 206)
+        val unknownDl = request(root + "/file/$unknownId")
+        check(unknownDl.first == 200 && unknownDl.second.contentEquals(unknown))
+        val unknownWithRange = request(root + "/file/$unknownId", range = "bytes=10-50")
+        check(unknownWithRange.first == 200 && unknownWithRange.second.contentEquals(unknown))
+        check(request("https://127.0.0.1:${engine.port}/s/guess/list").first == 404)
+        repeat(14) { index ->
+            // Exercise early-return paths that historically leaked sockets from activeClients.
+            check(request("https://127.0.0.1:${engine.port}/wrong-$index").first == 404)
+        }
+        // Worker cleanup can finish a few milliseconds after the HTTP client disconnects.
+        repeat(40) { if (engine.activeClientCount == 0) return@repeat else Thread.sleep(25) }
+        check(engine.activeClientCount == 0) { "Leaked ${engine.activeClientCount} client sockets" }
+
+        val upload = ByteArray(6 * 1024 * 1024) { (it % 251).toByte() }
+        check(request(root + "/upload", "POST", upload, "large-test.bin").first == 201)
+        check(uploaded["large-test.bin"]!!.contentEquals(upload))
+        val validHash = MessageDigest.getInstance("SHA-256").digest(upload).joinToString("") { "%02x".format(it) }
+        check(request(root + "/upload", "POST", upload, "verified.bin", sha256 = validHash).first == 201)
+        check(uploaded["verified.bin"]!!.contentEquals(upload))
+        check(request(root + "/upload", "POST", upload, "wrong-hash.bin", sha256 = "0".repeat(64)).first == 422)
+        check("wrong-hash.bin" !in uploaded) { "Mismatched hash must not be committed" }
+        check(request(root + "/upload", "POST", byteArrayOf(1), "malformed-hash.bin", sha256 = "not-a-hash").first == 400)
+        check("malformed-hash.bin" !in uploaded)
+        check(request(root + "/upload", "POST", byteArrayOf(1), "..%2Fsecrets.txt").first == 400)
+        check(request(root + "/upload", "POST", byteArrayOf(1), ".netkit-backdoor.part").first == 400)
+        check(request(root + "/missing").first == 405)
+        uploadsAllowed = false
+        check(request(root + "/upload", "POST", byteArrayOf(1), "refused.bin").first == 409)
+        uploadsAllowed = true
+        // Reject an advertised upload beyond guard without reading gigabytes.
+        val socket = clientSsl.socketFactory.createSocket("127.0.0.1", engine.port) as SSLSocket
+        socket.use {
+            it.soTimeout = 5000
+            val body = "POST /s/${engine.token}/upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 17179869185\r\nX-File-Name: huge.bin\r\n\r\n"
+            it.outputStream.write(body.toByteArray()); it.outputStream.flush()
+            val reply = it.inputStream.bufferedReader().readLine().orEmpty()
+            check(reply.contains("413")) { "Expected 413 but got: $reply" }
+        }
+        // Stop the server and make sure the port no longer accepts connections.
+        engine.close()
+        check(runCatching { java.net.Socket("127.0.0.1", engine.port).use { } }.isFailure)
+        println("PASS: index/list, auth denial, socket cleanup, fixed/chunked/resumable downloads, 6 MiB exact upload, SHA-256 verified upload/mismatch/invalid-digest, filenames, upload consent, max-size, closed listener")
+    }
+}
