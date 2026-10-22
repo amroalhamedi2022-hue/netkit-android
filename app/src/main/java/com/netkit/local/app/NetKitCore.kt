@@ -3,6 +3,7 @@ package com.netkit.local.app
 import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.netkit.local.connectivity.HotspotManager
@@ -37,6 +38,18 @@ class NetKitCore(context: Context) {
         private set
     var sharedFolderStatus by mutableStateOf(storage.sharedDescription)
         private set
+    var browserUploadsEnabled by mutableStateOf(storage.browserUploadsEnabled)
+        private set
+    var maxBrowserUploadMiB by mutableIntStateOf(storage.maxBrowserUploadMiB)
+        private set
+    fun configureBrowserUploads(enabled: Boolean) {
+        storage.setBrowserUploadsEnabled(enabled)
+        browserUploadsEnabled = enabled
+    }
+    fun configureUploadLimit(mib: Int) {
+        storage.setMaxBrowserUploadMiB(mib)
+        maxBrowserUploadMiB = storage.maxBrowserUploadMiB
+    }
     fun shareDirectory(uri: Uri) {
         stopShare() // Revoke any existing transfer session before broadening scope.
         storage.shareFolder(uri)
