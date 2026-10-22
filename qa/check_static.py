@@ -39,8 +39,11 @@ for name in ('ic_launcher', 'ic_launcher_round'):
 props = (root / 'gradle/wrapper/gradle-wrapper.properties').read_text()
 assert 'gradle-8.13-bin.zip' in props
 assert '20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78' in props
-workflow = (root / '.github/workflows/android-debug.yml').read_text()
+workflow = (root / '.github/workflows/netkit-import-build.yml').read_text()
 assert './gradlew --no-daemon :app:assembleDebug' in workflow and ':app:lintDebug' in workflow
+assert 'apksigner' in workflow and 'aapt' in workflow
+assert (root / 'app/src/main/java/com/netkit/local/share/SharedDirectoryBrowser.kt').exists()
+assert (root / 'app/src/main/java/com/netkit/local/connectivity/HotspotSettingsStore.kt').exists()
 main = (root / 'app/src/main/java/com/netkit/local/app/MainActivity.kt').read_text()
 assert 'RequestMultiplePermissions()' in main
 assert 'ACCESS_COARSE_LOCATION' in main and 'NEARBY_WIFI_DEVICES' in main
