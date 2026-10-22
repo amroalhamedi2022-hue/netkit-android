@@ -11,6 +11,7 @@ import android.provider.Settings
 import androidx.core.content.edit
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
@@ -123,6 +124,7 @@ fun NetKitApp(
     }
     MaterialTheme(colorScheme = darkColorScheme(primary = palette.aqua, secondary = palette.violet,
         surface = shell, background = shell, onBackground = Color.White, onSurface = Color.White)) {
+        CompositionLocalProvider(LocalContentColor provides Color.White) {
         Box(Modifier.fillMaxSize().background(shell)) {
             LiquidBackdrop(palette, effects)
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -132,7 +134,8 @@ fun NetKitApp(
                 ) {
                     BrandHeader(palette, onSettings = { tab = 5 })
                     Spacer(Modifier.height(16.dp))
-                    when (tab) {
+                    Crossfade(targetState = tab, animationSpec = tween(340), label = "netkit-navigation") { activeTab ->
+                    when (activeTab) {
                         0 -> HomeScreen(core, networkText, ipList, palette, onShare = { tab = 1 }, onHotspot = { tab = 3 })
                         1 -> ShareScreen(core, ipList, palette,
                             chooseFiles = { filesPicker.launch(arrayOf("*/*")) },
@@ -153,6 +156,7 @@ fun NetKitApp(
                             changeTheme = { tab = 4 },
                             hotspotSettings = { tab = 3 })
                     }
+                    }
                     Spacer(Modifier.height(30.dp))
                     Text("NetKit • v0.6 alpha • Local-first", style = MaterialTheme.typography.labelSmall,
                         color = muted.copy(alpha = .7f), modifier = Modifier.align(Alignment.CenterHorizontally))
@@ -170,6 +174,7 @@ fun NetKitApp(
                     }
                 }
             }
+        }
         }
     }
 }
