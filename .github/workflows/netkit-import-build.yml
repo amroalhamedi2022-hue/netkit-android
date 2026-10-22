@@ -15,7 +15,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+# A newer development commit supersedes earlier CI builds.
+concurrency:
+  group: netkit-development-main
+  cancel-in-progress: true
 
 jobs:
   verified-build:
