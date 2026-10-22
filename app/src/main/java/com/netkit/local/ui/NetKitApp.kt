@@ -32,9 +32,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -75,6 +77,9 @@ fun NetKitApp(
         preferences.edit { putInt("theme", theme); putBoolean("effects", effects) }
     }
     val palette = palettes[theme]
+    val isLight = theme == 1
+    val canvasBackground = if (isLight) Color(0xFFE8F8FF) else shell
+    val ink = if (isLight) Color(0xFF163047) else Color.White
     var networkText by remember { mutableStateOf(core.network.summary()) }
     var ipList by remember { mutableStateOf(core.network.localAddresses()) }
     LaunchedEffect(Unit) {
@@ -124,10 +129,15 @@ fun NetKitApp(
             }
         }
     }
-    MaterialTheme(colorScheme = darkColorScheme(primary = palette.aqua, secondary = palette.violet,
-        surface = shell, background = shell, onBackground = Color.White, onSurface = Color.White)) {
-        CompositionLocalProvider(LocalContentColor provides Color.White) {
-        Box(Modifier.fillMaxSize().background(shell)) {
+    MaterialTheme(colorScheme = if (isLight)
+        lightColorScheme(primary = Color(0xFF1263A3), secondary = palette.violet,
+            surface = Color(0xF4FFFFFF), background = canvasBackground, onBackground = ink,
+            onSurface = ink, onSurfaceVariant = Color(0xFF456278))
+        else darkColorScheme(primary = palette.aqua, secondary = palette.violet,
+            surface = shell, background = canvasBackground, onBackground = ink,
+            onSurface = ink, onSurfaceVariant = muted)) {
+        CompositionLocalProvider(LocalContentColor provides ink) {
+        Box(Modifier.fillMaxSize().background(canvasBackground)) {
             LiquidBackdrop(palette, effects)
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Column(
@@ -163,15 +173,17 @@ fun NetKitApp(
                     Text("NetKit • v0.6 alpha • Local-first", style = MaterialTheme.typography.labelSmall,
                         color = muted.copy(alpha = .7f), modifier = Modifier.align(Alignment.CenterHorizontally))
                 }
-                NavigationBar(containerColor = Color(0xE20C1430), tonalElevation = 0.dp) {
+                NavigationBar(containerColor = if (isLight) Color(0xF0E6F5FF) else Color(0xE20C1430), tonalElevation = 0.dp) {
                     val emoji = listOf("⌂", "⇄", "⌁", "◉", "✦")
+                    val navMuted = if (isLight) Color(0xFF38546F) else muted
+                    val navAccent = if (isLight) Color(0xFF205DAD) else palette.aqua
                     menu.forEachIndexed { idx, title ->
                         NavigationBarItem(selected = tab == idx, onClick = { tab = idx },
-                            icon = { Text(emoji[idx], fontSize = 20.sp, color = if (tab == idx) palette.aqua else muted) },
+                            icon = { Text(emoji[idx], fontSize = 20.sp, color = if (tab == idx) navAccent else navMuted) },
                             label = { Text(title, fontSize = 10.sp, maxLines = 1) },
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = palette.aqua, selectedTextColor = Color.White,
-                                unselectedIconColor = muted, unselectedTextColor = muted,
+                                selectedIconColor = navAccent, selectedTextColor = ink,
+                                unselectedIconColor = navMuted, unselectedTextColor = navMuted,
                                 indicatorColor = palette.violet.copy(alpha = .20f)))
                     }
                 }
@@ -230,17 +242,28 @@ private fun BrandHeader(p: Palette, onSettings: () -> Unit) {
             Text("N", fontSize = 29.sp, fontWeight = FontWeight.Black, color = shell)
         }
         Column(Modifier.weight(1f)) {
-            Text("NetKit", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text("NetKit", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
             Text("YOUR NETWORK, YOUR TOOLS", fontSize = 10.sp, color = muted, letterSpacing = 1.sp)
         }
-        IconButton(onClick = onSettings) { Text("⚙", fontSize = 25.sp, color = Color.White) }
+        IconButton(onClick = onSettings) { Text("⚙", fontSize = 25.sp, color = MaterialTheme.colorScheme.onSurface) }
     }
 }
 
 @Composable
 private fun GlassCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(modifier.fillMaxWidth().clip(rounded).background(glass)
-        .border(1.dp, Color.White.copy(alpha = .16f), rounded).padding(18.dp), content = content)
+    val light = MaterialTheme.colorScheme.background.red > .75f
+    val fill = if (light)
+        listOf(Color.White.copy(alpha = .88f), Color(0xFFCBEDF8).copy(alpha = .66f), Color.White.copy(alpha = .7f))
+    else listOf(Color.White.copy(alpha = .155f), MaterialTheme.colorScheme.secondary.copy(alpha = .13f),
+        Color.White.copy(alpha = .075f))
+    val rim = if (light) listOf(Color.White, Color(0xFF9ED8F2).copy(alpha = .65f))
+        else listOf(Color.White.copy(alpha = .31f), MaterialTheme.colorScheme.primary.copy(alpha = .34f))
+    Column(modifier.fillMaxWidth()
+        .shadow(if (light) 8.dp else 12.dp, rounded)
+        .clip(rounded)
+        .background(Brush.linearGradient(fill))
+        .border(1.dp, Brush.linearGradient(rim), rounded)
+        .padding(20.dp), content = content)
 }
 
 @Composable
@@ -251,7 +274,7 @@ private fun MainButton(label: String, p: Palette, enabled: Boolean = true, actio
 }
 
 @Composable
-private fun MutedText(text: String) { Text(text, color = muted, lineHeight = 21.sp, fontSize = 13.sp) }
+private fun MutedText(text: String) { Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 21.sp, fontSize = 13.sp) }
 
 @Composable
 private fun HomeScreen(core: NetKitCore, networkText: String, ips: List<String>, p: Palette,
@@ -261,7 +284,7 @@ private fun HomeScreen(core: NetKitCore, networkText: String, ips: List<String>,
         Text("● مساحة اتصالك الذكية", fontSize = 12.sp, color = p.aqua)
         Spacer(Modifier.height(11.dp))
         Text("كل أجهزتك، بنفس الموجة.", fontSize = 29.sp, lineHeight = 37.sp,
-            fontWeight = FontWeight.Bold, color = Color.White)
+            fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(7.dp))
         MutedText("شارك مجلداتك أو ذاكرة الجهاز المشتركة عبر HTTPS محلي، وانقل الملفات بدون سحابة.")
         Spacer(Modifier.height(12.dp))
@@ -284,7 +307,7 @@ private fun HomeScreen(core: NetKitCore, networkText: String, ips: List<String>,
                     HomeShareCard(core, p, onShare)
                     Spacer(Modifier.height(12.dp))
                     GlassCard {
-                        Text("📂 نطاق المشاركة", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("📂 نطاق المشاركة", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(6.dp))
                         MutedText(core.sharedFolderStatus)
                         MutedText("المشاركة تتوقف فور إغلاق الجلسة، والملفات الخاصة للتطبيقات محمية من النظام.")
@@ -299,7 +322,7 @@ private fun HomeScreen(core: NetKitCore, networkText: String, ips: List<String>,
             HomeHotspotCard(core, p, onHotspot)
             Spacer(Modifier.height(12.dp))
             GlassCard {
-                Text("📂 نطاق المشاركة", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("📂 نطاق المشاركة", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
                 MutedText(core.sharedFolderStatus)
             }
         }
@@ -309,7 +332,7 @@ private fun HomeScreen(core: NetKitCore, networkText: String, ips: List<String>,
 @Composable
 private fun HomeConnectionCard(networkText: String, ips: List<String>, p: Palette) {
     GlassCard {
-        Text("◉ حالة الشبكة المحلية", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Text("◉ حالة الشبكة المحلية", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
         Spacer(Modifier.height(8.dp))
         Text(networkText, color = p.aqua, fontSize = 15.sp)
         Spacer(Modifier.height(6.dp))
@@ -321,7 +344,7 @@ private fun HomeConnectionCard(networkText: String, ips: List<String>, p: Palett
 @Composable
 private fun HomeShareCard(core: NetKitCore, p: Palette, onShare: () -> Unit) {
     GlassCard {
-        Text("⇄ Browser File Transfer", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Text("⇄ Browser File Transfer", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
         Spacer(Modifier.height(6.dp))
         MutedText(core.share.message)
         Spacer(Modifier.height(6.dp))
@@ -332,7 +355,7 @@ private fun HomeShareCard(core: NetKitCore, p: Palette, onShare: () -> Unit) {
 @Composable
 private fun HomeHotspotCard(core: NetKitCore, p: Palette, onHotspot: () -> Unit) {
     GlassCard {
-        Text("◉ Local-only Hotspot", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Text("◉ Local-only Hotspot", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
         Spacer(Modifier.height(6.dp))
         MutedText(core.hotspot.state.status)
         Spacer(Modifier.height(6.dp))
@@ -362,7 +385,7 @@ private fun ShareScreen(core: NetKitCore, ips: List<String>, p: Palette,
     }
     Spacer(Modifier.height(13.dp))
     GlassCard {
-        Text("📁 مشاركة مجلد أو التخزين المشترك", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text("📁 مشاركة مجلد أو التخزين المشترك", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
         MutedText("مش لازم تختار كل ملف لحاله. شارك مجلد كامل مع مجلداته الفرعية، أو مساحة التخزين المشتركة بعد منح صلاحية خاصة.")
         Spacer(Modifier.height(8.dp))
         MutedText(core.sharedFolderStatus)
@@ -425,7 +448,7 @@ private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop:
         Text(core.hotspot.state.status, color = if (core.hotspot.state.active) p.aqua else Color.White, fontSize = 16.sp)
         Spacer(Modifier.height(10.dp))
         if (core.hotspot.state.active) {
-            Text("SSID: ${core.hotspot.state.ssid}", color = Color.White)
+            Text("SSID: ${core.hotspot.state.ssid}", color = MaterialTheme.colorScheme.onSurface)
             Text("Password: " + if (revealPassword) core.hotspot.state.password else "••••••••", color = muted)
             OutlinedButton(onClick = { revealPassword = !revealPassword }) {
                 Text(if (revealPassword) "إخفاء كلمة المرور" else "إظهار كلمة المرور")
@@ -443,7 +466,7 @@ private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop:
     }
     Spacer(Modifier.height(13.dp))
     GlassCard {
-        Text("إعدادات نقطة الاتصال", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.White)
+        Text("إعدادات نقطة الاتصال", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
         if (core.hotspot.supportsCustomSettings) {
             MutedText("هذه الإعدادات تُحفظ وتُطبّق عند بدء Local-only Hotspot على Android API 36 أو أحدث.")
             Spacer(Modifier.height(8.dp))
@@ -459,14 +482,14 @@ private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop:
                     }
                 },
                 enabled = !core.hotspot.state.active && !core.hotspot.state.starting)
-            Text("النطاق المفضّل", color = Color.White)
+            Text("النطاق المفضّل", color = MaterialTheme.colorScheme.onSurface)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf("auto" to "تلقائي", "2.4" to "2.4 GHz", "5" to "5 GHz").forEach { (code, label) ->
                     Row(verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.clickable(enabled = !core.hotspot.state.active) { band = code }) {
                         RadioButton(selected = band == code, onClick = { band = code },
                             enabled = !core.hotspot.state.active)
-                        Text(label, color = Color.White, fontSize = 12.sp)
+                        Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
                     }
                 }
             }
@@ -543,7 +566,7 @@ private fun AppearanceScreen(theme: Int, setTheme: (Int) -> Unit, effects: Boole
                 RadioButton(selected = theme == i, onClick = { setTheme(i) })
             }
         }
-        HorizontalDivider(color = Color.White.copy(alpha = .12f))
+        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .12f))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("فقاعات ومؤثرات لطيفة", modifier = Modifier.weight(1f))
             Switch(checked = effects, onCheckedChange = setEffects)
@@ -557,41 +580,41 @@ private fun AppearanceScreen(theme: Int, setTheme: (Int) -> Unit, effects: Boole
 private fun SettingsScreen(core: NetKitCore, p: Palette, selectFolder: () -> Unit,
     allStorage: () -> Unit, stopFolder: () -> Unit, chooseReceive: () -> Unit,
     changeTheme: () -> Unit, hotspotSettings: () -> Unit) {
-    Text("⚙ إعدادات NetKit", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 25.sp)
+    Text("⚙ إعدادات NetKit", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 25.sp)
     MutedText("إعدادات حقيقية للميزات المتوفرة حاليًا. الإعدادات المتقدمة للنقل و FTP/SFTP ستظهر عند تنفيذ محركاتها.")
     Spacer(Modifier.height(14.dp))
     GlassCard {
-        Text("التخزين والمشاركة", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Text("التخزين والمشاركة", color = MaterialTheme.colorScheme.onSurface, fontSize = 19.sp, fontWeight = FontWeight.Bold)
         MutedText(core.sharedFolderStatus)
         MainButton("اختيار مجلد مشاركة كامل", p, action = selectFolder)
         MainButton("تفعيل مشاركة التخزين المشترك", p,
             enabled = Build.VERSION.SDK_INT >= 30, action = allStorage)
         OutlinedButton(onClick = stopFolder) { Text("تعطيل مشاركة المجلدات") }
-        HorizontalDivider(color = Color.White.copy(alpha = .15f))
+        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .15f))
         MutedText("مجلد استقبال الملفات: ${core.folder}")
         OutlinedButton(onClick = chooseReceive) { Text("تغيير مجلد الاستقبال") }
         Spacer(Modifier.height(10.dp))
-        HorizontalDivider(color = Color.White.copy(alpha = .15f))
+        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .15f))
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("السماح باستقبال الملفات عبر المتصفح", color = Color.White, modifier = Modifier.weight(1f))
+            Text("السماح باستقبال الملفات عبر المتصفح", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
             Switch(checked = core.browserUploadsEnabled,
                 onCheckedChange = { core.configureBrowserUploads(it) })
         }
         MutedText("عند تعطيله تبقى المشاركة للقراءة والتنزيل فقط، حتى لو تم اختيار مجلد استقبال.")
         Spacer(Modifier.height(8.dp))
-        Text("حدّ حجم الملف المرسل", color = Color.White, fontWeight = FontWeight.Bold)
+        Text("حدّ حجم الملف المرسل", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
         listOf(512 to "512 MB", 2048 to "2 GB", 16384 to "16 GB").forEach { (size, label) ->
             Row(verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().clickable { core.configureUploadLimit(size) }) {
                 RadioButton(selected = core.maxBrowserUploadMiB == size,
                     onClick = { core.configureUploadLimit(size) })
-                Text(label, color = Color.White)
+                Text(label, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
     Spacer(Modifier.height(12.dp))
     GlassCard {
-        Text("الشبكة والشكل", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Text("الشبكة والشكل", color = MaterialTheme.colorScheme.onSurface, fontSize = 19.sp, fontWeight = FontWeight.Bold)
         OutlinedButton(onClick = hotspotSettings) { Text("إعدادات Local Hotspot") }
         OutlinedButton(onClick = changeTheme) { Text("الثيمات والحركة") }
     }
