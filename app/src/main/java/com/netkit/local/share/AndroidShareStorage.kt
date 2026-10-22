@@ -11,7 +11,17 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /** All accesses are limited to explicit Storage Access Framework grants. */
-class AndroidShareStorage(private val context: Context) : ShareStorage {
+class AndroidShareStorage(private val context: Context) : ShareStorage, DirectoryShareStorage {
+    private val directoryBrowser = SharedDirectoryBrowser(context)
+    val sharedDescription: String get() = directoryBrowser.description
+    fun shareFolder(uri: Uri) = directoryBrowser.setSafFolder(uri)
+    fun shareSharedStorage() = directoryBrowser.setSharedStorage()
+    fun stopFolderShare() = directoryBrowser.disable()
+    override fun hasSharedDirectory(): Boolean = directoryBrowser.hasRoot()
+    override fun browseDirectory(directoryId: String, offset: Int, limit: Int): ShareBrowsePage =
+        directoryBrowser.page(directoryId, offset, limit)
+    override fun directoryItem(id: String): ShareItem? = directoryBrowser.item(id)
+    override fun openDirectoryItem(id: String): SharedStream? = directoryBrowser.file(id)?.second
     private val documents = LinkedHashMap<String, Pair<Uri, ShareItem>>()
     @Volatile private var uploadTree: Uri? = null
     // Serialize only destination name reservation/commit. A slow multi-GB upload must
