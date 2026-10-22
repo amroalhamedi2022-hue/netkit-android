@@ -6,6 +6,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.content.Context
 import android.net.wifi.SoftApConfiguration
+import android.net.wifi.WifiSsid
+import android.util.SparseIntArray
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
@@ -19,7 +21,13 @@ class HotspotManager(context: Context) {
     private val appContext = context.applicationContext
     private val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private val prefs = HotspotSettingsStore(appContext)
-    val supportsCustomSettings: Boolean get() = Build.VERSION.SDK_INT >= 36
+    // SSID/password setters were added in SDK 36.1; compile SDK 36 does not expose them.
+    val supportsCustomSettings: Boolean get() =
+        Build.VERSION.SDK_INT >= 36 && runCatching {
+            SoftApConfiguration.Builder::class.java.getMethod("setWifiSsid", WifiSsid::class.java)
+            SoftApConfiguration.Builder::class.java.getMethod("setPassphrase", String::class.java, Int::class.javaPrimitiveType)
+            true
+        }.getOrDefault(false)
     var preferredName by mutableStateOf(prefs.ssid())
         private set
     var preferredPassword by mutableStateOf(prefs.password())
@@ -38,7 +46,7 @@ class HotspotManager(context: Context) {
     }
 
     fun updateConfiguration(name: String, password: String, band: String) {
-        require(supportsCustomSettings) { "إعداد الشبكة المخصص يحتاج Android API 36 أو أحدث" }
+        require(supportsCustomSettings) { "إعداد الشبكة المخصص يحتاج Android 36.1 أو أحدث" }
         require(!state.active && !state.starting) { "أوقف Hotspot قبل تغيير الإعدادات" }
         prefs.update(name, password, band)
         preferredName = prefs.ssid()
@@ -114,7 +122,7 @@ class HotspotManager(context: Context) {
                     onUnavailable?.invoke()
                 }
             }
-            if (Build.VERSION.SDK_INT >= 36) startWithUserConfiguration(callback)
+            if (supportsCustomSettings) startWithUserConfiguration(callback)
             else wifi.startLocalOnlyHotspot(callback, Handler(Looper.getMainLooper()))
         } catch (exception: Exception) {
             requestPending = false
@@ -126,15 +134,18 @@ class HotspotManager(context: Context) {
     @TargetApi(36)
     private fun startWithUserConfiguration(callback: WifiManager.LocalOnlyHotspotCallback) {
         val config = SoftApConfiguration.Builder()
-            .setSsid(preferredName)
-            .setPassphrase(preferredPassword, SoftApConfiguration.SECURITY_TYPE_WPA2_PSK)
-        when (preferredBand) {
-            "2.4" -> config.setBand(SoftApConfiguration.BAND_2GHZ)
-            "5" -> {
-                require(wifi.is5GHzBandSupported) { "الجهاز لا يدعم 5GHz في إعدادات Wi-Fi هذه" }
-                config.setBand(SoftApConfiguration.BAND_5GHZ)
+        val builderClass = config.javaClass
+        // APIs are PUBLIC since Android 36.1, but not present in compileSdk 36.
+        builderClass.getMethod("setWifiSsid", WifiSsid::class.java)
+            .invoke(config, WifiSsid.fromUtf8Text(preferredName))
+        builderClass.getMethod("setPassphrase", String::class.java, Int::class.javaPrimitiveType)
+            .invoke(config, preferredPassword, SoftApConfiguration.SECURITY_TYPE_WPA2_PSK)
+        if (preferredBand != "auto") {
+            if (preferredBand == "5") require(wifi.is5GHzBandSupported) { "جهازك لا يدعم نطاق 5GHz" }
+            val channels = SparseIntArray().apply {
+                put(if (preferredBand == "5") SoftApConfiguration.BAND_5GHZ else SoftApConfiguration.BAND_2GHZ, 0)
             }
-            else -> Unit // Android chooses the strongest available supported band.
+            builderClass.getMethod("setChannels", SparseIntArray::class.java).invoke(config, channels)
         }
         wifi.startLocalOnlyHotspotWithConfiguration(config.build(), appContext.mainExecutor, callback)
     }
