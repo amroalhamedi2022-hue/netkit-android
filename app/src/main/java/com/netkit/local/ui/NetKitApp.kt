@@ -254,38 +254,87 @@ private fun MutedText(text: String) { Text(text, color = muted, lineHeight = 21.
 @Composable
 private fun HomeScreen(core: NetKitCore, networkText: String, ips: List<String>, p: Palette,
                        onShare: () -> Unit, onHotspot: () -> Unit) {
-    GlassCard(Modifier.padding(top = 7.dp)) {
+    Spacer(Modifier.height(5.dp))
+    GlassCard {
         Text("● مساحة اتصالك الذكية", fontSize = 12.sp, color = p.aqua)
-        Spacer(Modifier.height(15.dp))
-        Text("كل أجهزتك،\nبنفس الموجة.", fontSize = 32.sp, lineHeight = 39.sp,
+        Spacer(Modifier.height(11.dp))
+        Text("كل أجهزتك، بنفس الموجة.", fontSize = 29.sp, lineHeight = 37.sp,
             fontWeight = FontWeight.Bold, color = Color.White)
-        Spacer(Modifier.height(9.dp))
-        MutedText("مشاركة ملفات محلية من هاتفك أو تابلتك مع اللابتوب، بدون خدمات سحابية.")
-        Spacer(Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(9.dp), modifier = Modifier.fillMaxWidth()) {
-            MainButton("⇄ مشاركة الملفات", p, action = onShare)
+        Spacer(Modifier.height(7.dp))
+        MutedText("شارك مجلداتك أو ذاكرة الجهاز المشتركة عبر HTTPS محلي، وانقل الملفات بدون سحابة.")
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            MainButton("⇄ مركز نقل الملفات", p, action = onShare)
         }
     }
-    Spacer(Modifier.height(14.dp))
-    GlassCard {
-        Text("حالة الاتصال الفعلية", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-        Spacer(Modifier.height(6.dp)); MutedText(networkText)
-        Spacer(Modifier.height(6.dp))
-        MutedText(if (ips.isEmpty()) "لا يوجد عنوان IPv4 محلي قابل للعرض" else "العناوين المحلية: ${ips.joinToString(" • ")}")
+    Spacer(Modifier.height(12.dp))
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val wide = maxWidth >= 650.dp
+        if (wide) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    HomeConnectionCard(networkText, ips, p)
+                    Spacer(Modifier.height(12.dp))
+                    HomeHotspotCard(core, p, onHotspot)
+                }
+                Column(Modifier.weight(1f)) {
+                    HomeShareCard(core, p, onShare)
+                    Spacer(Modifier.height(12.dp))
+                    GlassCard {
+                        Text("📂 نطاق المشاركة", color = Color.White, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        MutedText(core.sharedFolderStatus)
+                        MutedText("المشاركة تتوقف فور إغلاق الجلسة، والملفات الخاصة للتطبيقات محمية من النظام.")
+                    }
+                }
+            }
+        } else {
+            HomeConnectionCard(networkText, ips, p)
+            Spacer(Modifier.height(12.dp))
+            HomeShareCard(core, p, onShare)
+            Spacer(Modifier.height(12.dp))
+            HomeHotspotCard(core, p, onHotspot)
+            Spacer(Modifier.height(12.dp))
+            GlassCard {
+                Text("📂 نطاق المشاركة", color = Color.White, fontWeight = FontWeight.Bold)
+                MutedText(core.sharedFolderStatus)
+            }
+        }
     }
-    Spacer(Modifier.height(14.dp))
+}
+
+@Composable
+private fun HomeConnectionCard(networkText: String, ips: List<String>, p: Palette) {
     GlassCard {
-        Text("✨ Smart Hotspot", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-        Spacer(Modifier.height(7.dp)); MutedText(core.hotspot.state.status)
+        Text("◉ حالة الشبكة المحلية", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
         Spacer(Modifier.height(8.dp))
-        MainButton(if (core.hotspot.state.active) "عرض تفاصيل الشبكة" else "إعداد شبكة محلية", p, action = onHotspot)
-        MutedText("Android يحدد النطاق تلقائيًا في هذا الإصدار؛ 5GHz غير مضمون.")
+        Text(networkText, color = p.aqua, fontSize = 15.sp)
+        Spacer(Modifier.height(6.dp))
+        MutedText(if (ips.isEmpty()) "لا توجد عناوين IPv4 متاحة"
+            else "العناوين: ${ips.joinToString(" • ")}")
     }
-    Spacer(Modifier.height(14.dp))
+}
+
+@Composable
+private fun HomeShareCard(core: NetKitCore, p: Palette, onShare: () -> Unit) {
     GlassCard {
-        Text("الخادم المحلي", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-        Spacer(Modifier.height(8.dp)); MutedText(core.share.message)
-        MainButton(if (core.share.active) "عرض رابط المشاركة" else "اختيار ملفات ومشاركتها", p, action = onShare)
+        Text("⇄ Browser File Transfer", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Spacer(Modifier.height(6.dp))
+        MutedText(core.share.message)
+        Spacer(Modifier.height(6.dp))
+        MainButton(if (core.share.active) "إدارة جلسة المشاركة" else "إعداد مشاركة الملفات", p, action = onShare)
+    }
+}
+
+@Composable
+private fun HomeHotspotCard(core: NetKitCore, p: Palette, onHotspot: () -> Unit) {
+    GlassCard {
+        Text("◉ Local-only Hotspot", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Spacer(Modifier.height(6.dp))
+        MutedText(core.hotspot.state.status)
+        Spacer(Modifier.height(6.dp))
+        MainButton(if (core.hotspot.state.active) "عرض الشبكة الفعلية" else "إعداد شبكة محلية", p, action = onHotspot)
     }
 }
 
