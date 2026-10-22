@@ -28,6 +28,8 @@ jobs:
           test -f app/src/main/java/com/netkit/local/ui/NetKitApp.kt
           python3 -m pip install --user pillow
           python3 tools/generate_launcher_icons.py
+          # Tar archives may preserve epoch timestamps, invalid for ZIP.
+          sed -i 's/zipfile.ZIP_DEFLATED, compresslevel=9)/zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False)/' tools/package_verified_build.py
       - name: Save complete source and original icons to repository
         shell: bash
         run: |
