@@ -4,6 +4,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import androidx.core.content.edit
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -93,6 +97,30 @@ fun NetKitApp(
             core.chooseFolder(uri)
         }
     }
+    val sharedFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                core.shareDirectory(uri)
+            }
+        }
+    }
+    val allFilesPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
+            runCatching { core.shareSharedStorage() }
+        }
+    }
+    val requestSharedStorage = {
+        if (Build.VERSION.SDK_INT >= 30) {
+            if (Environment.isExternalStorageManager()) {
+                runCatching { core.shareSharedStorage() }
+            } else {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:${context.packageName}"))
+                allFilesPermissionLauncher.launch(intent)
+            }
+        }
+    }
     MaterialTheme(colorScheme = darkColorScheme(primary = palette.aqua, secondary = palette.violet,
         surface = shell, background = shell, onBackground = Color.White, onSurface = Color.White)) {
         Box(Modifier.fillMaxSize().background(shell)) {
@@ -102,18 +130,28 @@ fun NetKitApp(
                     Modifier.weight(1f).widthIn(max = 980.dp).fillMaxWidth()
                         .verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 20.dp)
                 ) {
-                    BrandHeader(palette)
+                    BrandHeader(palette, onSettings = { tab = 5 })
                     Spacer(Modifier.height(16.dp))
                     when (tab) {
                         0 -> HomeScreen(core, networkText, ipList, palette, onShare = { tab = 1 }, onHotspot = { tab = 3 })
                         1 -> ShareScreen(core, ipList, palette,
                             chooseFiles = { filesPicker.launch(arrayOf("*/*")) },
                             chooseFolder = { directoryPicker.launch(null) },
+                            chooseSharedFolder = { sharedFolderPicker.launch(null) },
+                            shareAll = requestSharedStorage,
+                            stopSharedFolder = { core.stopDirectoryShare() },
                             startShare = onStartShare, stopShare = onStopShare,
                             copy = { copy(context, it) }, shareLink = { shareLink(context, it) })
                         2 -> DiagnosticsScreen(core, palette)
                         3 -> HotspotScreen(core, palette, onRequestHotspot, onStopHotspot, copy = { copy(context, it) })
-                        else -> AppearanceScreen(theme, { theme = it }, effects, { effects = it }, palette)
+                        4 -> AppearanceScreen(theme, { theme = it }, effects, { effects = it }, palette)
+                        else -> SettingsScreen(core, palette,
+                            selectFolder = { sharedFolderPicker.launch(null) },
+                            allStorage = requestSharedStorage,
+                            stopFolder = { core.stopDirectoryShare() },
+                            chooseReceive = { directoryPicker.launch(null) },
+                            changeTheme = { tab = 4 },
+                            hotspotSettings = { tab = 3 })
                     }
                     Spacer(Modifier.height(30.dp))
                     Text("NetKit • v0.6 alpha • Local-first", style = MaterialTheme.typography.labelSmall,
@@ -178,7 +216,7 @@ private fun LiquidBackdrop(p: Palette, effects: Boolean) {
 }
 
 @Composable
-private fun BrandHeader(p: Palette) {
+private fun BrandHeader(p: Palette, onSettings: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.size(52.dp).clip(RoundedCornerShape(19.dp))
             .background(Brush.linearGradient(listOf(p.aqua, p.violet, p.coral))), contentAlignment = Alignment.Center) {
@@ -188,7 +226,7 @@ private fun BrandHeader(p: Palette) {
             Text("NetKit", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Text("YOUR NETWORK, YOUR TOOLS", fontSize = 10.sp, color = muted, letterSpacing = 1.sp)
         }
-        Text("🫧", fontSize = 25.sp)
+        IconButton(onClick = onSettings) { Text("⚙", fontSize = 25.sp, color = Color.White) }
     }
 }
 
@@ -249,6 +287,7 @@ private fun HomeScreen(core: NetKitCore, networkText: String, ips: List<String>,
 @Composable
 private fun ShareScreen(core: NetKitCore, ips: List<String>, p: Palette,
                         chooseFiles: () -> Unit, chooseFolder: () -> Unit,
+                        chooseSharedFolder: () -> Unit, shareAll: () -> Unit, stopSharedFolder: () -> Unit,
                         startShare: () -> Unit, stopShare: () -> Unit,
                         copy: (String) -> Unit, shareLink: (String) -> Unit) {
     Text("🗂️ Browser Share", fontSize = 25.sp, fontWeight = FontWeight.Bold)
@@ -264,6 +303,20 @@ private fun ShareScreen(core: NetKitCore, ips: List<String>, p: Palette,
         Text("مجلد استقبال الملفات", fontWeight = FontWeight.Bold)
         MutedText(core.folder)
         MainButton("📁 اختيار مجلد الاستقبال", p, action = chooseFolder)
+    }
+    Spacer(Modifier.height(13.dp))
+    GlassCard {
+        Text("📁 مشاركة مجلد أو التخزين المشترك", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        MutedText("مش لازم تختار كل ملف لحاله. شارك مجلد كامل مع مجلداته الفرعية، أو مساحة التخزين المشتركة بعد منح صلاحية خاصة.")
+        Spacer(Modifier.height(8.dp))
+        MutedText(core.sharedFolderStatus)
+        MainButton("📂 اختيار مجلد كامل للمشاركة", p, action = chooseSharedFolder)
+        Spacer(Modifier.height(8.dp))
+        MainButton("🗄️ مشاركة التخزين الداخلي المشترك", p,
+            enabled = Build.VERSION.SDK_INT >= 30, action = shareAll)
+        MutedText("هذا الخيار يطلب صلاحية All files access من Android؛ لا يتيح ملفات التطبيقات الخاصة أو المجلدات المحمية.")
+        OutlinedButton(onClick = stopSharedFolder) { Text("إيقاف مشاركة المجلدات") }
+        MutedText("تغيير نطاق المشاركة يوقف جلسة HTTPS الحالية؛ شغّل الجلسة مجددًا لتوليد رابط جديد.")
     }
     Spacer(Modifier.height(13.dp))
     GlassCard {
@@ -389,6 +442,32 @@ private fun AppearanceScreen(theme: Int, setTheme: (Int) -> Unit, effects: Boole
     }
 }
 
+
+@Composable
+private fun SettingsScreen(core: NetKitCore, p: Palette, selectFolder: () -> Unit,
+    allStorage: () -> Unit, stopFolder: () -> Unit, chooseReceive: () -> Unit,
+    changeTheme: () -> Unit, hotspotSettings: () -> Unit) {
+    Text("⚙ إعدادات NetKit", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 25.sp)
+    MutedText("إعدادات حقيقية للميزات المتوفرة حاليًا. الإعدادات المتقدمة للنقل و FTP/SFTP ستظهر عند تنفيذ محركاتها.")
+    Spacer(Modifier.height(14.dp))
+    GlassCard {
+        Text("التخزين والمشاركة", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        MutedText(core.sharedFolderStatus)
+        MainButton("اختيار مجلد مشاركة كامل", p, action = selectFolder)
+        MainButton("تفعيل مشاركة التخزين المشترك", p,
+            enabled = Build.VERSION.SDK_INT >= 30, action = allStorage)
+        OutlinedButton(onClick = stopFolder) { Text("تعطيل مشاركة المجلدات") }
+        HorizontalDivider(color = Color.White.copy(alpha = .15f))
+        MutedText("مجلد استقبال الملفات: ${core.folder}")
+        OutlinedButton(onClick = chooseReceive) { Text("تغيير مجلد الاستقبال") }
+    }
+    Spacer(Modifier.height(12.dp))
+    GlassCard {
+        Text("الشبكة والشكل", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        OutlinedButton(onClick = hotspotSettings) { Text("إعدادات Local Hotspot") }
+        OutlinedButton(onClick = changeTheme) { Text("الثيمات والحركة") }
+    }
+}
 
 @Composable
 private fun LiquidProgress(progress: Float, p: Palette) {
