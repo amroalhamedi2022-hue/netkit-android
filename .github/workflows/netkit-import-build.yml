@@ -28,6 +28,9 @@ jobs:
           test -f app/src/main/java/com/netkit/local/ui/NetKitApp.kt
           python3 -m pip install --user pillow
           python3 tools/generate_launcher_icons.py
+          # The Actions token cannot introduce an additional workflow file.
+          # Keep the preinstalled verified-build workflow as the sole workflow.
+          rm -f .github/workflows/android-debug.yml
       - name: Save complete source and original icons to repository
         shell: bash
         run: |
