@@ -13,6 +13,17 @@ import kotlin.concurrent.withLock
 /** All accesses are limited to explicit Storage Access Framework grants. */
 class AndroidShareStorage(private val context: Context) : ShareStorage, DirectoryShareStorage {
     private val directoryBrowser = SharedDirectoryBrowser(context)
+    private val transferSettings = context.getSharedPreferences("netkit_transfer_settings", Context.MODE_PRIVATE)
+    val browserUploadsEnabled: Boolean get() = transferSettings.getBoolean("uploads_enabled", true)
+    val maxBrowserUploadMiB: Int get() = transferSettings.getInt("max_upload_mib", 2048).coerceIn(128, 16384)
+    fun setBrowserUploadsEnabled(enabled: Boolean) {
+        transferSettings.edit().putBoolean("uploads_enabled", enabled).apply()
+    }
+    fun setMaxBrowserUploadMiB(size: Int) {
+        require(size in listOf(512, 2048, 16384)) { "Unsupported limit" }
+        transferSettings.edit().putInt("max_upload_mib", size).apply()
+    }
+    override fun maxUploadSize(): Long = maxBrowserUploadMiB.toLong() * 1024 * 1024
     val sharedDescription: String get() = directoryBrowser.description
     fun shareFolder(uri: Uri) = directoryBrowser.setSafFolder(uri)
     fun shareSharedStorage() = directoryBrowser.setSharedStorage()
@@ -48,7 +59,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
         val input = context.contentResolver.openInputStream(value.first) ?: return null
         return SharedStream(input, value.second.length)
     }
-    override fun canUpload(): Boolean = uploadTree != null
+    override fun canUpload(): Boolean = uploadTree != null && browserUploadsEnabled
 
     override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String = uploadLock.withLock {
         val treeUri = uploadTree ?: error("No destination folder")
