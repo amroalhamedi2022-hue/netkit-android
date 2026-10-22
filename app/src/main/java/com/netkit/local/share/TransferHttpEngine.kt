@@ -35,6 +35,7 @@ interface ShareStorage {
     fun items(): List<ShareItem>
     fun open(id: String): SharedStream?
     fun canUpload(): Boolean
+    fun maxUploadSize(): Long = 16L * 1024 * 1024 * 1024
     fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String
 }
 
@@ -316,7 +317,7 @@ class TransferHttpEngine(
         if (!storage.canUpload()) return fail(out, 409, "Choose upload folder on Android first")
         if (h["transfer-encoding"] != null) return fail(out, 400, "Chunked uploads not supported")
         val length = h["content-length"]?.toLongOrNull() ?: return fail(out, 400, "Content-Length required")
-        if (length < 0 || length > MAX_UPLOAD) return fail(out, 413, "Unsupported file size")
+        if (length < 0 || length > minOf(MAX_UPLOAD, storage.maxUploadSize())) return fail(out, 413, "Unsupported file size")
         val raw = h["x-file-name"] ?: return fail(out, 400, "Missing file name")
         val name = try { URLDecoder.decode(raw, "UTF-8") } catch (_: Exception) { return fail(out, 400, "Invalid filename") }
         if (!validName(name)) return fail(out, 400, "Invalid filename")
