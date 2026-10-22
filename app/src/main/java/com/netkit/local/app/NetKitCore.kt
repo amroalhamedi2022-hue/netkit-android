@@ -52,13 +52,20 @@ class NetKitCore(context: Context) {
     }
     fun shareDirectory(uri: Uri) {
         stopShare() // Revoke any existing transfer session before broadening scope.
-        storage.shareFolder(uri)
-        sharedFolderStatus = storage.sharedDescription
+        sharedFolderStatus = runCatching {
+            storage.shareFolder(uri)
+            storage.sharedDescription
+        }.getOrElse { "تعذّر مشاركة المجلد: ${it.localizedMessage.orEmpty()}" }
     }
     fun shareSharedStorage() {
         stopShare()
-        storage.shareSharedStorage()
-        sharedFolderStatus = storage.sharedDescription
+        sharedFolderStatus = runCatching {
+            storage.shareSharedStorage()
+            storage.sharedDescription
+        }.getOrElse { "تعذّر مشاركة التخزين: ${it.localizedMessage.orEmpty()}" }
+    }
+    fun reportStoragePermissionDenied() {
+        sharedFolderStatus = "لم يتم منح صلاحية مشاركة التخزين المشترك. اختر مجلدًا عبر SAF أو فعّل الصلاحية من النظام."
     }
     fun stopDirectoryShare() {
         stopShare()
