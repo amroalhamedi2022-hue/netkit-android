@@ -558,6 +558,24 @@ private fun SettingsScreen(core: NetKitCore, p: Palette, selectFolder: () -> Uni
         HorizontalDivider(color = Color.White.copy(alpha = .15f))
         MutedText("مجلد استقبال الملفات: ${core.folder}")
         OutlinedButton(onClick = chooseReceive) { Text("تغيير مجلد الاستقبال") }
+        Spacer(Modifier.height(10.dp))
+        HorizontalDivider(color = Color.White.copy(alpha = .15f))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("السماح باستقبال الملفات عبر المتصفح", color = Color.White, modifier = Modifier.weight(1f))
+            Switch(checked = core.browserUploadsEnabled,
+                onCheckedChange = { core.configureBrowserUploads(it) })
+        }
+        MutedText("عند تعطيله تبقى المشاركة للقراءة والتنزيل فقط، حتى لو تم اختيار مجلد استقبال.")
+        Spacer(Modifier.height(8.dp))
+        Text("حدّ حجم الملف المرسل", color = Color.White, fontWeight = FontWeight.Bold)
+        listOf(512 to "512 MB", 2048 to "2 GB", 16384 to "16 GB").forEach { (size, label) ->
+            Row(verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable { core.configureUploadLimit(size) }) {
+                RadioButton(selected = core.maxBrowserUploadMiB == size,
+                    onClick = { core.configureUploadLimit(size) })
+                Text(label, color = Color.White)
+            }
+        }
     }
     Spacer(Modifier.height(12.dp))
     GlassCard {
