@@ -132,7 +132,14 @@ class HotspotManager(context: Context) {
     }
 
     @TargetApi(36)
+    @SuppressLint("MissingPermission") // Checked here, and in start() before this method.
     private fun startWithUserConfiguration(callback: WifiManager.LocalOnlyHotspotCallback) {
+        check(appContext.checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED) {
+            "Nearby Wi-Fi permission is not granted"
+        }
+        check(appContext.checkSelfPermission(Manifest.permission.CHANGE_WIFI_STATE) == PackageManager.PERMISSION_GRANTED) {
+            "Change Wi-Fi state permission is not granted"
+        }
         val config = SoftApConfiguration.Builder()
         val builderClass = config.javaClass
         // APIs are PUBLIC since Android 36.1, but not present in compileSdk 36.
