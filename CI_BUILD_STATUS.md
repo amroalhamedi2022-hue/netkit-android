@@ -1,14 +1,12 @@
 # NetKit CI build result
 
-- Result: failure
-- Workflow run: https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/39708904396
-- Commit: 7b191152fd9da40aa39564704c6fbc28e6bcae2c
+- Result: success
+- Workflow run: https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/39709515163
+- Commit: bea40bcf0df11492990bf0e8031bb51f779c1816
 - Verified release: https://github.com/amroalhamedi2022-hue/netkit-android/releases/tag/v0.6.0-alpha-build1 (only if successful)
 
 ## Build log tail
 ~~~
-Downloading https://services.gradle.org/distributions/gradle-8.13-bin.zip
-.............10%.............20%.............30%.............40%.............50%.............60%.............70%.............80%.............90%.............100%
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.13/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
 > Task :app:preBuild UP-TO-DATE
@@ -38,9 +36,17 @@ Daemon will be stopped at the end of the build
 > Task :app:desugarDebugFileDependencies
 > Task :app:processDebugResources
 > Task :app:checkDebugDuplicateClasses
-> Task :app:compileDebugKotlin
 > Task :app:mergeExtDexDebug
+> Task :app:mergeLibDexDebug
+> Task :app:mergeDebugJniLibFolders
+> Task :app:mergeDebugNativeLibs
 
+> Task :app:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so. Run with --info option to learn more.
+
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
 > Task :app:compileDebugKotlin
 w: file:///home/runner/work/netkit-android/netkit-android/app/src/main/java/com/netkit/local/connectivity/HotspotManager.kt:54:34 'val ssid: String?' is deprecated. Deprecated in Java.
 w: file:///home/runner/work/netkit-android/netkit-android/app/src/main/java/com/netkit/local/connectivity/HotspotManager.kt:57:35 'field SSID: String!' is deprecated. Deprecated in Java.
@@ -50,24 +56,14 @@ w: file:///home/runner/work/netkit-android/netkit-android/app/src/main/java/com/
 > Task :app:dexBuilderDebug
 > Task :app:mergeDebugGlobalSynthetics
 > Task :app:processDebugJavaRes
-> Task :app:mergeLibDexDebug
 > Task :app:mergeProjectDexDebug
-> Task :app:mergeDebugJniLibFolders
-> Task :app:mergeDebugNativeLibs
-
-> Task :app:stripDebugDebugSymbols
-Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so. Run with --info option to learn more.
-
 > Task :app:mergeDebugJavaResource
-> Task :app:validateSigningDebug
-> Task :app:writeDebugAppMetadata
-> Task :app:writeDebugSigningConfigVersions
 > Task :app:packageDebug
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_9-1792634470959.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_9-1792634845235.json
 
-BUILD SUCCESSFUL in 2m 49s
+BUILD SUCCESSFUL in 1m 6s
 37 actionable tasks: 37 executed
 ~~~
 
@@ -112,8 +108,8 @@ Daemon will be stopped at the end of the build
 Wrote HTML report to file:///home/runner/work/netkit-android/netkit-android/app/build/reports/lint-results-debug.html
 
 > Task :app:lintDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_10-1792634637722.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_10-1792634911450.json
 
-BUILD SUCCESSFUL in 1m 8s
+BUILD SUCCESSFUL in 55s
 28 actionable tasks: 11 executed, 17 up-to-date
 ~~~
