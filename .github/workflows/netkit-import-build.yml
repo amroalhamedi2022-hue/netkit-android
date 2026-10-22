@@ -1,11 +1,17 @@
-name: NetKit Android - source import and verified APK
+name: NetKit Android - development build and verification
 
 on:
   push:
     branches: [main]
     paths:
-      - 'bootstrap/netkit-source.tar.xz.b64'
+      - 'app/**'
+      - 'qa/**'
+      - 'tools/**'
+      - 'gradle/**'
       - '.github/workflows/netkit-import-build.yml'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradlew'
   workflow_dispatch:
 
 permissions:
@@ -17,30 +23,10 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
-      - name: Restore original NetKit source
-        shell: bash
+      - name: Confirm existing Android source
         run: |
-          set -euo pipefail
-          test -s bootstrap/netkit-source.tar.xz.b64
-          base64 --decode bootstrap/netkit-source.tar.xz.b64 > "$RUNNER_TEMP/netkit-source.tar.xz"
-          echo "9408596be213ac9018bdaa33f5ad1018c0578f65ab0facc049b78a0b8f45baaf  $RUNNER_TEMP/netkit-source.tar.xz" | sha256sum -c -
-          tar -xJf "$RUNNER_TEMP/netkit-source.tar.xz"
           test -f app/src/main/java/com/netkit/local/ui/NetKitApp.kt
-          python3 -m pip install --user pillow
-          python3 tools/generate_launcher_icons.py
-          # Tar archives may preserve epoch timestamps, invalid for ZIP.
-          sed -i 's/zipfile.ZIP_DEFLATED, compresslevel=9)/zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False)/' tools/package_verified_build.py
-      - name: Save complete source and original icons to repository
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "netkit-build-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A -- . ':!.github/workflows/android-debug.yml'
-          if ! git diff --cached --quiet; then
-            git commit -m "Restore NetKit Android v0.6 sources and Liquid Aurora icons"
-            git push origin HEAD:main
-          fi
+          test -f app/src/main/java/com/netkit/local/share/SharedDirectoryBrowser.kt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -100,21 +86,10 @@ jobs:
           grep -F "package: name='com.netkit.local'" apk-badging.txt
       - name: Package APK, source and SHA-256
         run: python3 tools/package_verified_build.py
-      - name: Publish APK and sources to private GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG=v0.6.0-alpha-build1
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "NetKit v0.6.0 Alpha Build 1" --notes "Verified CI Debug APK. Device testing remains required." --prerelease
-          fi
-          gh release upload "$TAG" dist/*.apk dist/*.zip dist/SHA256SUMS.txt --clobber
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NetKit-v0.6.0-alpha-build1
+          name: NetKit-development-debug
           path: |
             dist/NetKit_v0.6.0-alpha-debug.apk
             dist/NetKit_Android_Source_v0.6-build1.zip
@@ -123,33 +98,3 @@ jobs:
             app/build/reports/lint-results-debug.html
           if-no-files-found: error
           retention-days: 30
-      - name: Publish build outcome and log excerpt
-        if: always()
-        shell: bash
-        env:
-          BUILD_RESULT: ${{ job.status }}
-        run: |
-          set -euo pipefail
-          {
-            echo "# NetKit CI build result"
-            echo
-            echo "- Result: $BUILD_RESULT"
-            echo "- Workflow run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            echo "- Commit: $GITHUB_SHA"
-            echo "- Verified release: https://github.com/$GITHUB_REPOSITORY/releases/tag/v0.6.0-alpha-build1 (only if successful)"
-            echo
-            echo '## Build log tail'
-            echo '~~~'
-            if [[ -f "$RUNNER_TEMP/netkit-build.log" ]]; then tail -n 90 "$RUNNER_TEMP/netkit-build.log"; else echo 'Build was not reached.'; fi
-            echo '~~~'
-            echo
-            echo '## Lint log tail'
-            echo '~~~'
-            if [[ -f "$RUNNER_TEMP/netkit-lint.log" ]]; then tail -n 70 "$RUNNER_TEMP/netkit-lint.log"; else echo 'Lint was not reached.'; fi
-            echo '~~~'
-          } > CI_BUILD_STATUS.md
-          git config user.name "netkit-build-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CI_BUILD_STATUS.md
-          git commit -m "Record NetKit CI outcome: $BUILD_RESULT" || true
-          git push origin HEAD:main || true
