@@ -18,6 +18,33 @@ import androidx.compose.runtime.setValue
 class HotspotManager(context: Context) {
     private val appContext = context.applicationContext
     private val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    private val prefs = HotspotSettingsStore(appContext)
+    val supportsCustomSettings: Boolean get() = Build.VERSION.SDK_INT >= 36
+    var preferredName by mutableStateOf(prefs.ssid())
+        private set
+    var preferredPassword by mutableStateOf(prefs.password())
+        private set
+    var preferredBand by mutableStateOf(prefs.band())
+        private set
+
+    init {
+        if (preferredPassword.isBlank()) {
+            val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+            val random = java.security.SecureRandom()
+            val password = (1..16).map { alphabet[random.nextInt(alphabet.length)] }.joinToString("")
+            prefs.update(preferredName, password, preferredBand)
+            preferredPassword = password
+        }
+    }
+
+    fun updateConfiguration(name: String, password: String, band: String) {
+        require(supportsCustomSettings) { "إعداد الشبكة المخصص يحتاج Android API 36 أو أحدث" }
+        require(!state.active && !state.starting) { "أوقف Hotspot قبل تغيير الإعدادات" }
+        prefs.update(name, password, band)
+        preferredName = prefs.ssid()
+        preferredPassword = prefs.password()
+        preferredBand = prefs.band()
+    }
     private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
     private var requestPending = false
     /** Called on the main thread when Android refuses or unexpectedly stops the reservation. */
@@ -45,7 +72,7 @@ class HotspotManager(context: Context) {
         state = HotspotUi(status = "جاري تشغيل الشبكة المحلية…", starting = true)
         requestPending = true
         try {
-            wifi.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
+            val callback = object : WifiManager.LocalOnlyHotspotCallback() {
                 override fun onStarted(value: WifiManager.LocalOnlyHotspotReservation) {
                     if (!requestPending) { value.close(); return }
                     reservation = value
@@ -86,12 +113,30 @@ class HotspotManager(context: Context) {
                     state = HotspotUi(status = message)
                     onUnavailable?.invoke()
                 }
-            }, Handler(Looper.getMainLooper()))
+            }
+            if (Build.VERSION.SDK_INT >= 36) startWithUserConfiguration(callback)
+            else wifi.startLocalOnlyHotspot(callback, Handler(Looper.getMainLooper()))
         } catch (exception: Exception) {
             requestPending = false
             state = HotspotUi(status = "فشل تشغيل Hotspot: ${exception.localizedMessage.orEmpty()}")
             onUnavailable?.invoke()
         }
+    }
+
+    @TargetApi(36)
+    private fun startWithUserConfiguration(callback: WifiManager.LocalOnlyHotspotCallback) {
+        val config = SoftApConfiguration.Builder()
+            .setSsid(preferredName)
+            .setPassphrase(preferredPassword, SoftApConfiguration.SECURITY_TYPE_WPA2_PSK)
+        when (preferredBand) {
+            "2.4" -> config.setBand(SoftApConfiguration.BAND_2GHZ)
+            "5" -> {
+                require(wifi.is5GHzBandSupported) { "الجهاز لا يدعم 5GHz في إعدادات Wi-Fi هذه" }
+                config.setBand(SoftApConfiguration.BAND_5GHZ)
+            }
+            else -> Unit // Android chooses the strongest available supported band.
+        }
+        wifi.startLocalOnlyHotspotWithConfiguration(config.build(), appContext.mainExecutor, callback)
     }
 
     @TargetApi(36)
