@@ -356,6 +356,11 @@ private fun ShareScreen(core: NetKitCore, ips: List<String>, p: Palette,
 
 @Composable
 private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop: () -> Unit, copy: (String) -> Unit) {
+    val context = LocalContext.current
+    var name by remember { mutableStateOf(core.hotspot.preferredName) }
+    var password by remember { mutableStateOf(core.hotspot.preferredPassword) }
+    var band by remember { mutableStateOf(core.hotspot.preferredBand) }
+    var feedback by remember { mutableStateOf("") }
     Text("🫧 Smart Hotspot", fontSize = 25.sp, fontWeight = FontWeight.Bold)
     MutedText("أنشئ شبكة نقل محلية من التطبيق نفسه بدون مشاركة إنترنت.")
     Spacer(Modifier.height(15.dp))
@@ -374,6 +379,45 @@ private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop:
         } else {
             MainButton("◉ تشغيل Local-only Hotspot", p,
                 enabled = !core.hotspot.state.starting, action = start)
+        }
+    }
+    Spacer(Modifier.height(13.dp))
+    GlassCard {
+        Text("إعدادات نقطة الاتصال", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.White)
+        if (core.hotspot.supportsCustomSettings) {
+            MutedText("هذه الإعدادات تُحفظ وتُطبّق عند بدء Local-only Hotspot على Android API 36 أو أحدث.")
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(name, { name = it.take(32) }, label = { Text("SSID • اسم الشبكة") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                enabled = !core.hotspot.state.active && !core.hotspot.state.starting)
+            OutlinedTextField(password, { password = it.take(63) }, label = { Text("WPA2 • كلمة المرور (8–63)") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                enabled = !core.hotspot.state.active && !core.hotspot.state.starting)
+            Text("النطاق المفضّل", color = Color.White)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf("auto" to "تلقائي", "2.4" to "2.4 GHz", "5" to "5 GHz").forEach { (code, label) ->
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable(enabled = !core.hotspot.state.active) { band = code }) {
+                        RadioButton(selected = band == code, onClick = { band = code },
+                            enabled = !core.hotspot.state.active)
+                        Text(label, color = Color.White, fontSize = 12.sp)
+                    }
+                }
+            }
+            MainButton("حفظ إعدادات Hotspot", p,
+                enabled = !core.hotspot.state.active && !core.hotspot.state.starting) {
+                feedback = runCatching {
+                    core.hotspot.updateConfiguration(name, password, band)
+                    "تم حفظ الإعدادات؛ سيتم تطبيقها عند التشغيل المقبل."
+                }.getOrElse { it.localizedMessage ?: "الإعدادات غير صالحة" }
+            }
+            if (feedback.isNotBlank()) MutedText(feedback)
+        } else {
+            MutedText("على Android ${Build.VERSION.SDK_INT} لا يسمح LocalOnlyHotspot للتطبيق بتثبيت SSID أو كلمة المرور أو اختيار 2.4/5GHz. القيم المعروضة أعلاه مولّدة من النظام وقد تتغير عند التشغيل.")
+            MutedText("خيار تعديل اسم/كلمة سر نقطة اتصال الإنترنت العادية موجود في إعدادات Android إن دعمته الشركة المصنّعة؛ هذه خدمة مختلفة وقد تشارك الإنترنت.")
+            OutlinedButton(onClick = {
+                runCatching { context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }
+            }) { Text("فتح إعدادات الاتصال بالنظام") }
         }
     }
     Spacer(Modifier.height(13.dp))
