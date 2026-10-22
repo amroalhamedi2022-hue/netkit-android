@@ -21,6 +21,14 @@ import kotlin.concurrent.thread
 /** Java/JVM-only transport core. Android storage and certificate code are adapters. */
 data class ShareItem(val id: String, val name: String, val length: Long?)
 data class SharedStream(val stream: InputStream, val length: Long?)
+data class ShareBrowseEntry(val id: String, val name: String, val directory: Boolean, val length: Long?)
+data class ShareBrowsePage(val entries: List<ShareBrowseEntry>, val nextOffset: Int?)
+interface DirectoryShareStorage {
+    fun browseDirectory(directoryId: String, offset: Int, limit: Int = 100): ShareBrowsePage
+    fun directoryItem(id: String): ShareItem?
+    fun openDirectoryItem(id: String): SharedStream?
+    fun hasSharedDirectory(): Boolean
+}
 class UploadHashMismatchException : IllegalStateException("Upload SHA-256 does not match")
 
 interface ShareStorage {
@@ -109,11 +117,14 @@ class TransferHttpEngine(
                     if (parts.size != 3 || parts[2] != "HTTP/1.1") return fail(out, 400, "Invalid request")
                     val method = parts[0]
                     val path = parts[1].substringBefore('?')
+                    val query = parts[1].substringAfter('?', "")
                     val headers = readHeaders(input)
                     if (path != prefix && !path.startsWith("$prefix/")) return fail(out, 404, "Not found")
                     when {
                         method == "GET" && (path == prefix || path == "$prefix/") -> html(out)
                         method == "GET" && path == "$prefix/list" -> list(out)
+                        method == "GET" && path == "$prefix/browse" -> browse(out, query)
+                        method == "GET" && path.startsWith("$prefix/browse-file/") -> download(out, path.removePrefix("$prefix/browse-file/"), headers["range"], folderMode = true)
                         method == "GET" && path.startsWith("$prefix/file/") -> download(out, path.removePrefix("$prefix/file/"), headers["range"])
                         method == "POST" && path == "$prefix/upload" -> upload(input, out, headers)
                         else -> fail(out, 405, "Unsupported route")
@@ -193,16 +204,37 @@ class TransferHttpEngine(
         }
         response(out, 200, "{\"items\":[$items],\"uploadAllowed\":${storage.canUpload()}}", "application/json; charset=utf-8")
     }
+    private fun browse(out: OutputStream, query: String) {
+        val storage = storage as? DirectoryShareStorage ?: return fail(out, 404, "Folder browsing unavailable")
+        if (!storage.hasSharedDirectory()) return response(out, 200, """{"entries":[],"nextOffset":null,"enabled":false}""", "application/json; charset=utf-8")
+        val args = query.split('&').mapNotNull { part ->
+            val eq = part.indexOf('=')
+            if (eq < 0) null else part.take(eq) to URLDecoder.decode(part.substring(eq + 1), "UTF-8")
+        }.toMap()
+        val dir = args["dir"]?.takeIf { it == "root" || it.matches(Regex("[a-fA-F0-9-]{36}")) } ?: "root"
+        val offset = args["offset"]?.toIntOrNull()?.coerceIn(0, 1000000) ?: 0
+        val page = storage.browseDirectory(dir, offset, 100)
+        val content = page.entries.joinToString(",") { item ->
+            """{"id":${jsonEscape(item.id)},"name":${jsonEscape(item.name)},"directory":${item.directory},"length":${item.length ?: "null"}}"""
+        }
+        val next = page.nextOffset?.toString() ?: "null"
+        response(out, 200, """{"entries":[$content],"nextOffset":$next,"enabled":true}""", "application/json; charset=utf-8")
+    }
+
     /** Single RFC 7233 byte ranges enable clients to resume DOWNLOADS.
      *  Android SAF streams can be non-seekable: we discard bytes to reach the requested offset.
      *  Unknown-length streams ignore Range and continue chunked, which HTTP allows.
      *  Upload resumption is NOT implemented.
      */
-    private fun download(out: OutputStream, id: String, rangeHeader: String?) {
+    private fun download(out: OutputStream, id: String, rangeHeader: String?, folderMode: Boolean = false) {
         // IDs are server-generated UUIDs, not filesystem paths.
         if (!id.matches(Regex("[a-fA-F0-9-]{36}"))) return fail(out, 404, "No file")
-        val item = storage.items().firstOrNull { it.id == id } ?: return fail(out, 404, "No file")
-        val source = storage.open(id) ?: return fail(out, 404, "File unavailable")
+        val directory = storage as? DirectoryShareStorage
+        val item = if (folderMode) directory?.directoryItem(id)
+            else storage.items().firstOrNull { it.id == id }
+        if (item == null) return fail(out, 404, "No file")
+        val source = (if (folderMode) directory?.openDirectoryItem(id) else storage.open(id))
+            ?: return fail(out, 404, "File unavailable")
         source.stream.use { input ->
             val total = source.length?.takeIf { it >= 0L }
             val filename = URLEncoder.encode(item.name, "UTF-8").replace("+", "%20")
