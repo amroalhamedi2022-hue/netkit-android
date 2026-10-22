@@ -117,18 +117,23 @@ fun NetKitApp(
     val allFilesPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
             onStopShare()
-            runCatching { core.shareSharedStorage() }
-        }
+            core.shareSharedStorage()
+        } else core.reportStoragePermissionDenied()
     }
     val requestSharedStorage = {
         if (Build.VERSION.SDK_INT >= 30) {
             if (Environment.isExternalStorageManager()) {
                 onStopShare()
-                runCatching { core.shareSharedStorage() }
+                core.shareSharedStorage()
             } else {
                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                     Uri.parse("package:${context.packageName}"))
-                allFilesPermissionLauncher.launch(intent)
+                runCatching { allFilesPermissionLauncher.launch(intent) }
+                    .onFailure {
+                        runCatching {
+                            allFilesPermissionLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                        }.onFailure { core.reportStoragePermissionDenied() }
+                    }
             }
         }
     }
@@ -476,7 +481,7 @@ private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop:
         Spacer(Modifier.height(10.dp))
         if (core.hotspot.state.active) {
             Text("SSID: ${core.hotspot.state.ssid}", color = MaterialTheme.colorScheme.onSurface)
-            Text("Password: " + if (revealPassword) core.hotspot.state.password else "••••••••", color = muted)
+            Text("Password: " + (if (revealPassword) core.hotspot.state.password else "••••••••"), color = muted)
             OutlinedButton(onClick = { revealPassword = !revealPassword }) {
                 Text(if (revealPassword) "إخفاء كلمة المرور" else "إظهار كلمة المرور")
             }
