@@ -137,7 +137,7 @@ class HotspotManager(context: Context) {
         val builderClass = config.javaClass
         // APIs are PUBLIC since Android 36.1, but not present in compileSdk 36.
         builderClass.getMethod("setWifiSsid", WifiSsid::class.java)
-            .invoke(config, WifiSsid.fromUtf8Text(preferredName))
+            .invoke(config, WifiSsid.fromBytes(preferredName.toByteArray(Charsets.UTF_8)))
         builderClass.getMethod("setPassphrase", String::class.java, Int::class.javaPrimitiveType)
             .invoke(config, preferredPassword, SoftApConfiguration.SECURITY_TYPE_WPA2_PSK)
         if (preferredBand != "auto") {
