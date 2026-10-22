@@ -2,6 +2,8 @@ name: NetKit Android — verified Debug APK
 on:
   push:
     branches: [main]
+    paths:
+      - 'NetKit_Android_Source_v0.6*.zip'
   workflow_dispatch:
 
 permissions:
