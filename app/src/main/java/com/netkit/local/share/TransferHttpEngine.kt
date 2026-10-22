@@ -387,7 +387,10 @@ class TransferHttpEngine(
         <main>
           <header><div class="mark">🫧</div><div><h1 class="gradient">NetKit</h1><small>YOUR NETWORK, YOUR TOOLS</small></div></header>
           <span class="chip">● Local · HTTPS Session</span>
-          <div class="glass"><h2>📥 تحميل الملفات</h2><p>الملفات التي اختارها صاحب جهاز Android فقط. روابط التحميل تدعم الاستئناف (HTTP Range) إذا دعمه المتصفح أو برنامج التحميل.</p><ul id="files">جارٍ القراءة…</ul></div>
+          <div class="glass"><h2>📁 تصفّح المجلد المشترك</h2><p>يعرض فقط المجلد أو مساحة التخزين المشتركة التي سمح صاحب الجهاز بمشاركتها. التصفح للقراءة والتنزيل، والمجلدات الفرعية متاحة.</p>
+            <div class="actions"><button class="secondary" id="folderBack" disabled>↩ الرجوع</button><span id="folderPath" class="chip">المجلد الرئيسي</span></div>
+            <ul id="folders">جارٍ قراءة المجلد…</ul><div class="actions"><button class="secondary" id="folderMore" hidden>عرض المزيد</button></div></div>
+          <div class="glass"><h2>📥 ملفات محددة</h2><p>الملفات الفردية المختارة من جهاز Android. التحميل يدعم HTTP Range عندما يكون الحجم معروفًا.</p><ul id="files">جارٍ القراءة…</ul></div>
           <div class="glass"><h2>📤 إرسال ملفات للجهاز</h2><p>اختَر ملفات من اللابتوب لإرسالها إلى المجلد المحدد على Android. يتم التحقق من SHA-256 للملفات حتى 16 MiB عندما يدعم المتصفح Web Crypto؛ الملفات الأكبر تُنقل دون مقارنة تجزئة طرفية حاليًا.</p>
             <input id="choose" type="file" multiple />
             <div class="actions"><button id="upload">ابدأ الإرسال</button><button class="secondary" id="cancel" disabled>إلغاء النقل</button></div>
@@ -400,6 +403,43 @@ class TransferHttpEngine(
         const el=id=>document.getElementById(id);
         const humanBytes=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':n>=1024?(n/1024).toFixed(1)+' KB':n+' B';
         let activeRequest=null, receivingAllowed=false;
+        const foldersState={dir:'root',offset:0,stack:[]};
+        function folderLink(folderId) {
+          foldersState.stack.push(foldersState.dir);
+          foldersState.dir=folderId;
+          el('folderBack').disabled=false;
+          loadFolder(true);
+        }
+        async function loadFolder(reset=false) {
+          if(reset){foldersState.offset=0;el('folders').replaceChildren();}
+          el('folderPath').textContent=foldersState.dir==='root'?'المجلد الرئيسي':'مجلد فرعي';
+          const url=base+'/browse?dir='+encodeURIComponent(foldersState.dir)+'&offset='+foldersState.offset;
+          const response=await fetch(url,{cache:'no-store'});
+          if(!response.ok)throw Error('تعذّر عرض المجلد');
+          const page=await response.json();
+          if(!page.enabled){el('folders').textContent='فعّل مشاركة مجلد من جهاز Android لعرض محتوياته.';el('folderMore').hidden=true;return}
+          for(const entry of page.entries) {
+            const li=document.createElement('li');
+            if(entry.directory) {
+              const b=document.createElement('button');b.className='secondary';
+              b.textContent='📁 '+entry.name;b.onclick=()=>folderLink(entry.id);li.append(b);
+            } else {
+              const a=document.createElement('a');a.textContent='📄 '+entry.name+' · '+(entry.length==null?'حجم غير معروف':humanBytes(entry.length));
+              a.href=base+'/browse-file/'+encodeURIComponent(entry.id);li.append(a);
+            }
+            el('folders').append(li);
+          }
+          if(reset && page.entries.length===0)el('folders').textContent='المجلد فارغ.';
+          foldersState.offset=page.nextOffset??0;
+          el('folderMore').hidden=page.nextOffset===null;
+        }
+        el('folderMore').onclick=()=>loadFolder(false).catch(e=>{el('folders').textContent=e.message});
+        el('folderBack').onclick=()=> {
+          if(!foldersState.stack.length)return;
+          foldersState.dir=foldersState.stack.pop();
+          el('folderBack').disabled=!foldersState.stack.length;
+          loadFolder(true).catch(e=>{el('folders').textContent=e.message});
+        };
         function resetButtons(busy) {el('upload').disabled=busy||!receivingAllowed;el('cancel').disabled=!busy}
         async function refresh() {
           const r=await fetch(base+'/list',{cache:'no-store'});if(!r.ok)throw Error('Server error');
@@ -461,6 +501,7 @@ class TransferHttpEngine(
           finally {activeRequest=null;resetButtons(false)}
         };
         refresh().catch(e=>{el('files').textContent='تعذّر قراءة الملفات: '+e.message;resetButtons(false)});
+        loadFolder(true).catch(e=>{el('folders').textContent='تعذّر قراءة المجلد: '+e.message});
         </script></body></html>
     """.trimIndent(), "text/html; charset=utf-8")
 }
