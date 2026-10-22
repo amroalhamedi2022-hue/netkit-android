@@ -35,6 +35,23 @@ class NetKitCore(context: Context) {
         private set
     var folder by mutableStateOf("لم يتم اختيار مجلد استقبال")
         private set
+    var sharedFolderStatus by mutableStateOf(storage.sharedDescription)
+        private set
+    fun shareDirectory(uri: Uri) {
+        stopShare() // Revoke any existing transfer session before broadening scope.
+        storage.shareFolder(uri)
+        sharedFolderStatus = storage.sharedDescription
+    }
+    fun shareSharedStorage() {
+        stopShare()
+        storage.shareSharedStorage()
+        sharedFolderStatus = storage.sharedDescription
+    }
+    fun stopDirectoryShare() {
+        stopShare()
+        storage.stopFolderShare()
+        sharedFolderStatus = storage.sharedDescription
+    }
     var result by mutableStateOf("اختر DNS أو اختبار اتصال TCP")
         private set
     var busy by mutableStateOf(false)
