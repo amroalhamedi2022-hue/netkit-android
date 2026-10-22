@@ -212,6 +212,30 @@ private fun LiquidBackdrop(p: Palette, effects: Boolean) {
     val float by infinite.animateFloat(0f, 1f,
         infiniteRepeatable(tween(12500), RepeatMode.Reverse), label = "bubble-offset")
     Canvas(Modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+        // Layered translucent liquid ribbons: gently animated, behind all interactive content.
+        val shift = if (effects) (float - .5f) * 0.08f * h else 0f
+        val ribbon = Path().apply {
+            moveTo(-.12f * w, .19f * h + shift)
+            cubicTo(.15f * w, .02f * h + shift, .60f * w, .35f * h, 1.12f * w, .12f * h)
+            lineTo(1.12f * w, .30f * h)
+            cubicTo(.62f * w, .52f * h, .28f * w, .22f * h + shift, -.12f * w, .45f * h)
+            close()
+        }
+        drawPath(ribbon, Brush.linearGradient(
+            listOf(p.aqua.copy(alpha = .12f), p.violet.copy(alpha = .16f), p.coral.copy(alpha = .09f)),
+            start = Offset(0f, 0f), end = Offset(w, h * .58f)))
+        val lowerRibbon = Path().apply {
+            moveTo(-.1f * w, .75f * h)
+            cubicTo(.24f * w, .59f * h + shift, .63f * w, .97f * h, 1.1f * w, .69f * h)
+            lineTo(1.1f * w, 1.12f * h)
+            lineTo(-.1f * w, 1.12f * h)
+            close()
+        }
+        drawPath(lowerRibbon, Brush.linearGradient(
+            listOf(p.coral.copy(alpha = .10f), p.violet.copy(alpha = .19f), p.aqua.copy(alpha = .12f)),
+            start = Offset(0f, h * .6f), end = Offset(w, h)))
         drawRect(brush = Brush.radialGradient(
             listOf(p.violet.copy(alpha = .28f), Color.Transparent),
             center = Offset(size.width * .05f, size.height * .05f), radius = size.width * .9f))
