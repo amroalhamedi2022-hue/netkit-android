@@ -164,5 +164,61 @@ fun main() {
         check(error is IllegalStateException && error.message == "Empty archive pagination page")
         check(calls == 1) { "Unbounded empty-page traversal: $calls" }
     }
+
+    run {
+        // Browser ZIP exports carry a streamed SHA-256 manifest without buffering
+        // entire SAF files, including UTF-8 nested filenames.
+        val payloads = mapOf("a" to "ABC".toByteArray(), "b" to byteArrayOf(0, 1, 2, 3))
+        val source = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int): ArchivePage =
+                ArchivePage(when (folderId) {
+                    "root" -> listOf(ArchiveFile("a", "alpha.bin", false),
+                        ArchiveFile("folder", "مجلد", true))
+                    "folder" -> listOf(ArchiveFile("b", "بيانات.bin", false))
+                    else -> error("Unexpected folder")
+                }, null)
+            override fun open(fileId: String): InputStream? =
+                payloads[fileId]?.let(::ByteArrayInputStream)
+        }
+        val bytes = ByteArrayOutputStream()
+        val info: ArchiveResult
+        ZipOutputStream(bytes).use { info = DirectoryArchive.write(
+            "root", source, it, includeChecksums = true) }
+        val unzipped = linkedMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(bytes.toByteArray())).use { zip ->
+            while (true) {
+                val item = zip.nextEntry ?: break
+                unzipped[item.name] = zip.readBytes()
+                zip.closeEntry()
+            }
+        }
+        check(info.entries == 3 && unzipped.size == 4)
+        check(unzipped["alpha.bin"]!!.contentEquals(payloads["a"]!!))
+        check(unzipped["مجلد/بيانات.bin"]!!.contentEquals(payloads["b"]!!))
+        fun hash(data: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(data).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val expectedManifest = hash(payloads["a"]!!) + "  alpha.bin\n" +
+            hash(payloads["b"]!!) + "  مجلد/بيانات.bin\n"
+        check(unzipped["NetKit-SHA256SUMS.txt"]!!.toString(Charsets.UTF_8) == expectedManifest)
+        check(info.bytes == 7L + expectedManifest.toByteArray().size)
+        val quotaFailure = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", source, it, maximumBytes = 7,
+                    includeChecksums = true)
+            }
+        }.exceptionOrNull()
+        check(quotaFailure is IllegalStateException &&
+            quotaFailure.message == "Archive byte budget exceeded")
+        val collision = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("a", "netkit-sha256sums.TXT", false)), null)
+            override fun open(fileId: String) = ByteArrayInputStream(byteArrayOf(1))
+        }
+        check(runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", collision, it, includeChecksums = true)
+            }
+        }.exceptionOrNull() is IllegalArgumentException)
+    }
     println("PASS: paged ZIP, nested folders, path/quotas, transient zero-read recovery and stalled-provider rejection, Windows-safe names/collisions")
 }
