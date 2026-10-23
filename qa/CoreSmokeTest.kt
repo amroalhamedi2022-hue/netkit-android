@@ -205,7 +205,7 @@ fun main(args: Array<String>) {
         check(request(root + "/upload", "POST", byteArrayOf(1), ".netkit-backdoor.part").first == 400)
         // Authorized browser uploads still must not create spoofed Windows/SAF names.
         for (unsafe in listOf(
-            "CON.txt", "LPT1.log", "COM¹.txt", "report.", "report ",
+            "CON.txt", "LPT1.log", "COM%C2%B9.txt", "report.", "report%20",
             "bad%3Aname.txt", "invoice%E2%80%AEgpj.exe",
             "hidden%E2%81%A6name.txt", ".NETKIT-shadow.part",
             "bad%E2%80%A8line.txt", "bad%EF%BB%BFmark.txt"
