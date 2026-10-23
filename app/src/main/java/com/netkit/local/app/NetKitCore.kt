@@ -8,6 +8,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.netkit.local.connectivity.HotspotManager
 import com.netkit.local.connectivity.NetworkStatus
+import com.netkit.local.connectivity.PeerDiscovery
+import com.netkit.local.settings.NetKitSettings
+import com.netkit.local.transfer.TransferQueue
+import com.netkit.local.transfer.FileTransferJournal
 import com.netkit.local.share.AndroidShareStorage
 import com.netkit.local.share.AndroidTls
 import com.netkit.local.share.TransferHttpEngine
@@ -25,6 +29,9 @@ class NetKitCore(context: Context) {
     val hotspot = HotspotManager(context)
     val network = NetworkStatus(context)
     val storage = AndroidShareStorage(context)
+    val settings = NetKitSettings(context)
+    val discovery = PeerDiscovery(context)
+    val transfers = TransferQueue(FileTransferJournal(java.io.File(context.filesDir, "netkit_transfer_queue.properties")))
     private val serverLock = Any()
     private var server: TransferHttpEngine? = null
     private var sessionGeneration = 0L
@@ -119,6 +126,7 @@ class NetKitCore(context: Context) {
                             try {
                                 created.start()
                                 server = created
+                                discovery.advertise(created.port)
                                 Pair(created, tls.fingerprint)
                             } catch (t: Exception) {
                                 created.close()
@@ -134,6 +142,14 @@ class NetKitCore(context: Context) {
                         fingerprint = fingerprint,
                         message = "الخادم شغّال داخل الشبكة المحلية — أوقفه بعد الانتهاء"
                     )
+                    // The saved duration actually revokes the existing token and closes sockets.
+                    scope.launch {
+                        kotlinx.coroutines.delay(settings.shareExpirationMinutes * 60_000L)
+                        if (!disposed && generation == synchronized(serverLock) { sessionGeneration }) {
+                            stopShare()
+                            share = ShareUi(message = "انتهت صلاحية المشاركة المحلية، ابدأ جلسة جديدة")
+                        }
+                    }
                 }
             } catch (t: Exception) {
                 if (!disposed) {
@@ -153,6 +169,7 @@ class NetKitCore(context: Context) {
             server?.close()
             server = null
         }
+        discovery.stopAdvertising()
         share = ShareUi(message = "تم إيقاف المشاركة ومسح رمز الجلسة")
     }
     fun runDns(host: String) = runDiagnostic { Diagnostics.dns(host) }
@@ -171,6 +188,7 @@ class NetKitCore(context: Context) {
         disposed = true
         stopShare()
         hotspot.stop()
+        discovery.close()
         scope.cancel()
     }
 }
