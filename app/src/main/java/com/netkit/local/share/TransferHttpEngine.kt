@@ -401,9 +401,26 @@ class TransferHttpEngine(
             fail(out, 422, "Upload SHA-256 mismatch. File was not committed")
         } catch (_: Exception) { fail(out, 500, "Could not save upload") }
     }
-    private fun validName(v: String): Boolean = v.isNotBlank() && v.length <= 180 &&
-        v != "." && v != ".." && !v.contains('/') && !v.contains('\\') &&
-        v.none { it.code < 32 || it.code == 127 } && !v.startsWith(".netkit-")
+    /** Browser-supplied filenames are untrusted even when the upload session is authorized.
+     * Reject names that Windows/SAF extractors may alias or display deceptively.
+     * Normal Arabic filenames remain supported.
+     */
+    private fun validName(v: String): Boolean {
+        if (v.isBlank() || v.length > 180 || v == "." || v == ".." ||
+            v.endsWith('.') || v.endsWith(' ') ||
+            v.startsWith(".netkit-", ignoreCase = true)) return false
+        if (v.any { c ->
+                c == '/' || c == '\\' || c.code < 32 || c.code in 0x7f..0x9f ||
+                c in "<>:\"|?*" || c.code == 0x061c ||
+                c.code in 0x200e..0x200f || c.code in 0x202a..0x202e ||
+                c.code in 0x2066..0x206f || c.code in 0x2028..0x2029 ||
+                c.code in 0xfff9..0xfffb || c.code == 0xfeff
+            }) return false
+        val stem = v.substringBefore('.').trimEnd(' ').uppercase(java.util.Locale.ROOT)
+        if (stem in setOf("CON", "PRN", "AUX", "NUL") ||
+            Regex("^(COM|LPT)[1-9¹²³]$").matches(stem)) return false
+        return true
+    }
 
     private fun html(out: OutputStream) = response(out, 200, """
         <!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8" />
