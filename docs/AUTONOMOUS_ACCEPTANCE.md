@@ -75,3 +75,9 @@ AUTOMATION_COMPLETE: BLOCKED
 - **FAIL:** no failing job on this exact source SHA. This does not certify functional release.
 - **NOT TESTED / BLOCKED:** physical Xiaomi Pad 5↔Windows/Android LAN transfers, SAF permission revocation, browser certificate/QR acceptance, 4+ GiB resume and device SHA-256, FTP/SFTP server roles, pairing/consent, hotspot/band restrictions, Liquid Aurora screenshot comparison, independent physical-device recheck and installation. M1–M8 are not complete. Keep PR #7 draft, no main merge or release; continue development next round.
 - The acceptance ledger commit is documentation-only and **not** the same SHA as the source verified above.
+
+### Independent artifact-byte recheck of NetKit run 39995917975
+- **PASS:** downloaded artifact 12520490752 into an isolated workspace; ZIP CRC check passed, computed archive SHA-256 88234a202f86bcbe0f3c10037d5480b41eb82117712145bd3289639e021fdc58 matches GitHub's uploaded digest.
+- **PASS:** extracted NetKit_v0.6.0-alpha-debug.apk is 11743760 bytes, SHA-256 1bb1471bebd17539772a923502f92db1b05f71cb86352144a61365aaabe384cf, matching dist/SHA256SUMS.txt inside the artifact and the CI packaging log. This proves byte integrity of the DEVELOPMENT DEBUG APK, not installation, end-to-end transfer correctness or final product readiness.
+- **Source/checkout distinction:** PR #7 head 81e6468233811e55d3376350e858aa52fd868d58 was verified by the workflow using GitHub's PR merge checkout cbdf8989779ecdb16a70d1de521019b004acc152. No main update or automatic merge was performed.
+- **NOT TESTED:** device installation, Android SAF provider read/write, browser/Windows extraction, large-file resume, FTP/SFTP interoperability, actual QR consent and Liquid Aurora. Continue work and keep automation enabled.
