@@ -33,4 +33,8 @@ java -jar "$TEMP_DIR/streams.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/transfer/ProgressCheckpoint.kt" \
   "$ROOT/qa/ProgressCheckpointTest.kt" -include-runtime -d "$TEMP_DIR/checkpoint.jar"
 java -jar "$TEMP_DIR/checkpoint.jar"
+# Reject public/multicast NSD advertisements; IPv4 RFC1918 and IPv6 ULA/link-local only.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/PeerAddressPolicy.kt" \
+  "$ROOT/qa/PeerAddressPolicyTest.kt" -include-runtime -d "$TEMP_DIR/nsd-address-policy.jar"
+java -jar "$TEMP_DIR/nsd-address-policy.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
