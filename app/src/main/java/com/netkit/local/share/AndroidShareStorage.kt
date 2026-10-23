@@ -61,8 +61,17 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
     }
     override fun canUpload(): Boolean = uploadTree != null && browserUploadsEnabled
 
+    private fun ensureUploadConsent(treeUri: Uri) {
+        // Changing the destination or turning browser uploads off must also revoke
+        // a transfer already in progress, not merely block the next HTTP request.
+        if (!browserUploadsEnabled || uploadTree != treeUri) {
+            throw UploadPermissionRevokedException()
+        }
+    }
+
     override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String = uploadLock.withLock {
-        val treeUri = uploadTree ?: error("No destination folder")
+        val treeUri = uploadTree ?: throw UploadPermissionRevokedException()
+        ensureUploadConsent(treeUri)
         val folder = DocumentFile.fromTreeUri(context, treeUri) ?: error("Folder grant unavailable")
         val chosen = uniqueName(folder, fileName)
         // Write into a private-looking temporary document and rename only after full receipt.
@@ -77,6 +86,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 var received = 0L
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
+                    ensureUploadConsent(treeUri)
                     val n = StreamReadGuard.read(body, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) error("Connection closed before complete upload")
                     out.write(buffer, 0, n)
@@ -92,6 +102,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 val actual = digest.digest().joinToString("") { "%02x".format(it) }
                 if (!actual.equals(expectedSha256, ignoreCase = true)) throw UploadHashMismatchException()
             }
+            ensureUploadConsent(treeUri)
             if (!temp.renameTo(chosen)) error("Provider cannot finalize this file (rename failed)")
             completed = true
             return@withLock chosen
