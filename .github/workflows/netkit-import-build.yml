@@ -2,7 +2,7 @@ name: NetKit Android - development build and verification
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/netkit-pro-delivery-m1-m5]
     paths:
       - 'app/**'
       - 'qa/**'
@@ -80,6 +80,12 @@ jobs:
         run: python3 qa/check_static.py
       - name: Kotlin/JVM transport QA
         run: bash qa/run_jvm_tests.sh
+      - name: Verify persistent transfer queue JVM state machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          kotlinc app/src/main/java/com/netkit/local/transfer/TransferQueue.kt qa/TransferQueueTest.kt -include-runtime -d /tmp/netkit-transfer-queue.jar
+          java -jar /tmp/netkit-transfer-queue.jar "$RUNNER_TEMP"
       - name: Assemble Android debug APK
         shell: bash
         run: |
