@@ -126,6 +126,10 @@ fun main() {
         reject(listOf("bad:name.txt" to false))
         reject(listOf("bad." to false))
         reject(listOf("bad " to false))
+        reject(listOf("invoice\u202Egpj.exe" to false)) // bidi right-to-left override
+        reject(listOf("safe\u2066name.txt" to false)) // bidi isolate
+        reject(listOf("name\u007F.txt" to false)) // DEL control
+        reject(listOf("name\u0085.txt" to false)) // C1 control
         reject(listOf("Report.txt" to false, "report.TXT" to false))
         reject(listOf("Cafe\u0301.txt" to false, "Café.txt" to false))
         reject(listOf("folder" to true, "FOLDER" to false))
@@ -140,6 +144,25 @@ fun main() {
             check(it.nextEntry?.name == "ملف آمن.txt")
             check(it.readBytes().contentEquals(byteArrayOf(7)))
         }
+    }
+    run {
+        // A malicious/broken provider can report infinitely many empty pages
+        // with increasing offsets; reject immediately instead of looping.
+        var calls = 0
+        val emptyPages = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int): ArchivePage {
+                calls++
+                return ArchivePage(emptyList(), offset + 100)
+            }
+            override fun open(fileId: String) = null
+        }
+        val error = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", emptyPages, it)
+            }
+        }.exceptionOrNull()
+        check(error is IllegalStateException && error.message == "Empty archive pagination page")
+        check(calls == 1) { "Unbounded empty-page traversal: $calls" }
     }
     println("PASS: paged ZIP, nested folders, path/quotas, transient zero-read recovery and stalled-provider rejection, Windows-safe names/collisions")
 }
