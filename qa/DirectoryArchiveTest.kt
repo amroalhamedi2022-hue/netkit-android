@@ -130,6 +130,11 @@ fun main() {
         reject(listOf("safe\u2066name.txt" to false)) // bidi isolate
         reject(listOf("name\u007F.txt" to false)) // DEL control
         reject(listOf("name\u0085.txt" to false)) // C1 control
+        reject(listOf("name\uFFFD.txt" to false)) // replacement character from malformed provider
+        reject(listOf("name\uFEFF.txt" to false)) // invisible byte-order mark
+        reject(listOf("name\u2028.txt" to false)) // Unicode line separator
+        reject(listOf("name\u2029.txt" to false)) // Unicode paragraph separator
+        reject(listOf("name\uFFF9.txt" to false)) // interlinear annotation control
         reject(listOf("Report.txt" to false, "report.TXT" to false))
         reject(listOf("Cafe\u0301.txt" to false, "Café.txt" to false))
         reject(listOf("folder" to true, "FOLDER" to false))
