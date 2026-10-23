@@ -105,5 +105,41 @@ fun main() {
         }.exceptionOrNull()
         check(error is IllegalStateException && error.message == "Shared file read stalled")
     }
-    println("PASS: paged ZIP, nested folders, path/quotas, transient zero-read recovery and stalled-provider rejection")
+    run {
+        // Windows extractors may alias case-only names, Unicode NFC variants,
+        // device filenames, trailing dots and file/folder collisions.
+        fun reject(names: List<Pair<String, Boolean>>) {
+            val source = object : ArchiveDirectorySource {
+                override fun list(folderId: String, offset: Int, limit: Int): ArchivePage =
+                    ArchivePage(if (folderId == "root") names.mapIndexed { i, item ->
+                        ArchiveFile("item$i", item.first, item.second)
+                    } else emptyList(), null)
+                override fun open(fileId: String) = ByteArrayInputStream(byteArrayOf(42))
+            }
+            val failure = runCatching {
+                ZipOutputStream(ByteArrayOutputStream()).use { DirectoryArchive.write("root", source, it) }
+            }.exceptionOrNull()
+            check(failure is IllegalArgumentException) { "Unsafe ZIP entry accepted: $names ($failure)" }
+        }
+        reject(listOf("NUL.txt" to false))
+        reject(listOf("COM¹.log" to false))
+        reject(listOf("bad:name.txt" to false))
+        reject(listOf("bad." to false))
+        reject(listOf("bad " to false))
+        reject(listOf("Report.txt" to false, "report.TXT" to false))
+        reject(listOf("Cafe\u0301.txt" to false, "Café.txt" to false))
+        reject(listOf("folder" to true, "FOLDER" to false))
+        val unicodeSource = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("safe", "ملف آمن.txt", false)), null)
+            override fun open(fileId: String) = ByteArrayInputStream(byteArrayOf(7))
+        }
+        val safeZip = ByteArrayOutputStream()
+        ZipOutputStream(safeZip).use { DirectoryArchive.write("root", unicodeSource, it) }
+        ZipInputStream(ByteArrayInputStream(safeZip.toByteArray())).use {
+            check(it.nextEntry?.name == "ملف آمن.txt")
+            check(it.readBytes().contentEquals(byteArrayOf(7)))
+        }
+    }
+    println("PASS: paged ZIP, nested folders, path/quotas, transient zero-read recovery and stalled-provider rejection, Windows-safe names/collisions")
 }
