@@ -45,6 +45,21 @@ object DirectoryArchive {
 
         fun safeSegment(segment: String): String {
             require(segment.isNotBlank() && segment != "." && segment != "..") { "Unsafe archive filename" }
+            // Java Strings may contain isolated UTF-16 surrogates from a broken SAF
+            // provider. ZIP UTF-8 encoders replace them, potentially making two
+            // distinct document names alias after extraction. Keep valid emoji pairs.
+            var index = 0
+            while (index < segment.length) {
+                val c = segment[index]
+                if (Character.isHighSurrogate(c)) {
+                    require(index + 1 < segment.length &&
+                        Character.isLowSurrogate(segment[index + 1])) { "Malformed Unicode filename" }
+                    index += 2
+                } else {
+                    require(!Character.isLowSurrogate(c)) { "Malformed Unicode filename" }
+                    index++
+                }
+            }
             require(segment.length <= 240 && segment.toByteArray(Charsets.UTF_8).size <= 768)
             // SAF document names are untrusted. Reject control characters and bidi
             // overrides that can disguise a file extension in a downloaded ZIP.
