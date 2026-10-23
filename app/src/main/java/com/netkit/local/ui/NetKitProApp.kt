@@ -9,6 +9,7 @@ import androidx.core.content.edit
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
@@ -36,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -187,29 +189,74 @@ private fun shareLink(context: Context, link: String) {
 
 @Composable
 private fun LiquidBackdrop(p: Palette, effects: Boolean) {
-    val infinite = rememberInfiniteTransition(label = "liquid-bubbles")
-    val float by infinite.animateFloat(0f, 1f,
-        infiniteRepeatable(tween(12500), RepeatMode.Reverse), label = "bubble-offset")
+    val phase = if (effects) {
+        val transition = rememberInfiniteTransition(label = "liquid-aurora-motion")
+        val value by transition.animateFloat(
+            0f, 6.2831855f,
+            infiniteRepeatable(tween(17500, easing = LinearEasing)),
+            label = "slow-liquid-drift"
+        )
+        value
+    } else 0f
     Canvas(Modifier.fillMaxSize()) {
-        drawRect(color = p.bg)
-        drawRect(brush = Brush.radialGradient(
-            listOf(p.violet.copy(alpha = .28f), Color.Transparent),
-            center = Offset(size.width * .05f, size.height * .05f), radius = size.width * .9f))
-        drawRect(brush = Brush.radialGradient(
-            listOf(p.aqua.copy(alpha = .16f), Color.Transparent),
-            center = Offset(size.width, size.height * .45f), radius = size.width * .92f))
-        drawRect(brush = Brush.radialGradient(
-            listOf(p.coral.copy(alpha = .14f), Color.Transparent),
-            center = Offset(size.width * .38f, size.height), radius = size.width * .86f))
-        if (effects) {
-            listOf(Offset(.12f, .22f), Offset(.86f, .17f), Offset(.78f, .76f), Offset(.25f, .86f))
-                .forEachIndexed { i, pos ->
-                    val r = 15.dp.toPx() + i * 7.dp.toPx()
-                    val c = Offset(pos.x * size.width, pos.y * size.height + (float - .5f) * (i + 1) * 18.dp.toPx())
-                    drawCircle(brush = Brush.radialGradient(listOf(Color.White.copy(alpha = .21f),
-                        p.violet.copy(alpha = .16f), Color.Transparent), c, r), radius = r, center = c)
-                    drawCircle(Color.White.copy(alpha = .19f), radius = r, center = c, style = Stroke(1.2.dp.toPx()))
-                }
+        val w = size.width
+        val h = size.height
+        val shortest = minOf(w, h).coerceAtLeast(1f)
+        val drift = kotlin.math.sin(phase.toDouble()).toFloat()
+        drawRect(p.bg)
+        val upperWave = Path().apply {
+            moveTo(-w * .2f, h * (.07f + drift * .03f))
+            cubicTo(w * .25f, h * .01f, w * .30f, h * .25f, w * .72f, h * .10f)
+            cubicTo(w * 1.05f, -h * .01f, w * 1.1f, h * .40f, w * 1.3f, h * .33f)
+            lineTo(w * 1.3f, -h * .2f)
+            lineTo(-w * .2f, -h * .2f)
+            close()
+        }
+        drawPath(upperWave, brush = Brush.linearGradient(
+            listOf(p.violet.copy(alpha=.42f),p.aqua.copy(alpha=.16f),Color.Transparent),
+            start=Offset(w*.1f,0f),end=Offset(w*.9f,h*.4f)
+        ))
+        val lowerWave = Path().apply {
+            moveTo(-w * .1f, h * .78f)
+            cubicTo(w * .15f, h * .55f, w * .58f, h * (1f + drift * .025f), w * 1.1f, h * .69f)
+            lineTo(w*1.1f,h*1.2f)
+            lineTo(-w*.1f,h*1.2f)
+            close()
+        }
+        drawPath(lowerWave,brush=Brush.verticalGradient(
+            listOf(p.coral.copy(alpha=.1f),p.violet.copy(alpha=.34f),p.aqua.copy(alpha=.12f)),
+            startY=h*.63f,endY=h*1.1f
+        ))
+        val glowPools = listOf(
+            Triple(Offset(w*(.20f+drift*.05f),h*.19f),p.violet,shortest*.64f),
+            Triple(Offset(w*(.89f-drift*.04f),h*.39f),p.aqua,shortest*.58f),
+            Triple(Offset(w*(.26f-drift*.06f),h*.86f),p.coral,shortest*.60f)
+        )
+        glowPools.forEach { (center,color,radius) ->
+            drawCircle(brush=Brush.radialGradient(
+                listOf(color.copy(alpha=.26f),color.copy(alpha=.11f),Color.Transparent),
+                center=center,radius=radius
+            ),radius=radius,center=center)
+        }
+        val bubbles = listOf(
+            .07f to .12f,.89f to .16f,.63f to .28f,.13f to .44f,
+            .94f to .57f,.31f to .72f,.79f to .85f,.53f to .93f
+        )
+        bubbles.forEachIndexed { i,pos ->
+            val angle=phase+i*1.31f
+            val x=(pos.first+kotlin.math.sin(angle.toDouble()).toFloat()*.013f)*w
+            val y=(pos.second+kotlin.math.cos(angle.toDouble()).toFloat()*.016f)*h
+            val center=Offset(x,y)
+            val radius=(shortest*(.022f+(i%4)*.009f)).coerceIn(10.dp.toPx(),46.dp.toPx())
+            drawCircle(brush=Brush.radialGradient(
+                listOf(Color.White.copy(alpha=.32f),p.aqua.copy(alpha=.18f),
+                       p.violet.copy(alpha=.14f),Color.Transparent),
+                center=Offset(x-radius*.29f,y-radius*.34f),radius=radius*1.34f
+            ),center=center,radius=radius)
+            drawCircle(color=Color.White.copy(alpha=.30f),radius=radius,center=center,
+                style=Stroke(width=1.dp.toPx()))
+            drawCircle(color=Color.White.copy(alpha=.27f),radius=radius*.16f,
+                center=Offset(x-radius*.43f,y-radius*.43f))
         }
     }
 }
