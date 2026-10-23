@@ -227,5 +227,62 @@ fun main() {
             }
         }.exceptionOrNull() is IllegalArgumentException)
     }
-    println("PASS: paged ZIP, nested folders, path/quotas, transient zero-read recovery and stalled-provider rejection, Windows-safe names/collisions")
+    run {
+        // Stopping the HTTPS server interrupts its active worker. A provider
+        // must not be queried once that worker has already been cancelled.
+        var listings = 0
+        val source = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int): ArchivePage {
+                listings++
+                return ArchivePage(emptyList(), null)
+            }
+            override fun open(fileId: String): InputStream? = null
+        }
+        Thread.currentThread().interrupt()
+        val failure = try {
+            runCatching {
+                ZipOutputStream(ByteArrayOutputStream()).use {
+                    DirectoryArchive.write("root", source, it)
+                }
+            }.exceptionOrNull()
+        } finally {
+            // Clear the test thread's interrupt bit before subsequent cases.
+            Thread.interrupted()
+        }
+        check(failure is java.io.InterruptedIOException &&
+            failure.message == "Folder ZIP export cancelled")
+        check(listings == 0) { "Cancelled ZIP still enumerated SAF files" }
+    }
+    run {
+        // An interrupted worker must stop after a successful partial read;
+        // a still-readable SAF stream is not permission to keep exporting.
+        var reads = 0
+        val source = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("item", "large.bin", false)), null)
+            override fun open(fileId: String): InputStream = object : InputStream() {
+                override fun read(): Int = error("Unexpected single-byte read")
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    reads++
+                    check(reads == 1) { "Cancelled ZIP continued reading" }
+                    b[off] = 42
+                    Thread.currentThread().interrupt()
+                    return 1
+                }
+            }
+        }
+        val failure = try {
+            runCatching {
+                ZipOutputStream(ByteArrayOutputStream()).use {
+                    DirectoryArchive.write("root", source, it)
+                }
+            }.exceptionOrNull()
+        } finally {
+            Thread.interrupted()
+        }
+        check(failure is java.io.InterruptedIOException &&
+            failure.message == "Folder ZIP export cancelled")
+        check(reads == 1)
+    }
+    println("PASS: paged ZIP, nested folders, path/quotas, transient zero-read recovery and stalled-provider rejection, Windows-safe names/collisions, cancelled-worker interruption")
 }
