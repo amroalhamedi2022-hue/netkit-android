@@ -103,7 +103,7 @@ class NetKitCore(context: Context) {
             try {
                 val started = withContext(Dispatchers.IO) {
                     val tls = AndroidTls.loadOrCreate()
-                    val created = TransferHttpEngine(tls.factory, storage) { done, total ->
+                    val created = TransferHttpEngine(tls.factory, storage, progress = { done, total ->
                         // Avoid scheduling thousands of Compose state updates per second on fast LANs.
                         val now = System.nanoTime()
                         val last = lastProgressEmit.get()
@@ -117,7 +117,7 @@ class NetKitCore(context: Context) {
                                 }
                             }
                         }
-                    }
+                    }, sessionLifetimeMillis = settings.shareExpirationMinutes.toLong() * 60_000L)
                     synchronized(serverLock) {
                         if (disposed || generation != sessionGeneration) {
                             created.close()
