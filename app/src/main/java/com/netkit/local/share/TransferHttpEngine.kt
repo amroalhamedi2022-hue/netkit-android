@@ -41,6 +41,24 @@ interface ShareStorage {
     fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String
 }
 
+/**
+ * SAF/cloud providers can transiently return zero bytes for a positive-length read.
+ * Bound repeated zero reads so a broken provider cannot spin a download/Range
+ * worker indefinitely. This does not alter normal EOF or partial reads.
+ */
+internal object StreamReadGuard {
+    fun read(input: InputStream, buffer: ByteArray, offset: Int, length: Int): Int {
+        require(length > 0 && offset >= 0 && offset <= buffer.size - length)
+        var emptyReads = 0
+        while (true) {
+            val n = input.read(buffer, offset, length)
+            if (n != 0) return n
+            check(++emptyReads <= 32) { "Shared stream read stalled" }
+            Thread.yield()
+        }
+    }
+}
+
 class TransferHttpEngine(
     private val sslFactory: SSLServerSocketFactory,
     private val storage: ShareStorage,
@@ -311,9 +329,8 @@ class TransferHttpEngine(
                 var remaining = count
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
-                    val n = input.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                    val n = StreamReadGuard.read(input, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) break // Client detects a truncated Content-Length.
-                    if (n == 0) continue
                     out.write(buffer, 0, n)
                     remaining -= n
                 }
@@ -321,9 +338,8 @@ class TransferHttpEngine(
                 head(out, 200, "application/octet-stream", null, extra)
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
-                    val n = input.read(buffer)
+                    val n = StreamReadGuard.read(input, buffer, 0, buffer.size)
                     if (n < 0) break
-                    if (n == 0) continue
                     out.write("${n.toString(16)}\r\n".toByteArray(StandardCharsets.US_ASCII))
                     out.write(buffer, 0, n); out.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
                 }
@@ -358,7 +374,7 @@ class TransferHttpEngine(
         while (remaining > 0L) {
             val skipped = stream.skip(remaining)
             if (skipped > 0) { remaining -= skipped; continue }
-            val n = stream.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+            val n = StreamReadGuard.read(stream, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
             if (n < 0) return false
             if (n > 0) remaining -= n
         }
