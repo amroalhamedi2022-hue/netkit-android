@@ -61,5 +61,49 @@ fun main() {
         }.exceptionOrNull()
         check(error is IllegalStateException)
     }
-    println("PASS: paged streaming ZIP, nested+empty folders, path rejection, quotas")
+    run {
+        // A SAF provider can occasionally return zero without EOF; recover and
+        // preserve exact bytes instead of treating the upload as finished.
+        val flaky = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("flaky", "flaky.bin", false)), null)
+            override fun open(fileId: String): InputStream = object : InputStream() {
+                private val bytes = byteArrayOf(1, 2, 3)
+                private var index = 0
+                private var zeros = 2
+                override fun read(): Int = if (index < bytes.size) bytes[index++].toInt() and 255 else -1
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    if (zeros-- > 0) return 0
+                    if (index == bytes.size) return -1
+                    val n = minOf(len, bytes.size - index)
+                    bytes.copyInto(b, off, index, index + n)
+                    index += n
+                    return n
+                }
+            }
+        }
+        val zipBytes = ByteArrayOutputStream()
+        ZipOutputStream(zipBytes).use { DirectoryArchive.write("root", flaky, it) }
+        ZipInputStream(ByteArrayInputStream(zipBytes.toByteArray())).use {
+            check(it.nextEntry?.name == "flaky.bin")
+            check(it.readBytes().contentEquals(byteArrayOf(1, 2, 3)))
+        }
+    }
+    run {
+        // A permanently stalled provider must not loop indefinitely or block
+        // the HTTPS worker forever while exporting a shared folder.
+        val stalled = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("stalled", "stalled.bin", false)), null)
+            override fun open(fileId: String): InputStream = object : InputStream() {
+                override fun read(): Int = -1
+                override fun read(b: ByteArray, off: Int, len: Int): Int = 0
+            }
+        }
+        val error = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use { DirectoryArchive.write("root", stalled, it) }
+        }.exceptionOrNull()
+        check(error is IllegalStateException && error.message == "Shared file read stalled")
+    }
+    println("PASS: paged ZIP, nested folders, path/quotas, transient zero-read recovery and stalled-provider rejection")
 }

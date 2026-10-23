@@ -62,10 +62,18 @@ object DirectoryArchive {
                         val input = source.open(child.id) ?: error("Shared file became unreadable")
                         input.use {
                             zip.putNextEntry(ZipEntry(path))
+                            var consecutiveEmptyReads = 0
                             while (true) {
                                 val read = it.read(buffer)
                                 if (read < 0) break
-                                if (read == 0) continue
+                                if (read == 0) {
+                                    // Some SAF providers return a transient zero; a broken
+                                    // provider must not spin forever and monopolize a server worker.
+                                    check(++consecutiveEmptyReads <= 32) { "Shared file read stalled" }
+                                    Thread.yield()
+                                    continue
+                                }
+                                consecutiveEmptyReads = 0
                                 bytes += read
                                 check(bytes <= maximumBytes) { "Archive byte budget exceeded" }
                                 zip.write(buffer, 0, read)
