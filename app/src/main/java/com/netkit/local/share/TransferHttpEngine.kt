@@ -252,7 +252,10 @@ class TransferHttpEngine(
                 out.write(bytes, offset, count)
                 out.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
             }
-            override fun close() {
+            // ZipOutputStream.close() must not signal a successful HTTP response
+            // if exporting a file fails halfway through. Only finishResponse() does.
+            override fun close() = Unit
+            fun finishResponse() {
                 if (!finished) {
                     finished = true
                     out.write("0\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
@@ -263,6 +266,7 @@ class TransferHttpEngine(
             zip.setLevel(Deflater.BEST_SPEED)
             DirectoryArchive.write(id, provider, zip)
         }
+        framed.finishResponse()
     }
 
     /** Single RFC 7233 byte ranges enable clients to resume DOWNLOADS.
