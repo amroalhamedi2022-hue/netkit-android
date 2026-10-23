@@ -4,6 +4,8 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.zip.ZipOutputStream
+import java.util.zip.Deflater
 import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
@@ -126,6 +128,7 @@ class TransferHttpEngine(
                         method == "GET" && path == "$prefix/list" -> list(out)
                         method == "GET" && path == "$prefix/browse" -> browse(out, query)
                         method == "GET" && path.startsWith("$prefix/browse-file/") -> download(out, path.removePrefix("$prefix/browse-file/"), headers["range"], folderMode = true)
+                        method == "GET" && path.startsWith("$prefix/browse-archive/") -> downloadArchive(out, path.removePrefix("$prefix/browse-archive/"))
                         method == "GET" && path.startsWith("$prefix/file/") -> download(out, path.removePrefix("$prefix/file/"), headers["range"])
                         method == "POST" && path == "$prefix/upload" -> upload(input, out, headers)
                         else -> fail(out, 405, "Unsupported route")
@@ -220,6 +223,46 @@ class TransferHttpEngine(
         }
         val next = page.nextOffset?.toString() ?: "null"
         response(out, 200, """{"entries":[$content],"nextOffset":$next,"enabled":true}""", "application/json; charset=utf-8")
+    }
+
+    /** Stream the authorized folder tree as ZIP without staging a copy on Android. */
+    private fun downloadArchive(out: OutputStream, id: String) {
+        val store = storage as? DirectoryShareStorage ?: return fail(out, 404, "Folder sharing unavailable")
+        if (!store.hasSharedDirectory() || (id != "root" && !id.matches(Regex("[a-fA-F0-9-]{36}")))) {
+            return fail(out, 404, "Folder not shared")
+        }
+        val provider = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int): ArchivePage {
+                val page = store.browseDirectory(folderId, offset, limit)
+                return ArchivePage(page.entries.map { ArchiveFile(it.id, it.name, it.directory) }, page.nextOffset)
+            }
+            override fun open(fileId: String): InputStream? = store.openDirectoryItem(fileId)?.stream
+        }
+        val name = if (id == "root") "NetKit-shared-storage.zip" else "NetKit-folder.zip"
+        val encoded = URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+        head(out, 200, "application/zip", null,
+            mapOf("Content-Disposition" to "attachment; filename*=UTF-8''$encoded"))
+        val framed = object : OutputStream() {
+            private var finished = false
+            override fun write(byte: Int) = write(byteArrayOf(byte.toByte()), 0, 1)
+            override fun write(bytes: ByteArray, offset: Int, count: Int) {
+                if (count <= 0) return
+                check(!finished)
+                out.write((count.toString(16) + "\r\n").toByteArray(StandardCharsets.US_ASCII))
+                out.write(bytes, offset, count)
+                out.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
+            }
+            override fun close() {
+                if (!finished) {
+                    finished = true
+                    out.write("0\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
+                }
+            }
+        }
+        ZipOutputStream(framed).use { zip ->
+            zip.setLevel(Deflater.BEST_SPEED)
+            DirectoryArchive.write(id, provider, zip)
+        }
     }
 
     /** Single RFC 7233 byte ranges enable clients to resume DOWNLOADS.
@@ -424,6 +467,7 @@ class TransferHttpEngine(
             if(entry.directory) {
               const b=document.createElement('button');b.className='secondary';
               b.textContent='📁 '+entry.name;b.onclick=()=>folderLink(entry.id);li.append(b);
+              const zip=document.createElement('a');zip.href=base+'/browse-archive/'+encodeURIComponent(entry.id);zip.textContent=' ⬇ ZIP';zip.style.marginInlineStart='14px';li.append(zip);
             } else {
               const a=document.createElement('a');a.textContent='📄 '+entry.name+' · '+(entry.length==null?'حجم غير معروف':humanBytes(entry.length));
               a.href=base+'/browse-file/'+encodeURIComponent(entry.id);li.append(a);
