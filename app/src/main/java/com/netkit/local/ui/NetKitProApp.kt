@@ -8,6 +8,7 @@ import android.content.Intent
 import androidx.core.content.edit
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
@@ -131,7 +132,8 @@ fun NetKitProApp(
                             .padding(horizontal = if (wide) 28.dp else 18.dp, vertical = 22.dp)) {
                             BrandHeader(palette)
                             Spacer(Modifier.height(20.dp))
-                            when (tab) {
+                            Crossfade(targetState = tab, animationSpec = tween(240), label = "netkit-screen") { activeTab ->
+                                when (activeTab) {
                                 0 -> ProDashboard(core, networkText, ipList, palette, { tab = 1 }, { tab = 2 }, { tab = 4 }, { tab = 6 })
                                 1 -> ShareScreen(core, ipList, palette,
                                     chooseFiles = { filesPicker.launch(arrayOf("*/*")) },
@@ -145,6 +147,7 @@ fun NetKitProApp(
                                 5 -> DiagnosticsScreen(core, palette)
                                 6 -> HotspotScreen(core, palette, onRequestHotspot, onStopHotspot, copy = { copy(context, it) })
                                 7 -> SettingsScreen(core, palette, onOpenShare = {tab=1}, onOpenHotspot = {tab=6})
+                                }
                             }
                             Spacer(Modifier.height(26.dp))
                             Text("NetKit  •  Android local-first", fontSize = 11.sp,

@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import com.netkit.local.remote.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.provider.OpenableColumns
@@ -151,8 +152,23 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
     }
     Spacer(Modifier.height(14.dp))
     GlassCard {
-        Text("الاستئناف والطوابير",color=p.ink,fontWeight=FontWeight.Bold)
-        MutedText("تنزيل HTTP Range متاح في الخادم. استئناف الرفع وطابور المهام الدائم يتطلبان بروتوكول نقل إضافيًا ولن نعرض تحكمًا غير عامل.")
+        Text("سجل عمليات FTP / SFTP الفعلي",color=p.ink,fontWeight=FontWeight.Bold)
+        var rows by remember { mutableStateOf(core.transfers.snapshot().takeLast(30).reversed()) }
+        LaunchedEffect(core.transfers) {
+            while (true) {
+                val updated = core.transfers.snapshot().takeLast(30).reversed()
+                if (updated != rows) rows = updated
+                delay(450)
+            }
+        }
+        if (rows.isEmpty()) MutedText("لا توجد عمليات مسجّلة بعد")
+        rows.forEach { task ->
+            HorizontalDivider(color=p.ink.copy(alpha=.12f))
+            Text(task.destination.substringAfterLast('/'),color=p.ink,maxLines=1)
+            MutedText("${task.state} · ${task.completedBytes} / ${task.size} bytes · Attempts ${task.attempts}")
+        }
+        Spacer(Modifier.height(7.dp))
+        MutedText("تُحفَظ حالة النقل والبايتات المنقولة محليًا. الاستئناف الشبكي بعد الانقطاع والطابور التنفيذي الآلي لم يكتملَا بعد.")
     }
 }
 
@@ -166,7 +182,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         MainButton("إعداد خادم المتصفح",p,action=onBrowser)
     }
     Spacer(Modifier.height(12.dp))
-    RemoteExplorer(p)
+    RemoteExplorer(core,p)
     Spacer(Modifier.height(12.dp))
     GlassCard {
         Text("FTP/SFTP Server",color=p.ink,fontWeight=FontWeight.Bold)
@@ -174,7 +190,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
     }
 }
 
-@Composable private fun RemoteExplorer(p:Palette) {
+@Composable private fun RemoteExplorer(core:NetKitCore,p:Palette) {
     val ctx=LocalContext.current
     val scope=rememberCoroutineScope()
     var protocol by remember {mutableStateOf("SFTP")}
@@ -195,19 +211,49 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         val connected=client
         if(uri != null && selected != null && connected != null) {
             working=true
-            scope.launch {result=runCatching {withContext(Dispatchers.IO) {
-                check(connected.download(folder.trimEnd('/')+"/"+selected.name,uri,ctx)) {"Failed to download"}
-            }; "تم تنزيل ${selected.name}"}.getOrElse {"فشل التنزيل: ${it.message}"};working=false}
+            val remotePath = folder.trimEnd('/') + "/" + selected.name
+            val task = runCatching { core.transfers.add(remotePath, uri.toString(), selected.size.coerceAtLeast(0L)) }.getOrNull()
+            scope.launch {
+                result = runCatching {
+                    check(task != null) { "Transfer journal unavailable or full" }
+                    core.transfers.begin(task.id)
+                    val completed = withContext(Dispatchers.IO) {
+                        connected.download(remotePath, uri, ctx) { bytes -> core.transfers.progress(task.id,bytes) }
+                    }
+                    check(completed) { "FTP server rejected download" }
+                    core.transfers.finish(task.id)
+                    "تم تنزيل ${selected.name}"
+                }.getOrElse { failure ->
+                    if(task != null) core.transfers.fail(task.id, failure.localizedMessage.orEmpty())
+                    "فشل التنزيل: ${failure.localizedMessage}"
+                }
+                working=false
+            }
         }
     }
     val pickUpload=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val connected=client
         if(uri != null && connected != null && uploadName.isNotBlank()) {
             working=true
-            scope.launch {result=runCatching {withContext(Dispatchers.IO) {
-                check(connected.upload(uri,folder.trimEnd('/')+"/"+uploadName,ctx)) {"Failed to upload"}
-                entries=connected.entries(folder)
-            }; "تم رفع $uploadName"}.getOrElse {"فشل الرفع: ${it.message}"};working=false}
+            val remotePath=folder.trimEnd('/') + "/" + uploadName
+            val localSize=runCatching { ctx.contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)
+                ?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else 0L } ?: 0L }.getOrDefault(0L)
+            val task=runCatching { core.transfers.add(uri.toString(),remotePath,localSize.coerceAtLeast(0L)) }.getOrNull()
+            scope.launch {
+                result=runCatching {
+                    check(task!=null) { "Transfer journal unavailable or full" }
+                    core.transfers.begin(task.id)
+                    val ok=withContext(Dispatchers.IO) { connected.upload(uri,remotePath,ctx) { bytes ->core.transfers.progress(task.id,bytes) } }
+                    check(ok) { "FTP server rejected upload" }
+                    core.transfers.finish(task.id)
+                    entries=withContext(Dispatchers.IO){ connected.entries(folder) }
+                    "تم رفع $uploadName"
+                }.getOrElse { failure ->
+                    if(task!=null) core.transfers.fail(task.id,failure.localizedMessage.orEmpty())
+                    "فشل الرفع: ${failure.localizedMessage}"
+                }
+                working=false
+            }
         }
     }
     DisposableEffect(client) { onDispose {runCatching {client?.close()} } }
@@ -351,14 +397,8 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
     Spacer(Modifier.height(12.dp))
     GlassCard {
         Text("⛨  النقل والأمان",color=p.aqua,fontWeight=FontWeight.Bold)
-        Text("حد الطابور المخطط (لم يُربط بعد بمحرك النقل)",color=p.ink)
-        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-            (1..4).forEach { count ->
-                FilterChip(selected=cfg.maxTransfers==count,onClick={cfg.maxTransfers(count)},label={Text("$count")})
-            }
-        }
-        SwitchSetting("إشعار النقل في الخلفية","إدارة الخدمة الأمامية الحالية تتم عبر إشعارات النظام",cfg.backgroundTransfers,{cfg.background(it)},p)
-        MutedText("إعدادات FTP/SFTP، طوابير النقل والاستكمال ستُفعّل فقط عندما تكون المكونات عاملة.")
+        MutedText("يحفظ NetKit حالة عمليات FTP/SFTP ويستعيدها بعد إغلاق التطبيق؛ الاستكمال الفعلي والطابور متعدد العمليات يحتاجان مُنفّذ نقل ولم يُفعّلا بعد.")
+        MutedText("تظهر إعدادات التوازي والإشعارات القابلة للتخصيص عندما تكون مرتبطة فعليًا بمحركات النقل.")
     }
 }
 private val paletteSamples=listOf(Color(0xFF53E9F9) to Color(0xFF7659EB),Color(0xFF20CBE1) to Color(0xFF95DDF1),Color(0xFFFF8A96) to Color(0xFFAB60F7))
