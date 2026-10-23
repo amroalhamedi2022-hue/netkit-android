@@ -14,7 +14,7 @@ import kotlin.concurrent.withLock
 class AndroidShareStorage(private val context: Context) : ShareStorage, DirectoryShareStorage {
     private val directoryBrowser = SharedDirectoryBrowser(context)
     private val transferSettings = context.getSharedPreferences("netkit_transfer_settings", Context.MODE_PRIVATE)
-    val browserUploadsEnabled: Boolean get() = transferSettings.getBoolean("uploads_enabled", true)
+    val browserUploadsEnabled: Boolean get() = transferSettings.getBoolean("uploads_enabled", false)
     val maxBrowserUploadMiB: Int get() = transferSettings.getInt("max_upload_mib", 2048).coerceIn(128, 16384)
     fun setBrowserUploadsEnabled(enabled: Boolean) {
         transferSettings.edit().putBoolean("uploads_enabled", enabled).apply()
