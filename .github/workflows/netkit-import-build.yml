@@ -12,6 +12,17 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradlew'
+  pull_request:
+    branches: [main, feature/netkit-pro-delivery-m1-m5, feature/netkit-reliability-20261023]
+    paths:
+      - 'app/**'
+      - 'qa/**'
+      - 'tools/**'
+      - 'gradle/**'
+      - '.github/workflows/netkit-import-build.yml'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradlew'
   workflow_dispatch:
 
 permissions:
