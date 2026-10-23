@@ -188,4 +188,17 @@ fun main(args: Array<String>) {
         check(runCatching { java.net.Socket("127.0.0.1", engine.port).use { } }.isFailure)
         println("PASS: index/list, auth denial, socket cleanup, fixed/chunked/resumable downloads, 6 MiB exact upload, SHA-256 verified upload/mismatch/invalid-digest, filenames, upload consent, max-size, closed listener")
     }
+    // End-to-end TLS regression: expired tokens must reject real HTTPS requests, not just report a timer.
+    TransferHttpEngine(serverSsl.serverSocketFactory, store, sessionLifetimeMillis = 40L).use { timed ->
+        timed.start()
+        Thread.sleep(100)
+        val url = URI("https://127.0.0.1:${timed.port}/s/${timed.token}/list").toURL()
+        val con = url.openConnection() as HttpsURLConnection
+        con.sslSocketFactory = clientSsl.socketFactory
+        con.hostnameVerifier = HostnameVerifier { _, _ -> true } // test fixture only
+        check(con.responseCode == 410) { "Expired share was not denied by HTTPS server" }
+        con.disconnect()
+        check(timed.sessionRemainingMillis == 0L)
+    }
+    println("PASS: HTTPS session expiration rejects expired bearer token")
 }
