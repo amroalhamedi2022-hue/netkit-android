@@ -59,3 +59,10 @@ AUTOMATION_COMPLETE: BLOCKED
 - **PASS (previous baseline only):** GitHub Actions run `39970419923` completed the earlier source SHA `0abc61269b4a5c62e7221107cdccbe576cf69c0a` successfully; **do not attribute that success to this new checksum patch**.
 - **NOT TESTED (current checksum SHA):** exact-SHA JVM, Android build/lint/APK CI run `39978122200` was pending at ledger edit; real Pad 5 SAF/cloud provider, Windows ZIP extraction, multi-GB transfers and device recheck.
 - **Next:** inspect CI on the final ledger commit SHA; validate checksum manifest against Windows-extracted files and browser downloads on real hardware. FTP/SFTP server, peer pairing, and complete M1–M8 gates remain incomplete.
+
+### Exact-source CI result — PASS (2026-10-23)
+- **PASS** GitHub Actions run [39978258246](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/39978258246) completed successfully on exact source+regression+ledger SHA `79fdc38b4b6b27ffd74f5d59ad66f8d5da4d0809`.
+- **PASS** Kotlin/JVM transport QA, persistent queue QA, recursive SAF ZIP regressions including new SHA-256 manifest checks, `:app:assembleDebug`, Android lint and APK signature/package checks, per completed workflow job.
+- **PASS** build artifact `NetKit-development-debug` ID `12513145034`; uploaded artifact ZIP SHA-256 `6985e1783fd4ba121e0af5e1198f14fc670b8e1d05c0d3e03edeea4199352f38` (**not** the APK binary hash nor proof of file-transfer integrity).
+- **NOT TESTED:** device SAF provider and Windows extraction hashes, actual 4+ GiB transfer/resume, FTP/SFTP client-server, hotspot API behavior, DNS/ping device behavior, Liquid Aurora visual fidelity and independent device recheck. PR #7 stays DRAFT; no main merge.
+- This acceptance-only documentation commit does not change the source tested above; a new CI run on the documentation SHA, if triggered, is a separate gate.
