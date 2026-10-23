@@ -133,15 +133,22 @@ fun main() {
         reject(listOf("Report.txt" to false, "report.TXT" to false))
         reject(listOf("Cafe\u0301.txt" to false, "Café.txt" to false))
         reject(listOf("folder" to true, "FOLDER" to false))
+        // Isolated surrogates silently become replacement characters in UTF-8 ZIP
+        // names. Reject them, but allow correctly paired emoji in Arabic names.
+        reject(listOf("broken\uD800.txt" to false))
+        reject(listOf("broken\uDC00.txt" to false))
         val unicodeSource = object : ArchiveDirectorySource {
             override fun list(folderId: String, offset: Int, limit: Int) =
-                ArchivePage(listOf(ArchiveFile("safe", "ملف آمن.txt", false)), null)
+                ArchivePage(listOf(ArchiveFile("safe", "ملف آمن.txt", false),
+                    ArchiveFile("emoji", "📁 ملف.txt", false)), null)
             override fun open(fileId: String) = ByteArrayInputStream(byteArrayOf(7))
         }
         val safeZip = ByteArrayOutputStream()
         ZipOutputStream(safeZip).use { DirectoryArchive.write("root", unicodeSource, it) }
         ZipInputStream(ByteArrayInputStream(safeZip.toByteArray())).use {
             check(it.nextEntry?.name == "ملف آمن.txt")
+            check(it.readBytes().contentEquals(byteArrayOf(7)))
+            check(it.nextEntry?.name == "📁 ملف.txt")
             check(it.readBytes().contentEquals(byteArrayOf(7)))
         }
     }
