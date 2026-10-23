@@ -28,7 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContentColor
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.Alignment
