@@ -12,7 +12,24 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradlew'
+  pull_request:
+    branches: [main, feature/netkit-pro-delivery-m1-m5, feature/netkit-reliability-20261023]
+    paths:
+      - 'app/**'
+      - 'qa/**'
+      - 'tools/**'
+      - 'gradle/**'
+      - '.github/workflows/netkit-import-build.yml'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradlew'
   workflow_dispatch:
+    inputs:
+      release_approved:
+        description: 'Explicit approval for the single final APK after full source acceptance'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,7 +40,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-qa:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Provide Kotlin JVM compiler (no Android build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v kotlinc; then kotlinc -version; exit 0; fi
+          curl -fL --retry 3 "https://github.com/JetBrains/kotlin/releases/download/v2.2.21/kotlin-compiler-2.2.21.zip" -o "$RUNNER_TEMP/kotlinc.zip"
+          unzip -q "$RUNNER_TEMP/kotlinc.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
+      - name: Static source checks
+        run: python3 qa/check_static.py
+      - name: Kotlin JVM transport, SAF ZIP and session tests
+        run: bash qa/run_jvm_tests.sh
+      - name: Persistent transfer queue state machine tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          kotlinc app/src/main/java/com/netkit/local/transfer/TransferQueue.kt qa/TransferQueueTest.kt -include-runtime -d "$RUNNER_TEMP/transfer-queue.jar"
+          java -jar "$RUNNER_TEMP/transfer-queue.jar" "$RUNNER_TEMP"
+
   verified-build:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_approved == true
+    needs: source-qa
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
