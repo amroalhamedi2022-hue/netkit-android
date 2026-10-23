@@ -203,6 +203,24 @@ fun main(args: Array<String>) {
         check("malformed-hash.bin" !in uploaded)
         check(request(root + "/upload", "POST", byteArrayOf(1), "..%2Fsecrets.txt").first == 400)
         check(request(root + "/upload", "POST", byteArrayOf(1), ".netkit-backdoor.part").first == 400)
+        // Authorized browser uploads still must not create spoofed Windows/SAF names.
+        for (unsafe in listOf(
+            "CON.txt", "LPT1.log", "COM¹.txt", "report.", "report ",
+            "bad%3Aname.txt", "invoice%E2%80%AEgpj.exe",
+            "hidden%E2%81%A6name.txt", ".NETKIT-shadow.part",
+            "bad%E2%80%A8line.txt", "bad%EF%BB%BFmark.txt"
+        )) {
+            check(request(root + "/upload", "POST", byteArrayOf(7), unsafe).first == 400) {
+                "Unsafe browser upload accepted: $unsafe"
+            }
+        }
+        check(uploaded.keys.none { it.startsWith("CON") || it.startsWith("LPT") ||
+            it.startsWith("COM") || it.startsWith("bad") || it.startsWith("invoice") })
+        // Preserve valid non-ASCII names and actual upload bytes.
+        val arabicName = "ملف-آمن.txt"
+        val arabicEncoded = java.net.URLEncoder.encode(arabicName, "UTF-8")
+        check(request(root + "/upload", "POST", byteArrayOf(10, 20), arabicEncoded).first == 201)
+        check(uploaded[arabicName]!!.contentEquals(byteArrayOf(10, 20)))
         check(request(root + "/missing").first == 405)
         uploadsAllowed = false
         check(request(root + "/upload", "POST", byteArrayOf(1), "refused.bin").first == 409)
