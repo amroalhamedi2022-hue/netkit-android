@@ -1,6 +1,8 @@
 package com.netkit.local.share
 
 import java.io.InputStream
+import java.text.Normalizer
+import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -37,9 +39,17 @@ object DirectoryArchive {
         fun safeSegment(segment: String): String {
             require(segment.isNotBlank() && segment != "." && segment != "..") { "Unsafe archive filename" }
             require(segment.length <= 240 && segment.toByteArray(Charsets.UTF_8).size <= 768)
-            require(segment.none { it == '/' || it == '\\' || it == '\u0000' || it.code < 32 })
+            require(segment.none { it == '/' || it == '\\' || it.code < 32 || it in "<>:\"|?*" })
+            require(!segment.endsWith('.') && !segment.endsWith(' ')) { "Unsafe Windows archive filename" }
+            val stem = segment.substringBefore('.').uppercase(Locale.ROOT)
+            val reserved = stem in setOf("CON", "PRN", "AUX", "NUL") ||
+                Regex("^(COM|LPT)[1-9¹²³]$").matches(stem)
+            require(!reserved) { "Reserved Windows archive filename" }
             return segment
         }
+
+        fun canonicalPath(path: String): String =
+            Normalizer.normalize(path.removeSuffix("/"), Normalizer.Form.NFC).lowercase(Locale.ROOT)
 
         fun walk(folderId: String, prefix: String, depth: Int) {
             require(depth <= 32) { "Directory nesting exceeds safe depth" }
@@ -53,7 +63,12 @@ object DirectoryArchive {
                     check(entries <= maximumEntries) { "Too many archive entries" }
                     val segment = safeSegment(child.name)
                     val path = prefix + segment + if (child.folder) "/" else ""
-                    require(path.length <= 2048 && paths.add(path)) { "Duplicate or too-long archive path" }
+                    // ZIP may be extracted on case-insensitive Windows filesystems. Reject
+                    // aliases (including file-vs-directory and Unicode normalization) rather
+                    // than silently overwrite an earlier entry when unzipped.
+                    require(path.length <= 2048 && paths.add(canonicalPath(path))) {
+                        "Colliding or too-long archive path"
+                    }
                     if (child.folder) {
                         zip.putNextEntry(ZipEntry(path))
                         zip.closeEntry()
@@ -74,8 +89,8 @@ object DirectoryArchive {
                                     continue
                                 }
                                 consecutiveEmptyReads = 0
+                                check(read.toLong() <= maximumBytes - bytes) { "Archive byte budget exceeded" }
                                 bytes += read
-                                check(bytes <= maximumBytes) { "Archive byte budget exceeded" }
                                 zip.write(buffer, 0, read)
                             }
                             zip.closeEntry()
