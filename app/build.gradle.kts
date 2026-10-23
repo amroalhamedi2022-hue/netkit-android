@@ -26,6 +26,7 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.10.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
+    implementation("com.google.zxing:core:3.5.4") // Apache-2.0, QR encoding only
     implementation("commons-net:commons-net:3.13.0")
     implementation("com.github.mwiede:jsch:0.2.26")
     implementation("androidx.compose.foundation:foundation")
