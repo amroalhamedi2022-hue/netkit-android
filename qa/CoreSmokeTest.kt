@@ -14,6 +14,43 @@ import javax.net.ssl.*
 
 /** TEST ONLY. The trust-all verifier MUST NEVER be imported into the Android app. */
 fun main(args: Array<String>) {
+    // Read guard is shared by HTTPS full/Range downloads and SAF browser uploads.
+    // A transient zero read must preserve bytes; an endlessly stalled provider
+    // must not monopolize a TLS worker or leave a .part upload spinning.
+    run {
+        val flaky = object : InputStream() {
+            private val payload = byteArrayOf(4, 5, 6)
+            private var pos = 0
+            private var emptyReads = 2
+            override fun read(): Int = if (pos < payload.size) payload[pos++].toInt() else -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (emptyReads-- > 0) return 0
+                if (pos >= payload.size) return -1
+                val count = minOf(len, payload.size - pos)
+                payload.copyInto(b, off, pos, pos + count)
+                pos += count
+                return count
+            }
+        }
+        val bytes = ByteArray(3)
+        check(StreamReadGuard.read(flaky, bytes, 0, bytes.size) == 3)
+        check(bytes.contentEquals(byteArrayOf(4, 5, 6)))
+        check(StreamReadGuard.read(flaky, bytes, 0, bytes.size) == -1)
+    }
+    run {
+        var attempts = 0
+        val stalled = object : InputStream() {
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                attempts++
+                return 0
+            }
+        }
+        val error = runCatching { StreamReadGuard.read(stalled, ByteArray(8), 0, 8) }.exceptionOrNull()
+        check(error is IllegalStateException && error.message == "Shared stream read stalled")
+        check(attempts == 33) { "Unexpected zero-read retry budget: $attempts" }
+    }
+    println("PASS: HTTPS/SAF stream guard recovers transient zeros and rejects permanent stalls")
     val ks = KeyStore.getInstance("PKCS12")
     val password = "temporary-test-only".toCharArray()
     File(args[0]).inputStream().use { ks.load(it, password) }
