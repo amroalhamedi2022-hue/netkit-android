@@ -2,6 +2,7 @@ package com.netkit.local.qa
 
 import com.netkit.local.share.*
 import java.io.ByteArrayInputStream
+import java.util.zip.ZipInputStream
 import java.io.File
 import java.io.InputStream
 import java.net.URI
@@ -107,6 +108,20 @@ fun main(args: Array<String>) {
         check(request(root + "/browse-file/$nestedId").second.contentEquals(initial))
         check(request(root + "/browse-file/$nestedId", range = "bytes=3-8").first == 206)
         check(request(root + "/browse-file/$folderId").first == 404)
+
+        val archiveResponse = request(root + "/browse-archive/$folderId")
+        check(archiveResponse.first == 200 && archiveResponse.second.isNotEmpty())
+        val archived = mutableMapOf<String,ByteArray>()
+        ZipInputStream(ByteArrayInputStream(archiveResponse.second)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                archived[entry.name] = zip.readBytes()
+                zip.closeEntry()
+            }
+        }
+        check(archived["image.png"]!!.contentEquals(initial))
+        check(request(root + "/browse-archive/not-a-folder").first == 404)
+
         check(request("https://127.0.0.1:${engine.port}/s/guess/browse").first == 404)
         val dl = request(root + "/file/$itemId")
         check(dl.first == 200 && dl.second.contentEquals(initial))
