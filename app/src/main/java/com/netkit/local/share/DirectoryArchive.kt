@@ -70,6 +70,14 @@ object DirectoryArchive {
                     index++
                 }
             }
+            // Replacement characters and format controls can make two distinct SAF
+            // names look identical, or let ZIP extractors display misleading paths.
+            // Reject them consistently with browser uploads; Arabic text and valid
+            // supplementary-plane characters (including emoji) remain supported.
+            require(segment.none {
+                it == '\uFFFD' || it == '\u061C' || it == '\uFEFF' ||
+                    it.code in 0x2028..0x2029 || it.code in 0xFFF9..0xFFFB
+            }) { "Unsafe archive filename Unicode" }
             require(segment.length <= 240 && segment.toByteArray(Charsets.UTF_8).size <= 768)
             // SAF document names are untrusted. Reject control characters and bidi
             // overrides that can disguise a file extension in a downloaded ZIP.
