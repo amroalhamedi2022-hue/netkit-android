@@ -287,7 +287,7 @@ class TransferHttpEngine(
         }
         ZipOutputStream(framed).use { zip ->
             zip.setLevel(Deflater.BEST_SPEED)
-            DirectoryArchive.write(id, provider, zip)
+            DirectoryArchive.write(id, provider, zip, includeChecksums = true)
         }
         framed.finishResponse()
     }
