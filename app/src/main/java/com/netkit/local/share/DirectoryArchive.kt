@@ -39,7 +39,15 @@ object DirectoryArchive {
         fun safeSegment(segment: String): String {
             require(segment.isNotBlank() && segment != "." && segment != "..") { "Unsafe archive filename" }
             require(segment.length <= 240 && segment.toByteArray(Charsets.UTF_8).size <= 768)
-            require(segment.none { it == '/' || it == '\\' || it.code < 32 || it in "<>:\"|?*" })
+            // SAF document names are untrusted. Reject control characters and bidi
+            // overrides that can disguise a file extension in a downloaded ZIP.
+            // Normal Arabic/Hebrew letters remain valid.
+            require(segment.none {
+                it == '/' || it == '\\' || it.code < 32 ||
+                    it.code in 0x7f..0x9f || it in "<>:\"|?*" ||
+                    it.code == 0x061c || it.code in 0x200e..0x200f ||
+                    it.code in 0x202a..0x202e || it.code in 0x2066..0x2069
+            }) { "Unsafe archive filename controls" }
             require(!segment.endsWith('.') && !segment.endsWith(' ')) { "Unsafe Windows archive filename" }
             val stem = segment.substringBefore('.').uppercase(Locale.ROOT)
             val reserved = stem in setOf("CON", "PRN", "AUX", "NUL") ||
@@ -58,6 +66,11 @@ object DirectoryArchive {
             do {
                 val page = source.list(folderId, offset, 100)
                 require(page.files.size <= 100)
+                // A broken SAF provider must not advertise endless empty pages.
+                // This also prevents a zero-content request from monopolizing HTTPS.
+                check(page.files.isNotEmpty() || page.nextOffset == null) {
+                    "Empty archive pagination page"
+                }
                 for (child in page.files) {
                     entries++
                     check(entries <= maximumEntries) { "Too many archive entries" }
