@@ -1,6 +1,7 @@
 package com.netkit.local.share
 
 import java.io.InputStream
+import java.io.InterruptedIOException
 import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.Locale
@@ -22,6 +23,15 @@ data class ArchiveResult(val entries: Int, val bytes: Long)
  * The caller must enforce HTTPS authorization and scope ArchiveDirectorySource to its SAF root.
  */
 object DirectoryArchive {
+    private fun ensureNotCancelled() {
+        // shutdownNow() interrupts a worker when the HTTPS share is stopped.
+        // SAF streams may still be readable: do not continue exporting a ZIP
+        // after explicit cancellation just because the provider stays open.
+        if (Thread.currentThread().isInterrupted) {
+            throw InterruptedIOException("Folder ZIP export cancelled")
+        }
+    }
+
     fun write(
         rootId: String,
         source: ArchiveDirectorySource,
@@ -82,10 +92,12 @@ object DirectoryArchive {
             Normalizer.normalize(path.removeSuffix("/"), Normalizer.Form.NFC).lowercase(Locale.ROOT)
 
         fun walk(folderId: String, prefix: String, depth: Int) {
+            ensureNotCancelled()
             require(depth <= 32) { "Directory nesting exceeds safe depth" }
             check(visited.add(folderId)) { "Recursive directory provider cycle" }
             var offset = 0
             do {
+                ensureNotCancelled()
                 val page = source.list(folderId, offset, 100)
                 require(page.files.size <= 100)
                 // A broken SAF provider must not advertise endless empty pages.
@@ -94,6 +106,7 @@ object DirectoryArchive {
                     "Empty archive pagination page"
                 }
                 for (child in page.files) {
+                    ensureNotCancelled()
                     entries++
                     check(entries <= maximumEntries) { "Too many archive entries" }
                     val segment = safeSegment(child.name)
@@ -115,6 +128,7 @@ object DirectoryArchive {
                             zip.putNextEntry(ZipEntry(path))
                             var consecutiveEmptyReads = 0
                             while (true) {
+                                ensureNotCancelled()
                                 val read = it.read(buffer)
                                 if (read < 0) break
                                 if (read == 0) {
@@ -145,6 +159,7 @@ object DirectoryArchive {
         }
 
         walk(rootId, "", 0)
+        ensureNotCancelled()
         if (includeChecksums) {
             val manifest = checksumLines.toString().toByteArray(Charsets.UTF_8)
             check(manifest.size <= 64 * 1024 * 1024) { "Archive checksum manifest too large" }
