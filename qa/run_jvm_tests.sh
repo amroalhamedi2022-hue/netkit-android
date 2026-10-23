@@ -15,6 +15,11 @@ kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt" \
   "$ROOT/qa/CoreSmokeTest.kt" -include-runtime -d "$TEMP_DIR/transport.jar"
 java -jar "$TEMP_DIR/transport.jar" "$TEMP_DIR/test.p12"
 
+# The SAF ZIP regression must run in the default QA gate, not only by hand.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/DirectoryArchive.kt" \
+  "$ROOT/qa/DirectoryArchiveTest.kt" -include-runtime -d "$TEMP_DIR/archive.jar"
+java -jar "$TEMP_DIR/archive.jar"
+
 # Portable domain tests use real Kotlin compilation, no Android SDK or emulator assumed.
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/SessionLease.kt" \
   "$ROOT/qa/SessionLeaseTest.kt" -include-runtime -d "$TEMP_DIR/lease.jar"
