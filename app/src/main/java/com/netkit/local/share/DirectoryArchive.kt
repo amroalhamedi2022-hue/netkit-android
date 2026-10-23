@@ -1,6 +1,7 @@
 package com.netkit.local.share
 
 import java.io.InputStream
+import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.Locale
 import java.util.zip.ZipEntry
@@ -26,12 +27,18 @@ object DirectoryArchive {
         source: ArchiveDirectorySource,
         zip: ZipOutputStream,
         maximumEntries: Int = 20_000,
-        maximumBytes: Long = 64L * 1024 * 1024 * 1024
+        maximumBytes: Long = 64L * 1024 * 1024 * 1024,
+        includeChecksums: Boolean = false
     ): ArchiveResult {
         require(maximumEntries in 1..100_000)
         require(maximumBytes > 0)
         val visited = HashSet<String>()
         val paths = HashSet<String>()
+        // Optional checksum sidecar is reserved before visiting any untrusted SAF name.
+        // It detects accidental transfer/extraction corruption, not server authenticity.
+        val checksumLines = StringBuilder()
+        val checksumName = "NetKit-SHA256SUMS.txt"
+        if (includeChecksums) paths.add(checksumName.lowercase(Locale.ROOT))
         var entries = 0
         var bytes = 0L
         val buffer = ByteArray(64 * 1024)
@@ -88,6 +95,7 @@ object DirectoryArchive {
                         walk(child.id, path, depth + 1)
                     } else {
                         val input = source.open(child.id) ?: error("Shared file became unreadable")
+                        val digest = if (includeChecksums) MessageDigest.getInstance("SHA-256") else null
                         input.use {
                             zip.putNextEntry(ZipEntry(path))
                             var consecutiveEmptyReads = 0
@@ -104,9 +112,14 @@ object DirectoryArchive {
                                 consecutiveEmptyReads = 0
                                 check(read.toLong() <= maximumBytes - bytes) { "Archive byte budget exceeded" }
                                 bytes += read
+                                digest?.update(buffer, 0, read)
                                 zip.write(buffer, 0, read)
                             }
                             zip.closeEntry()
+                        }
+                        if (digest != null) {
+                            val hex = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                            checksumLines.append(hex).append("  ").append(path).append('\n')
                         }
                     }
                 }
@@ -117,6 +130,16 @@ object DirectoryArchive {
         }
 
         walk(rootId, "", 0)
+        if (includeChecksums) {
+            val manifest = checksumLines.toString().toByteArray(Charsets.UTF_8)
+            check(manifest.size <= 64 * 1024 * 1024) { "Archive checksum manifest too large" }
+            check(manifest.size.toLong() <= maximumBytes - bytes) { "Archive byte budget exceeded" }
+            zip.putNextEntry(ZipEntry(checksumName))
+            zip.write(manifest)
+            zip.closeEntry()
+            bytes += manifest.size
+        }
+        // Entries count includes only original SAF nodes; the optional sidecar is extra.
         return ArchiveResult(entries, bytes)
     }
 }
