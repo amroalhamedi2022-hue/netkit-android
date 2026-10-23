@@ -71,6 +71,7 @@ fun main(args: Array<String>) {
     val folderId = "bd8819ba-cafb-45b4-ae70-3ec73580d78d"
     val nestedId = "72c9c931-e477-4a92-a1e7-78b79b85130d"
     var uploadsAllowed = true
+    var rejectUpload = false
     var uploadLimit = 16L * 1024 * 1024 * 1024
     val store = object : ShareStorage, DirectoryShareStorage {
         override fun maxUploadSize(): Long = uploadLimit
@@ -95,6 +96,7 @@ fun main(args: Array<String>) {
         }
         override fun canUpload() = uploadsAllowed
         override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String {
+            if (rejectUpload) throw UploadPermissionRevokedException()
             val result = ByteArray(length.toInt())
             var read = 0
             while (read < result.size) {
@@ -233,6 +235,10 @@ fun main(args: Array<String>) {
         uploadsAllowed = false
         check(request(root + "/upload", "POST", byteArrayOf(1), "refused.bin").first == 409)
         uploadsAllowed = true
+        rejectUpload = true
+        check(request(root + "/upload", "POST", byteArrayOf(42), "revoked.bin").first == 403)
+        check("revoked.bin" !in uploaded)
+        rejectUpload = false
         uploadLimit = 1
         check(request(root + "/upload", "POST", byteArrayOf(1, 2), "too-large.bin").first == 413)
         check("too-large.bin" !in uploaded)
