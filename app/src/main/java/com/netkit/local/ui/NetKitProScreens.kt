@@ -32,6 +32,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import com.netkit.local.remote.*
+import com.netkit.local.transfer.TransferTelemetry
+import com.netkit.local.transfer.TransferSnapshot
+import com.netkit.local.transfer.TransferState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -154,10 +157,17 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
     GlassCard {
         Text("سجل عمليات FTP / SFTP الفعلي",color=p.ink,fontWeight=FontWeight.Bold)
         var rows by remember { mutableStateOf(core.transfers.snapshot().takeLast(30).reversed()) }
+        var rates by remember { mutableStateOf<Map<String, TransferSnapshot>>(emptyMap()) }
+        val estimators = remember { mutableMapOf<String, TransferTelemetry>() }
         LaunchedEffect(core.transfers) {
             while (true) {
                 val updated = core.transfers.snapshot().takeLast(30).reversed()
                 if (updated != rows) rows = updated
+                // Rate derives from persisted byte changes, never synthetic animation.
+                rates = updated.filter { it.state == TransferState.RUNNING }.associate { task ->
+                    task.id to estimators.getOrPut(task.id) { TransferTelemetry() }
+                        .sample(task.completedBytes, task.size.takeIf { it > 0 })
+                }
                 delay(450)
             }
         }
@@ -166,6 +176,14 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
             HorizontalDivider(color=p.ink.copy(alpha=.12f))
             Text(task.destination.substringAfterLast('/'),color=p.ink,maxLines=1)
             MutedText("${task.state} · ${task.completedBytes} / ${task.size} bytes · Attempts ${task.attempts}")
+            val snapshot = rates[task.id]
+            if (snapshot != null && snapshot.bytesPerSecond != null && snapshot.bytesPerSecond > 0.0) {
+                val mibPerSec = "%.2f".format(java.util.Locale.US, snapshot.bytesPerSecond / 1048576.0)
+                val eta = snapshot.estimatedSecondsRemaining?.let { " · ETA: ${it}s" }.orEmpty()
+                MutedText("مقاس فعليًا: ${mibPerSec} MiB/s${eta}")
+            } else if (task.state == TransferState.RUNNING) {
+                MutedText("جاري قياس السرعة...")
+            }
         }
         Spacer(Modifier.height(7.dp))
         MutedText("تُحفَظ حالة النقل والبايتات المنقولة محليًا. الاستئناف الشبكي بعد الانقطاع والطابور التنفيذي الآلي لم يكتملَا بعد.")
