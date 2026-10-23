@@ -10,6 +10,22 @@ keytool -genkeypair -alias test -keyalg RSA -keysize 2048 -validity 2 \
   -keystore "$TEMP_DIR/test.p12" -storetype PKCS12 -storepass temporary-test-only \
   -keypass temporary-test-only -dname 'CN=NetKit QA, O=Tests' -noprompt >/dev/null 2>&1
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt" \
+  "$ROOT/app/src/main/java/com/netkit/local/share/DirectoryArchive.kt" \
+  "$ROOT/app/src/main/java/com/netkit/local/share/SessionLease.kt" \
   "$ROOT/qa/CoreSmokeTest.kt" -include-runtime -d "$TEMP_DIR/transport.jar"
 java -jar "$TEMP_DIR/transport.jar" "$TEMP_DIR/test.p12"
-echo 'NetKit JVM transport QA passed.'
+
+# Portable domain tests use real Kotlin compilation, no Android SDK or emulator assumed.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/SessionLease.kt" \
+  "$ROOT/qa/SessionLeaseTest.kt" -include-runtime -d "$TEMP_DIR/lease.jar"
+java -jar "$TEMP_DIR/lease.jar"
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/transfer/TransferTelemetry.kt" \
+  "$ROOT/qa/TransferTelemetryTest.kt" -include-runtime -d "$TEMP_DIR/telemetry.jar"
+java -jar "$TEMP_DIR/telemetry.jar"
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/ProgressStreams.kt" \
+  "$ROOT/qa/ProgressStreamsTest.kt" -include-runtime -d "$TEMP_DIR/streams.jar"
+java -jar "$TEMP_DIR/streams.jar"
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/transfer/ProgressCheckpoint.kt" \
+  "$ROOT/qa/ProgressCheckpointTest.kt" -include-runtime -d "$TEMP_DIR/checkpoint.jar"
+java -jar "$TEMP_DIR/checkpoint.jar"
+echo 'NetKit JVM transport & reliability QA passed.'

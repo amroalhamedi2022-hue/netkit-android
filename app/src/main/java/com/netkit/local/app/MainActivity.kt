@@ -7,7 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import com.netkit.local.ui.NetKitApp
+import com.netkit.local.ui.NetKitProApp
 
 /** Session ownership is in NetKitApplication + TransferService, NOT an Activity/ViewModel. */
 class MainActivity : ComponentActivity() {
@@ -33,7 +33,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            NetKitApp(core, ::requestHotspot,
+            NetKitProApp(core, ::requestHotspot,
                 onStartShare = {
                     withOptionalNotificationPermission {
                         try { TransferService.startSharing(this) }
