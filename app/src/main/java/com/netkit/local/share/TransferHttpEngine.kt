@@ -405,10 +405,25 @@ class TransferHttpEngine(
      * Reject names that Windows/SAF extractors may alias or display deceptively.
      * Normal Arabic filenames remain supported.
      */
-    private fun validName(v: String): Boolean {
+    internal fun validName(v: String): Boolean {
         if (v.isBlank() || v.length > 180 || v == "." || v == ".." ||
             v.endsWith('.') || v.endsWith(' ') ||
             v.startsWith(".netkit-", ignoreCase = true)) return false
+        // URLDecoder replaces malformed UTF-8 percent sequences with U+FFFD.
+        // Reject the replacement character and unpaired UTF-16 surrogates
+        // before SAF providers normalize or silently alias filenames.
+        if ('\uFFFD' in v) return false
+        var index = 0
+        while (index < v.length) {
+            val c = v[index]
+            if (Character.isHighSurrogate(c)) {
+                if (index + 1 >= v.length || !Character.isLowSurrogate(v[index + 1])) return false
+                index += 2
+            } else {
+                if (Character.isLowSurrogate(c)) return false
+                index++
+            }
+        }
         if (v.any { c ->
                 c == '/' || c == '\\' || c.code < 32 || c.code in 0x7f..0x9f ||
                 c in "<>:\"|?*" || c.code == 0x061c ||
