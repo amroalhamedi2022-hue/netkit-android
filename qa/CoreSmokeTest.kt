@@ -111,6 +111,12 @@ fun main(args: Array<String>) {
         }
     }
     TransferHttpEngine(serverSsl.serverSocketFactory, store).use { engine ->
+        // The browser URL decoder can replace invalid UTF-8 with U+FFFD.
+        // Invalid UTF-16 surrogates can also alias valid names on SAF providers.
+        check(!engine.validName("bad\uFFFDname.txt"))
+        check(!engine.validName("broken" + '\uD800' + ".txt"))
+        check(!engine.validName("broken" + '\uDC00' + ".txt"))
+        check(engine.validName("صورة-😀.png"))
         engine.start()
         val root = "https://127.0.0.1:${engine.port}/s/${engine.token}"
         var lastContentRange: String? = null
@@ -203,6 +209,8 @@ fun main(args: Array<String>) {
         check("malformed-hash.bin" !in uploaded)
         check(request(root + "/upload", "POST", byteArrayOf(1), "..%2Fsecrets.txt").first == 400)
         check(request(root + "/upload", "POST", byteArrayOf(1), ".netkit-backdoor.part").first == 400)
+        check(request(root + "/upload", "POST", byteArrayOf(1), "bad%EF%BF%BDname.txt").first == 400)
+        check("bad\uFFFDname.txt" !in uploaded)
         // Authorized browser uploads still must not create spoofed Windows/SAF names.
         for (unsafe in listOf(
             "CON.txt", "LPT1.log", "COM%C2%B9.txt", "report.", "report%20",
