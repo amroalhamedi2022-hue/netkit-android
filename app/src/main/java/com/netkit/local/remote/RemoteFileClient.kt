@@ -15,8 +15,8 @@ import java.util.Base64
 data class RemoteEntry(val name: String, val directory: Boolean, val size: Long)
 interface RemoteFileClient : Closeable {
     fun entries(path: String): List<RemoteEntry>
-    fun download(remotePath: String, destination: Uri, context: Context): Boolean
-    fun upload(source: Uri, remotePath: String, context: Context): Boolean
+    fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit = {}): Boolean
+    fun upload(source: Uri, remotePath: String, context: Context, progress: (Long) -> Unit = {}): Boolean
 }
 
 class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeoutMs: Int) : RemoteFileClient {
@@ -36,13 +36,13 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
     override fun entries(path: String): List<RemoteEntry> = ftp.listFiles(path).map {
         RemoteEntry(it.name, it.isDirectory, it.size)
     }.filter { it.name != "." && it.name != ".." }
-    override fun download(remotePath: String, destination: Uri, context: Context): Boolean {
+    override fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit): Boolean {
         val output = context.contentResolver.openOutputStream(destination, "w") ?: error("No permission to write")
-        output.use { return ftp.retrieveFile(remotePath, it) }
+        ProgressOutputStream(output, progress).use { return ftp.retrieveFile(remotePath, it) }
     }
-    override fun upload(source: Uri, remotePath: String, context: Context): Boolean {
+    override fun upload(source: Uri, remotePath: String, context: Context, progress: (Long) -> Unit): Boolean {
         val input = context.contentResolver.openInputStream(source) ?: error("No permission to read")
-        input.use { return ftp.storeFile(remotePath, it) }
+        ProgressInputStream(input, progress).use { return ftp.storeFile(remotePath, it) }
     }
     override fun close() { runCatching { ftp.logout() }; if (ftp.isConnected) ftp.disconnect() }
 }
@@ -92,14 +92,14 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
         if(item.filename=="." || item.filename=="..") null else
             RemoteEntry(item.filename,item.attrs.isDir,item.attrs.size)
     }
-    override fun download(remotePath:String,destination:Uri,context:Context):Boolean {
+    override fun download(remotePath:String,destination:Uri,context:Context,progress:(Long)->Unit):Boolean {
         val out=context.contentResolver.openOutputStream(destination,"w")?:error("Cannot write destination")
-        out.use { sftp.get(remotePath,it) }
+        ProgressOutputStream(out,progress).use { sftp.get(remotePath,it) }
         return true
     }
-    override fun upload(source:Uri,remotePath:String,context:Context):Boolean {
+    override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit):Boolean {
         val input=context.contentResolver.openInputStream(source)?:error("Cannot read source")
-        input.use { sftp.put(it,remotePath,ChannelSftp.OVERWRITE) }
+        ProgressInputStream(input,progress).use { sftp.put(it,remotePath,ChannelSftp.OVERWRITE) }
         return true
     }
     override fun close() {runCatching{sftp.disconnect()};runCatching{session.disconnect()}}
