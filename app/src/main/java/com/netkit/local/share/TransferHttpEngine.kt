@@ -32,6 +32,7 @@ interface DirectoryShareStorage {
     fun hasSharedDirectory(): Boolean
 }
 class UploadHashMismatchException : IllegalStateException("Upload SHA-256 does not match")
+class UploadPermissionRevokedException : IllegalStateException("Browser upload consent revoked")
 
 interface ShareStorage {
     fun items(): List<ShareItem>
@@ -399,6 +400,8 @@ class TransferHttpEngine(
             response(out, 201, "Saved: $stored")
         } catch (_: UploadHashMismatchException) {
             fail(out, 422, "Upload SHA-256 mismatch. File was not committed")
+        } catch (_: UploadPermissionRevokedException) {
+            fail(out, 403, "Browser upload consent revoked. Partial file was not committed")
         } catch (_: Exception) { fail(out, 500, "Could not save upload") }
     }
     /** Browser-supplied filenames are untrusted even when the upload session is authorized.
