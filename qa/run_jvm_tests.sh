@@ -25,4 +25,7 @@ java -jar "$TEMP_DIR/telemetry.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/ProgressStreams.kt" \
   "$ROOT/qa/ProgressStreamsTest.kt" -include-runtime -d "$TEMP_DIR/streams.jar"
 java -jar "$TEMP_DIR/streams.jar"
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/transfer/ProgressCheckpoint.kt" \
+  "$ROOT/qa/ProgressCheckpointTest.kt" -include-runtime -d "$TEMP_DIR/checkpoint.jar"
+java -jar "$TEMP_DIR/checkpoint.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
