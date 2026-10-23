@@ -2,7 +2,7 @@ name: NetKit Android - development build and verification
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/netkit-pro-m1-m5-20261023']
     paths:
       - 'app/**'
       - 'qa/**'
@@ -15,11 +15,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 # A newer development commit supersedes earlier CI builds.
 concurrency:
-  group: netkit-development-main
+  group: netkit-development-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -32,6 +32,13 @@ jobs:
         run: |
           test -f app/src/main/java/com/netkit/local/ui/NetKitApp.kt
           test -f app/src/main/java/com/netkit/local/share/SharedDirectoryBrowser.kt
+      - name: Integrate NetKitPro modules without overwriting current transfer engine
+        if: github.ref_name == 'feature/netkit-pro-m1-m5-20261023'
+        run: |
+          set -euo pipefail
+          python3 tools/netkit_dev_overlay.py
+          test -f app/src/main/java/com/netkit/local/ui/NetKitProApp.kt
+          test -f app/src/main/java/com/netkit/local/remote/RemoteFileClient.kt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -89,6 +96,18 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
           grep -F "package: name='com.netkit.local'" apk-badging.txt
+      - name: Commit verified implementation to feature branch
+        if: github.ref_name == 'feature/netkit-pro-m1-m5-20261023'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "netkit-dev-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/netkit/local app/build.gradle.kts
+          if ! git diff --cached --quiet; then
+            git commit -m "Implement NetKitPro tablet UI, settings, discovery and remote clients [skip ci]"
+            git push origin HEAD:feature/netkit-pro-m1-m5-20261023
+          fi
       - name: Package APK, source and SHA-256
         run: python3 tools/package_verified_build.py
       - name: Upload build artifact
