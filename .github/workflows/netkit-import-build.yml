@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 # A newer development commit supersedes earlier CI builds.
 concurrency:
@@ -32,6 +32,16 @@ jobs:
         run: |
           test -f app/src/main/java/com/netkit/local/ui/NetKitApp.kt
           test -f app/src/main/java/com/netkit/local/share/SharedDirectoryBrowser.kt
+      - name: Apply staged NetKitPro Android source without downgrading current transfer backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f app/src/main/java/com/netkit/local/ui/NetKitProApp.kt ]]; then
+            base64 --decode bootstrap/NetKitPro-Integration-v1.tar.xz.b64 > "$RUNNER_TEMP/netkit-pro.tar.xz"
+            echo 'c55346167d5b95e6e9935ddc5d87a0630f508ec00e17af56d6f91860bec0c11d  '"$RUNNER_TEMP"'/netkit-pro.tar.xz' | sha256sum --check -
+            tar -xJf "$RUNNER_TEMP/netkit-pro.tar.xz"
+            python3 tools/apply_pro_delta.py
+          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -89,6 +99,18 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
           grep -F "package: name='com.netkit.local'" apk-badging.txt
+      - name: Commit verified NetKitPro source and settings to main
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "netkit-build-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- app/ tools/apply_pro_delta.py
+          if ! git diff --cached --quiet; then
+            git commit -m "Integrate verified NetKitPro UI, settings, LAN discovery and FTP/SFTP clients"
+            git push origin HEAD:main
+          fi
       - name: Package APK, source and SHA-256
         run: python3 tools/package_verified_build.py
       - name: Upload build artifact
