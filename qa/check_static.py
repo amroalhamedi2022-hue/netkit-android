@@ -54,7 +54,9 @@ assert 'activeClients.remove(client)' in engine
 assert 'x-content-sha256' in engine
 assert 'UploadHashMismatchException' in engine
 assert 'sha256SmallFile' in engine
-assert 'downloadArchive' in engine and 'browse(id)' in engine and 'expiresAtMillis' in engine
+assert 'downloadArchive' in engine and 'browseDirectory' in engine and 'browse-archive/' in engine
+assert 'shareExpirationMinutes' in (root / 'app/src/main/java/com/netkit/local/app/NetKitCore.kt').read_text()
+assert (root / 'app/src/main/java/com/netkit/local/share/DirectoryArchive.kt').is_file()
 assert 'MANAGE_EXTERNAL_STORAGE' in (root / 'app/src/main/AndroidManifest.xml').read_text()
 assert 'PeerDiscovery' in (root / 'app/src/main/java/com/netkit/local/app/NetKitCore.kt').read_text()
 assert 'fun begin(' in (root / 'app/src/main/java/com/netkit/local/transfer/TransferQueue.kt').read_text()
