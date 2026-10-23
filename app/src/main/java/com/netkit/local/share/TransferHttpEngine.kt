@@ -44,13 +44,16 @@ interface ShareStorage {
 class TransferHttpEngine(
     private val sslFactory: SSLServerSocketFactory,
     private val storage: ShareStorage,
-    private val progress: (Long, Long) -> Unit = { _, _ -> }
+    private val progress: (Long, Long) -> Unit = { _, _ -> },
+    sessionLifetimeMillis: Long = 30L * 60 * 1000
 ) : AutoCloseable {
     companion object { private const val MAX_UPLOAD = 16L * 1024 * 1024 * 1024 } // 16 GiB hard guard
     private val rng = SecureRandom()
     private val secret = ByteArray(24).also(rng::nextBytes)
     val token: String = Base64.getUrlEncoder().withoutPadding().encodeToString(secret)
     private val prefix = "/s/$token"
+    private val lease = SessionLease(sessionLifetimeMillis)
+    val sessionRemainingMillis: Long get() = lease.remainingMillis()
     private val pool = ThreadPoolExecutor(
         4, 4, 0, TimeUnit.SECONDS, ArrayBlockingQueue(12),
         ThreadPoolExecutor.AbortPolicy()
@@ -97,6 +100,7 @@ class TransferHttpEngine(
     }
 
     override fun close() {
+        lease.revoke()
         alive = false
         runCatching { listener?.close() }
         listener = null
@@ -123,6 +127,7 @@ class TransferHttpEngine(
                     val query = parts[1].substringAfter('?', "")
                     val headers = readHeaders(input)
                     if (path != prefix && !path.startsWith("$prefix/")) return fail(out, 404, "Not found")
+                    if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
                     when {
                         method == "GET" && (path == prefix || path == "$prefix/") -> html(out)
                         method == "GET" && path == "$prefix/list" -> list(out)
@@ -181,7 +186,7 @@ class TransferHttpEngine(
     )
 
     private fun head(out: OutputStream, status: Int, type: String, length: Long?, extra: Map<String,String> = emptyMap()) {
-        val reasons = mapOf(200 to "OK", 201 to "Created", 206 to "Partial Content", 400 to "Bad Request", 403 to "Forbidden", 404 to "Not Found", 405 to "Method Not Allowed", 409 to "Conflict", 413 to "Content Too Large", 416 to "Range Not Satisfiable", 422 to "Unprocessable Content", 500 to "Server Error")
+        val reasons = mapOf(200 to "OK", 201 to "Created", 206 to "Partial Content", 400 to "Bad Request", 403 to "Forbidden", 404 to "Not Found", 405 to "Method Not Allowed", 409 to "Conflict", 410 to "Gone", 413 to "Content Too Large", 416 to "Range Not Satisfiable", 422 to "Unprocessable Content", 500 to "Server Error")
         val sb = StringBuilder("HTTP/1.1 $status ${reasons[status] ?: "Error"}\r\n")
         val headers = commonHeaders() + extra + mapOf("Content-Type" to type, "Connection" to "close") +
             if (length == null) mapOf("Transfer-Encoding" to "chunked") else mapOf("Content-Length" to length.toString())
