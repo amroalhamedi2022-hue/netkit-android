@@ -376,6 +376,7 @@ private fun ShareScreen(core: NetKitCore, ips: List<String>, p: Palette,
                     OutlinedButton(onClick = { copy(url) }) { Text("نسخ الرابط") }
                     OutlinedButton(onClick = { shareLink(url) }) { Text("مشاركة الرابط") }
                 }
+                ShareQrPanel(url)
             }
             if (ips.isEmpty()) MutedText("ما ظهر IP محلي بعد. تأكد من اتصال LAN أو Hotspot؛ ما في داعي لإعادة تشغيل الخادم.")
             Spacer(Modifier.height(12.dp))
