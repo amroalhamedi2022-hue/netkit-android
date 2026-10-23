@@ -35,6 +35,7 @@ import com.netkit.local.remote.*
 import com.netkit.local.transfer.TransferTelemetry
 import com.netkit.local.transfer.TransferSnapshot
 import com.netkit.local.transfer.TransferState
+import com.netkit.local.transfer.ProgressCheckpoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -235,9 +236,12 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                 result = runCatching {
                     check(task != null) { "Transfer journal unavailable or full" }
                     core.transfers.begin(task.id)
-                    val completed = withContext(Dispatchers.IO) {
-                        connected.download(remotePath, uri, ctx) { bytes -> core.transfers.progress(task.id,bytes) }
-                    }
+                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, bytes) })
+                    val completed = try {
+                        withContext(Dispatchers.IO) {
+                            connected.download(remotePath, uri, ctx) { bytes -> checkpoint.onBytes(bytes) }
+                        }
+                    } finally { checkpoint.flush() }
                     check(completed) { "FTP server rejected download" }
                     core.transfers.finish(task.id)
                     "تم تنزيل ${selected.name}"
@@ -261,7 +265,12 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                 result=runCatching {
                     check(task!=null) { "Transfer journal unavailable or full" }
                     core.transfers.begin(task.id)
-                    val ok=withContext(Dispatchers.IO) { connected.upload(uri,remotePath,ctx) { bytes ->core.transfers.progress(task.id,bytes) } }
+                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, bytes) })
+                    val ok = try {
+                        withContext(Dispatchers.IO) {
+                            connected.upload(uri, remotePath, ctx) { bytes -> checkpoint.onBytes(bytes) }
+                        }
+                    } finally { checkpoint.flush() }
                     check(ok) { "FTP server rejected upload" }
                     core.transfers.finish(task.id)
                     entries=withContext(Dispatchers.IO){ connected.entries(folder) }
