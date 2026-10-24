@@ -17,6 +17,9 @@ internal object UploadPathPolicy {
             val c = v[index]
             if (Character.isHighSurrogate(c)) {
                 if (index + 1 >= v.length || !Character.isLowSurrogate(v[index + 1])) return false
+                // Unicode tag characters are invisible supplementary code points.
+                // Reject them without rejecting normal surrogate-pair emoji.
+                if (Character.toCodePoint(c, v[index + 1]) in 0xE0000..0xE007F) return false
                 index += 2
             } else {
                 if (Character.isLowSurrogate(c)) return false
@@ -26,6 +29,8 @@ internal object UploadPathPolicy {
         if (v.any { c ->
                 c == '/' || c == '\\' || c.code < 32 || c.code in 0x7f..0x9f ||
                 c in "<>:\"|?*" || c.code == 0x061c ||
+                c.code == 0x00ad || c.code == 0x034f || c.code == 0x180e ||
+                c.code == 0x200b || c.code == 0x2060 ||
                 c.code in 0x200e..0x200f || c.code in 0x202a..0x202e ||
                 c.code in 0x2066..0x206f || c.code in 0x2028..0x2029 ||
                 c.code in 0xfff9..0xfffb || c.code == 0xfeff
