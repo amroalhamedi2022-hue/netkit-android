@@ -69,8 +69,10 @@ class TransferHttpEngine(
     private val sslFactory: SSLServerSocketFactory,
     private val storage: ShareStorage,
     private val progress: (Long, Long) -> Unit = { _, _ -> },
-    sessionLifetimeMillis: Long = 30L * 60 * 1000
+    sessionLifetimeMillis: Long = 30L * 60 * 1000,
+    private val headerTimeoutMillis: Long = 12_000L
 ) : AutoCloseable {
+    init { require(headerTimeoutMillis in 1L..120_000L) { "Invalid HTTP header timeout" } }
     companion object { private const val MAX_UPLOAD = 16L * 1024 * 1024 * 1024 } // 16 GiB hard guard
     private val rng = SecureRandom()
     private val secret = ByteArray(24).also(rng::nextBytes)
@@ -139,11 +141,15 @@ class TransferHttpEngine(
     private fun handle(client: Socket) {
         try {
             client.use { socket ->
-                socket.soTimeout = 90_000
+                // Slow clients must not monopolize the four TLS workers by
+                // dripping header bytes forever. A read timeout alone is not
+                // enough: enforce one absolute budget for request line + headers.
+                socket.soTimeout = minOf(headerTimeoutMillis, 5_000L).toInt()
+                val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(headerTimeoutMillis)
                 val out = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
                 try {
                     val input = BufferedInputStream(socket.getInputStream(), 64 * 1024)
-                    val line = readLine(input, 4096) ?: return
+                    val line = readLine(input, 4096, deadline) ?: return
                     val parts = line.split(' ')
                     if (parts.size != 3 || parts[2] != "HTTP/1.1") return fail(out, 400, "Invalid request")
                     val method = parts[0]
@@ -151,8 +157,11 @@ class TransferHttpEngine(
                     val query = parts[1].substringAfter('?', "")
                     // Malformed or ambiguous HTTP headers must receive a clear
                     // rejection before any storage or download operation begins.
-                    val headers = try { readHeaders(input) }
+                    val headers = try { readHeaders(input, deadline) }
                         catch (_: IllegalArgumentException) { return fail(out, 400, "Invalid headers") }
+                    // Large file transfers have their own idle budget; only
+                    // request headers are constrained by the short absolute timer.
+                    socket.soTimeout = 90_000
                     if (headers.containsKey("transfer-encoding")) {
                         return fail(out, 400, "Transfer-Encoding is not supported")
                     }
@@ -182,10 +191,12 @@ class TransferHttpEngine(
         }
     }
 
-    private fun readLine(input: InputStream, max: Int): String? {
+    private fun readLine(input: InputStream, max: Int, deadline: Long): String? {
         val bytes = java.io.ByteArrayOutputStream()
         while (true) {
+            check(System.nanoTime() - deadline < 0) { "HTTP header deadline exceeded" }
             val c = input.read()
+            check(System.nanoTime() - deadline < 0) { "HTTP header deadline exceeded" }
             if (c < 0) return if (bytes.size() == 0) null else throw IllegalArgumentException("Truncated headers")
             if (c == 10) {
                 val data = bytes.toByteArray()
@@ -198,12 +209,12 @@ class TransferHttpEngine(
             bytes.write(c)
         }
     }
-    private fun readHeaders(input: InputStream): Map<String, String> {
+    private fun readHeaders(input: InputStream, deadline: Long): Map<String, String> {
         val headers = mutableMapOf<String, String>()
         var used = 0
         var count = 0
         while (true) {
-            val line = readLine(input, 4096) ?: throw IllegalArgumentException("Missing header terminator")
+            val line = readLine(input, 4096, deadline) ?: throw IllegalArgumentException("Missing header terminator")
             used += line.length
             require(used < 32_768) { "Headers too long" }
             if (line.isEmpty()) return headers
