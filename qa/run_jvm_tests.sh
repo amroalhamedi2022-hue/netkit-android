@@ -57,4 +57,8 @@ java -jar "$TEMP_DIR/wol.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/RemotePathPolicy.kt" \
   "$ROOT/qa/RemotePathPolicyTest.kt" -include-runtime -d "$TEMP_DIR/remote-path-policy.jar"
 java -jar "$TEMP_DIR/remote-path-policy.jar"
+# Catch silent FTP/SFTP truncation when the remote server reports a file size.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/TransferLengthVerifier.kt" \
+  "$ROOT/qa/TransferLengthVerifierTest.kt" -include-runtime -d "$TEMP_DIR/remote-length.jar"
+java -jar "$TEMP_DIR/remote-length.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
