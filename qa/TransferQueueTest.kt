@@ -15,7 +15,10 @@ fun main() {
         check(queue.snapshot().first().state == TransferState.QUEUED)
         check(queue.progress(second.id, secondAttempt1, 9)?.completedBytes == 9L)
         check(queue.progress(second.id, secondAttempt1, 4)?.completedBytes == 9L) // monotonic
-        check(queue.progress(second.id, secondAttempt1, 99)?.completedBytes == 15L) // clamped
+        check(queue.progress(second.id, secondAttempt1, 99) == null) // reject impossible >size
+        check(queue.progress(second.id, secondAttempt1, -1) == null) // reject negative
+        check(queue.progress(second.id, secondAttempt1, Long.MAX_VALUE) == null)
+        check(queue.progress(second.id, secondAttempt1, 15)?.completedBytes == 15L)
         check(queue.pause(second.id)?.state == TransferState.PAUSED)
         check(queue.begin(second.id) == null)
         check(TransferQueue(FileTransferJournal(file)).snapshot()[1].completedBytes == 15L)
@@ -93,6 +96,24 @@ fun main() {
             check(interrupted.writes == 1)
             check(interrupted.lastSaved?.single() == recovered)
         }
+        // A restored exhausted task must not starve healthy queued work.
+        run {
+            val exhausted = TransferTask("exhausted", "content://x", "peer/x", 1,
+                attempts = Int.MAX_VALUE)
+            val available = TransferTask("available", "content://y", "peer/y", 2)
+            val journal = object : TransferJournal {
+                private var saved = listOf(exhausted, available)
+                override fun load() = saved
+                override fun save(tasks: List<TransferTask>) { saved = tasks.toList() }
+            }
+            val pending = TransferQueue(journal)
+            check(pending.begin(exhausted.id) == null)
+            check(pending.next()?.id == available.id)
+            check(pending.snapshot().first() == exhausted)
+            check(pending.next() == null)
+        }
+        println("PASS: exhausted retry counts cannot starve queued transfers")
+        println("PASS: impossible progress bytes rejected without false completion")
         println("PASS: startup journal write elision and durable crash recovery")
         println("PASS: corrupted journal rejection and preservation")
         println("PASS: attempt-scoped callbacks, retry reset, durable journal and cancel")

@@ -59,15 +59,17 @@ class TransferQueue(private val journal: TransferJournal) {
     }
 
     fun next(): TransferTask? = synchronized(mutex) {
-        val item = tasks.firstOrNull { it.state == TransferState.QUEUED } ?: return@synchronized null
+        val item = tasks.firstOrNull { it.state == TransferState.QUEUED && it.attempts < Int.MAX_VALUE }
+            ?: return@synchronized null
         begin(item.id)
     }
 
     /** Reject late progress callbacks from a cancelled or superseded attempt. */
     fun progress(id: String, attempt: Int, bytes: Long): TransferTask? = synchronized(mutex) {
         val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
-        if (index < 0) null else edit(index) {
-            it.copy(completedBytes = bytes.coerceIn(it.completedBytes, it.size))
+        // A callback reporting impossible bytes must not silently fabricate 100% progress.
+        if (index < 0 || bytes < 0 || bytes > tasks[index].size) null else edit(index) {
+            it.copy(completedBytes = maxOf(it.completedBytes, bytes))
         }
     }
 
