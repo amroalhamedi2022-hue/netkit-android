@@ -182,7 +182,10 @@ class TransferHttpEngine(
             if (c < 0) return if (bytes.size() == 0) null else throw IllegalArgumentException("Truncated headers")
             if (c == 10) {
                 val data = bytes.toByteArray()
-                return String(data, 0, if (data.isNotEmpty() && data.last() == 13.toByte()) data.size - 1 else data.size, StandardCharsets.ISO_8859_1)
+                // Require CRLF, not bare LF: ambiguous HTTP framing must not
+                // be accepted by the local HTTPS parser.
+                require(data.isNotEmpty() && data.last() == 13.toByte()) { "Bare LF in HTTP request" }
+                return String(data, 0, data.size - 1, StandardCharsets.ISO_8859_1)
             }
             if (bytes.size() >= max) throw IllegalArgumentException("Header line too long")
             bytes.write(c)
@@ -191,11 +194,13 @@ class TransferHttpEngine(
     private fun readHeaders(input: InputStream): Map<String, String> {
         val headers = mutableMapOf<String, String>()
         var used = 0
+        var count = 0
         while (true) {
             val line = readLine(input, 4096) ?: throw IllegalArgumentException("Missing header terminator")
             used += line.length
             require(used < 32_768) { "Headers too long" }
             if (line.isEmpty()) return headers
+            require(++count <= 100) { "Too many HTTP headers" }
             val i = line.indexOf(':')
             require(i > 0) { "Bad header" }
             // RFC 7230 token syntax: never normalize whitespace in a field name.
