@@ -64,6 +64,29 @@ fun main() {
             it.setProperty("1.state", "COMPLETED")
             it.setProperty("1.done", "9")
         } // never mark an incomplete file as completed
+        // Healthy queue startup is read-only; interrupted RUNNING tasks must
+        // still be persisted as PAUSED exactly once before exposure.
+        run {
+            class CountingJournal(private val initial: List<TransferTask>) : TransferJournal {
+                var writes = 0
+                var lastSaved: List<TransferTask>? = null
+                override fun load() = initial
+                override fun save(tasks: List<TransferTask>) {
+                    writes++
+                    lastSaved = tasks.toList()
+                }
+            }
+            val task = TransferTask("stable", "content://a", "peer/a", 5)
+            val healthy = CountingJournal(listOf(task))
+            check(TransferQueue(healthy).snapshot() == listOf(task))
+            check(healthy.writes == 0) { "Healthy journal was needlessly rewritten" }
+            val interrupted = CountingJournal(listOf(task.copy(state = TransferState.RUNNING)))
+            val recovered = TransferQueue(interrupted).snapshot().single()
+            check(recovered.state == TransferState.PAUSED)
+            check(interrupted.writes == 1)
+            check(interrupted.lastSaved?.single() == recovered)
+        }
+        println("PASS: startup journal write elision and durable crash recovery")
         println("PASS: corrupted journal rejection and preservation")
         println("PASS: exact task selection, durable journal, retry, recover, monotonic progress, cancel")
     } finally { dir.deleteRecursively() }
