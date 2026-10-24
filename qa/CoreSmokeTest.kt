@@ -111,6 +111,9 @@ fun main(args: Array<String>) {
             uploaded[fileName] = result
             return fileName
         }
+        override fun uploadRelative(folders: List<String>, fileName: String, body: InputStream,
+                                    length: Long, expectedSha256: String?, progress: (Long) -> Unit): String =
+            upload(folders.joinToString("/") + "/" + fileName, body, length, expectedSha256, progress)
     }
     TransferHttpEngine(serverSsl.serverSocketFactory, store).use { engine ->
         // The browser URL decoder can replace invalid UTF-8 with U+FFFD.
@@ -123,7 +126,8 @@ fun main(args: Array<String>) {
         val root = "https://127.0.0.1:${engine.port}/s/${engine.token}"
         var lastContentRange: String? = null
         fun request(path: String, method: String = "GET", bytes: ByteArray? = null, filename: String? = null,
-                    range: String? = null, sha256: String? = null): Pair<Int, ByteArray> {
+                    range: String? = null, sha256: String? = null,
+                    relativePath: String? = null): Pair<Int, ByteArray> {
             val con = URI(path).toURL().openConnection() as HttpsURLConnection
             con.sslSocketFactory = clientSsl.socketFactory
             con.hostnameVerifier = HostnameVerifier { _, _ -> true }
@@ -134,6 +138,7 @@ fun main(args: Array<String>) {
                 con.setFixedLengthStreamingMode(bytes.size)
                 con.setRequestProperty("X-File-Name", filename!!)
                 if (sha256 != null) con.setRequestProperty("X-Content-SHA256", sha256)
+                if (relativePath != null) con.setRequestProperty("X-Relative-Path", relativePath)
                 con.setRequestProperty("Content-Type", "application/octet-stream")
                 con.outputStream.use { it.write(bytes) }
             }
@@ -247,6 +252,21 @@ fun main(args: Array<String>) {
         check(engine.activeClientCount == 0) { "Leaked ${engine.activeClientCount} client sockets" }
 
         val upload = ByteArray(6 * 1024 * 1024) { (it % 251).toByte() }
+        // Folder uploads preserve relative structure under the explicitly chosen
+        // SAF destination. The transport rejects unsafe paths before storage access.
+        val folderName = java.net.URLEncoder.encode("صورة-😀.png", "UTF-8")
+        val relative = java.net.URLEncoder.encode("Photos/2026/صورة-😀.png", "UTF-8")
+        check(request(root + "/upload", "POST", byteArrayOf(1, 2, 3), folderName,
+            relativePath = relative).first == 201)
+        check(uploaded["Photos/2026/صورة-😀.png"]!!.contentEquals(byteArrayOf(1, 2, 3)))
+        for (badPath in listOf(
+            "Photos%2F..%2Ffile.txt", "Photos%2Ffile.txt%2F", "Photos%2FCON.txt",
+            "Photos%2Fother.txt", "Photos%2F%2Ffile.txt", "Photos%2Fbad%EF%BF%BDfile.txt",
+            "Photos%2Ffile.txt%2Fextra", "Photos%2Ffile.txt%ZZ"
+        )) {
+            check(request(root + "/upload", "POST", byteArrayOf(7), "file.txt",
+                relativePath = badPath).first == 400) { "Unsafe folder upload accepted: $badPath" }
+        }
         check(request(root + "/upload", "POST", upload, "large-test.bin").first == 201)
         check(uploaded["large-test.bin"]!!.contentEquals(upload))
         val validHash = MessageDigest.getInstance("SHA-256").digest(upload).joinToString("") { "%02x".format(it) }
