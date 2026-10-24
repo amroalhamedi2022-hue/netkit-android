@@ -203,6 +203,17 @@ fun main(args: Array<String>) {
         val folderFiles = request(root + "/browse?dir=$folderId")
         check(folderFiles.first == 200 && String(folderFiles.second).contains("image.png"))
         check(request(root + "/browse-file/$nestedId").second.contentEquals(initial))
+        // On-demand file integrity: SHA-256 is calculated from real HTTPS
+        // shared streams (including SAF folder children and unknown lengths).
+        fun expectedHash(data: ByteArray) = MessageDigest.getInstance("SHA-256")
+            .digest(data).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val folderChecksum = request(root + "/browse-checksum/$nestedId")
+        check(folderChecksum.first == 200)
+        check(String(folderChecksum.second) ==
+            """{"sha256":"${expectedHash(initial)}","bytes":${initial.size}}""")
+        check(request(root + "/browse-checksum/$folderId").first == 404)
+        check(request(root + "/browse-checksum/not-a-uuid").first == 404)
+
         check(request(root + "/browse-file/$nestedId", range = "bytes=3-8").first == 206)
         check(request(root + "/browse-file/$folderId").first == 404)
 
@@ -222,6 +233,18 @@ fun main(args: Array<String>) {
         check(request("https://127.0.0.1:${engine.port}/s/guess/browse").first == 404)
         val dl = request(root + "/file/$itemId")
         check(dl.first == 200 && dl.second.contentEquals(initial))
+        val knownChecksum = request(root + "/checksum/$itemId")
+        check(knownChecksum.first == 200)
+        check(String(knownChecksum.second) ==
+            """{"sha256":"${expectedHash(initial)}","bytes":${initial.size}}""")
+        val unknownChecksum = request(root + "/checksum/$unknownId")
+        check(unknownChecksum.first == 200)
+        check(String(unknownChecksum.second) ==
+            """{"sha256":"${expectedHash(unknown)}","bytes":${unknown.size}}""")
+        check(request(root + "/checksum/not-a-uuid").first == 404)
+        check(request(root + "/checksum/$folderId").first == 404)
+        check(request("https://127.0.0.1:${engine.port}/s/guess/checksum/$itemId").first == 404)
+
         // Resumable downloads: known-length SAF streams support single byte ranges.
         val part = request(root + "/file/$itemId", range = "bytes=4-9")
         check(part.first == 206 && part.second.contentEquals(initial.copyOfRange(4, 10)))
