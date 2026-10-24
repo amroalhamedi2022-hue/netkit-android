@@ -147,6 +147,26 @@ fun main() {
             check(TransferQueue(journal).snapshot().size == 3)
             check(q.clearFinished() == 0)
         }
+        // Reclaim the real 1000-task journal capacity, never deleting live work.
+        run {
+            val full = object : TransferJournal {
+                var saved = (0 until 1000).map { index ->
+                    TransferTask("item-$index", "content://$index", "peer/$index", 1,
+                        completedBytes = if (index % 2 == 0) 1 else 0,
+                        state = if (index % 2 == 0) TransferState.COMPLETED else TransferState.PAUSED)
+                }
+                override fun load() = saved
+                override fun save(tasks: List<TransferTask>) { saved = tasks.toList() }
+            }
+            val queue = TransferQueue(full)
+            check(runCatching { queue.add("content://extra", "peer/extra", 1) }.isFailure)
+            check(queue.clearFinished() == 500)
+            check(queue.snapshot().size == 500)
+            check(queue.snapshot().all { it.state == TransferState.PAUSED })
+            check(queue.add("content://extra", "peer/extra", 1).state == TransferState.QUEUED)
+            check(TransferQueue(full).snapshot().size == 501)
+        }
+        println("PASS: terminal cleanup restores bounded journal capacity")
         println("PASS: explicit terminal cleanup is durable and preserves unfinished work")
         println("PASS: exhausted retry counts cannot starve queued transfers")
         println("PASS: impossible progress and incomplete known-size finish rejected")
