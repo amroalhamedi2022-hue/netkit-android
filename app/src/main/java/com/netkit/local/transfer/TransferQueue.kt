@@ -15,6 +15,7 @@ data class TransferTask(
     val id: String,
     val source: String,
     val destination: String,
+    /** -1 means SAF/provider size unknown; zero means a known empty file. */
     val size: Long,
     val completedBytes: Long = 0,
     val state: TransferState = TransferState.QUEUED,
@@ -46,7 +47,7 @@ class TransferQueue(private val journal: TransferJournal) {
 
     fun add(source: String, destination: String, size: Long): TransferTask = synchronized(mutex) {
         require(source.isNotBlank() && destination.isNotBlank())
-        require(size >= 0 && tasks.size < 1000)
+        require(size >= -1 && tasks.size < 1000)
         val task = TransferTask(UUID.randomUUID().toString(), source, destination, size)
         persistChange { add(task) }
         task
@@ -85,7 +86,8 @@ class TransferQueue(private val journal: TransferJournal) {
     fun progress(id: String, attempt: Int, bytes: Long): TransferTask? = synchronized(mutex) {
         val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
         // A callback reporting impossible bytes must not silently fabricate 100% progress.
-        if (index < 0 || bytes < 0 || bytes > tasks[index].size) null else edit(index) {
+        if (index < 0 || bytes < 0 ||
+            (tasks[index].size >= 0 && bytes > tasks[index].size)) null else edit(index) {
             it.copy(completedBytes = maxOf(it.completedBytes, bytes))
         }
     }
@@ -106,11 +108,13 @@ class TransferQueue(private val journal: TransferJournal) {
         val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
         // A transport success flag alone is not evidence of a complete known-size
         // transfer. Never fabricate the missing bytes in the persisted journal.
-        // Size 0 is also used by SAF providers that cannot report a size; those
-        // transfers still need the transport's own completion/integrity checks.
-        if (index < 0 || (tasks[index].size > 0 &&
+        // Unknown-length SAF files use size=-1, never a misleading zero.
+        // Caller must have completed the protocol (and optional SHA readback).
+        if (index < 0 || (tasks[index].size >= 0 &&
                 tasks[index].completedBytes != tasks[index].size)) null else edit(index) {
-            it.copy(state = TransferState.COMPLETED, completedBytes = it.size, error = "")
+            // Preserve observed bytes for unknown-length streams; -1 is never
+            // a completed byte count. Caller must verify transport success.
+            it.copy(state = TransferState.COMPLETED, error = "")
         }
     }
 
@@ -157,7 +161,9 @@ class FileTransferJournal(private val file: File) : TransferJournal {
                 ?: throw IllegalStateException("Missing saved task field $n.$key")
             val size = required("size").toLong()
             val done = required("done").toLong()
-            require(size >= 0 && done in 0..size) { "Invalid saved task byte count" }
+            require(size >= -1 && done >= 0 && (size == -1L || done <= size)) {
+                "Invalid saved task byte count"
+            }
             val id = required("id")
             val source = required("source")
             val destination = required("dest")
@@ -166,7 +172,7 @@ class FileTransferJournal(private val file: File) : TransferJournal {
             require(id.isNotBlank() && seenIds.add(id)) { "Duplicate or blank saved task id" }
             require(source.isNotBlank() && destination.isNotBlank()) { "Missing saved task endpoint" }
             require(attempts >= 0) { "Negative saved task attempts" }
-            require(state != TransferState.COMPLETED || done == size) {
+            require(state != TransferState.COMPLETED || size == -1L || done == size) {
                 "Completed task has incomplete saved byte count"
             }
             TransferTask(
