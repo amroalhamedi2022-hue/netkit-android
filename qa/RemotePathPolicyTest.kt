@@ -10,6 +10,17 @@ fun main() {
         "invoice\u202Egpj.exe", "name\u2066.txt", "x\uFFFDy",
         "broken\uD800", "broken\uDC00", "a".repeat(4097)).forEach(::rejectPath)
     check(RemotePathPolicy.path("/ملفات/📁 صورة 01.jpg") == "/ملفات/📁 صورة 01.jpg")
+    // Invisible Unicode spoofing must be rejected before FTP commands or SFTP
+    // listings reuse the name. Supplementary tags require code-point checks.
+    for (unsafe in listOf("\u00AD", "\u034F", "\u180E", "\u200B", "\u200C",
+        "\u2028", "\u2029", "\u2060", "\u206A", "\uFEFF", "\uFFF9",
+        "\uDB40\uDC20", "\uDB40\uDC7F")) {
+        rejectPath("report" + unsafe + ".txt")
+        check(!RemotePathPolicy.safeEntryName("report" + unsafe + ".txt"))
+        check(runCatching { RemotePathPolicy.credential("user" + unsafe) }.isFailure)
+    }
+    // Keep Arabic, emoji and emoji ZWJ sequences (not a generic ASCII filter).
+    check(RemotePathPolicy.path("/ملفات/👩‍💻 مشروع.txt") == "/ملفات/👩‍💻 مشروع.txt")
     check(RemotePathPolicy.path("../parent/normal.txt") == "../parent/normal.txt")
     check(RemotePathPolicy.path("/") == "/")
     check(RemotePathPolicy.credential("", allowEmpty = true).isEmpty())
