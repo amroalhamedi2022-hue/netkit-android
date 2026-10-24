@@ -38,6 +38,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
     @Volatile private var uploadTree: Uri? = null
     // Reserve only names/commit operations, not the multi-GB SAF stream itself.
     private val uploadNames = UploadNameReservations()
+    private val uploadFoldersLock = Any()
 
     @Synchronized fun addDocuments(uris: List<Uri>) {
         uris.forEach { uri ->
@@ -75,15 +76,59 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
         length: Long,
         expectedSha256: String?,
         progress: (Long) -> Unit
+    ): String = saveUpload(emptyList(), fileName, body, length, expectedSha256, progress)
+
+    override fun uploadRelative(
+        folders: List<String>,
+        fileName: String,
+        body: InputStream,
+        length: Long,
+        expectedSha256: String?,
+        progress: (Long) -> Unit
     ): String {
+        UploadPathPolicy.checkFolders(folders, fileName)
+        return saveUpload(folders, fileName, body, length, expectedSha256, progress)
+    }
+
+    private fun saveUpload(
+        folders: List<String>,
+        fileName: String,
+        body: InputStream,
+        length: Long,
+        expectedSha256: String?,
+        progress: (Long) -> Unit
+    ): String {
+        require(UploadPathPolicy.validName(fileName)) { "Unsafe upload name" }
         val (consentTicket, treeUri) = uploadConsent.snapshot {
             val tree = uploadTree ?: throw UploadPermissionRevokedException()
             if (!browserUploadsEnabled) throw UploadPermissionRevokedException()
             tree
         }
         ensureUploadConsent(treeUri, consentTicket)
-        val folder = DocumentFile.fromTreeUri(context, treeUri) ?: error("Folder grant unavailable")
-        val reservedName = uploadNames.reserve(fileName) { folder.findFile(it) != null }
+        // Resolve only validated components beneath the explicitly granted SAF tree.
+        // The short folder-creation lock avoids two uploads creating the same directory.
+        // No lock is held while streaming file contents.
+        val folder = uploadConsent.withCurrent(
+            consentTicket, { browserUploadsEnabled && uploadTree == treeUri },
+            { throw UploadPermissionRevokedException() }
+        ) {
+            synchronized(uploadFoldersLock) {
+                var current = DocumentFile.fromTreeUri(context, treeUri)
+                    ?: error("Folder grant unavailable")
+                for (segment in folders) {
+                    val existing = current.findFile(segment)
+                    val next = existing ?: current.createDirectory(segment)
+                        ?: error("Storage provider refused directory")
+                    check(next.isDirectory && next.name == segment) {
+                        "Unsafe or conflicting SAF folder"
+                    }
+                    current = next
+                }
+                current
+            }
+        }
+        val scope = folders.joinToString("/")
+        val reservedName = uploadNames.reserve(fileName, { folder.findFile(it) != null }, scope)
         var temp: DocumentFile? = null
         var completed = false
         val digest = if (expectedSha256 != null) MessageDigest.getInstance("SHA-256") else null
@@ -125,14 +170,15 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 uploadNames.commit(
                     reservedName, fileName,
                     exists = { folder.findFile(it) != null },
-                    rename = { currentTemp.renameTo(it) }
+                    rename = { currentTemp.renameTo(it) },
+                    scope = scope
                 )
             }
             completed = true
-            return finalName
+            return if (scope.isEmpty()) finalName else "$scope/$finalName"
         } finally {
             if (!completed) runCatching { temp?.delete() }
-            uploadNames.release(reservedName)
+            uploadNames.release(reservedName, scope)
         }
     }
 }
