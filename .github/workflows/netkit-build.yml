@@ -1,16 +1,21 @@
 name: NetKit Android — verified Debug APK
+# Legacy ZIP build path: no automatic packaging on push.
+# Requires a separate, explicit final-release approval.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'NetKit_Android_Source_v0.6*.zip'
   workflow_dispatch:
+    inputs:
+      release_approved:
+        description: 'Explicit approval for final APK packaging only'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_approved == true
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
