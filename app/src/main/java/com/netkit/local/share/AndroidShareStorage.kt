@@ -7,8 +7,6 @@ import androidx.documentfile.provider.DocumentFile
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.UUID
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 
 /** All accesses are limited to explicit Storage Access Framework grants. */
 class AndroidShareStorage(private val context: Context) : ShareStorage, DirectoryShareStorage {
@@ -35,9 +33,8 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
     override fun openDirectoryItem(id: String): SharedStream? = directoryBrowser.file(id)?.second
     private val documents = LinkedHashMap<String, Pair<Uri, ShareItem>>()
     @Volatile private var uploadTree: Uri? = null
-    // Serialize only destination name reservation/commit. A slow multi-GB upload must
-    // NOT block the synchronized items()/open() methods used by other download clients.
-    private val uploadLock = ReentrantLock(true)
+    // Reserve only names/commit operations, not the multi-GB SAF stream itself.
+    private val uploadNames = UploadNameReservations()
 
     @Synchronized fun addDocuments(uris: List<Uri>) {
         uris.forEach { uri ->
@@ -69,18 +66,27 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
         }
     }
 
-    override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String = uploadLock.withLock {
+    override fun upload(
+        fileName: String,
+        body: InputStream,
+        length: Long,
+        expectedSha256: String?,
+        progress: (Long) -> Unit
+    ): String {
         val treeUri = uploadTree ?: throw UploadPermissionRevokedException()
         ensureUploadConsent(treeUri)
         val folder = DocumentFile.fromTreeUri(context, treeUri) ?: error("Folder grant unavailable")
-        val chosen = uniqueName(folder, fileName)
-        // Write into a private-looking temporary document and rename only after full receipt.
-        val temp = folder.createFile("application/octet-stream", ".netkit-${UUID.randomUUID()}.part")
-            ?: error("Storage provider denied create")
+        val reservedName = uploadNames.reserve(fileName) { folder.findFile(it) != null }
+        var temp: DocumentFile? = null
         var completed = false
         val digest = if (expectedSha256 != null) MessageDigest.getInstance("SHA-256") else null
         try {
-            val stream = context.contentResolver.openOutputStream(temp.uri, "w") ?: error("Cannot open destination")
+            ensureUploadConsent(treeUri)
+            temp = folder.createFile("application/octet-stream", ".netkit-${UUID.randomUUID()}.part")
+                ?: error("Storage provider denied create")
+            val currentTemp = temp
+            val stream = context.contentResolver.openOutputStream(currentTemp.uri, "w")
+                ?: error("Cannot open destination")
             stream.use { out ->
                 var remaining = length
                 var received = 0L
@@ -97,30 +103,23 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 }
                 out.flush()
             }
-            // Never finalize a corrupted file: a .part is removed on mismatch or failure.
             if (digest != null) {
                 val actual = digest.digest().joinToString("") { "%02x".format(it) }
                 if (!actual.equals(expectedSha256, ignoreCase = true)) throw UploadHashMismatchException()
             }
             ensureUploadConsent(treeUri)
-            if (!temp.renameTo(chosen)) error("Provider cannot finalize this file (rename failed)")
+            // A different SAF client may have created the reserved name while
+            // the upload was streaming. Recheck under the short commit lock.
+            val finalName = uploadNames.commit(
+                reservedName, fileName,
+                exists = { folder.findFile(it) != null },
+                rename = { currentTemp.renameTo(it) }
+            )
             completed = true
-            return@withLock chosen
+            return finalName
         } finally {
-            if (!completed) runCatching { temp.delete() }
+            if (!completed) runCatching { temp?.delete() }
+            uploadNames.release(reservedName)
         }
-    }
-    private fun uniqueName(folder: DocumentFile, filename: String): String {
-        var candidate = filename
-        val dot = filename.lastIndexOf('.')
-        val base = if (dot > 0) filename.substring(0, dot) else filename
-        val ext = if (dot > 0) filename.substring(dot) else ""
-        var counter = 2
-        while (folder.findFile(candidate) != null) {
-            require(counter < 10000) { "Too many duplicate files" }
-            candidate = "$base ($counter)$ext"
-            counter++
-        }
-        return candidate
     }
 }
