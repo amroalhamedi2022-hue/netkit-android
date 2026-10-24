@@ -9,6 +9,7 @@ import java.util.zip.Deflater
 import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
+import java.security.MessageDigest
 import java.util.Base64
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -32,6 +33,7 @@ interface DirectoryShareStorage {
     fun hasSharedDirectory(): Boolean
 }
 class UploadHashMismatchException : IllegalStateException("Upload SHA-256 does not match")
+class UploadPermissionRevokedException : IllegalStateException("Browser upload consent revoked")
 
 interface ShareStorage {
     fun items(): List<ShareItem>
@@ -39,14 +41,38 @@ interface ShareStorage {
     fun canUpload(): Boolean
     fun maxUploadSize(): Long = 16L * 1024 * 1024 * 1024
     fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String
+    /** SAF-aware implementations may opt into bounded nested-folder uploads. */
+    fun uploadRelative(folders: List<String>, fileName: String, body: InputStream,
+                       length: Long, expectedSha256: String?, progress: (Long) -> Unit): String =
+        throw UnsupportedOperationException("Folder upload unavailable")
+}
+
+/**
+ * SAF/cloud providers can transiently return zero bytes for a positive-length read.
+ * Bound repeated zero reads so a broken provider cannot spin a download/Range
+ * worker indefinitely. This does not alter normal EOF or partial reads.
+ */
+internal object StreamReadGuard {
+    fun read(input: InputStream, buffer: ByteArray, offset: Int, length: Int): Int {
+        require(length > 0 && offset >= 0 && offset <= buffer.size - length)
+        var emptyReads = 0
+        while (true) {
+            val n = input.read(buffer, offset, length)
+            if (n != 0) return n
+            check(++emptyReads <= 32) { "Shared stream read stalled" }
+            Thread.yield()
+        }
+    }
 }
 
 class TransferHttpEngine(
     private val sslFactory: SSLServerSocketFactory,
     private val storage: ShareStorage,
     private val progress: (Long, Long) -> Unit = { _, _ -> },
-    sessionLifetimeMillis: Long = 30L * 60 * 1000
+    sessionLifetimeMillis: Long = 30L * 60 * 1000,
+    private val headerTimeoutMillis: Long = 12_000L
 ) : AutoCloseable {
+    init { require(headerTimeoutMillis in 1L..120_000L) { "Invalid HTTP header timeout" } }
     companion object { private const val MAX_UPLOAD = 16L * 1024 * 1024 * 1024 } // 16 GiB hard guard
     private val rng = SecureRandom()
     private val secret = ByteArray(24).also(rng::nextBytes)
@@ -115,17 +141,30 @@ class TransferHttpEngine(
     private fun handle(client: Socket) {
         try {
             client.use { socket ->
-                socket.soTimeout = 90_000
+                // Slow clients must not monopolize the four TLS workers by
+                // dripping header bytes forever. A read timeout alone is not
+                // enough: enforce one absolute budget for request line + headers.
+                socket.soTimeout = minOf(headerTimeoutMillis, 5_000L).toInt()
+                val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(headerTimeoutMillis)
                 val out = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
                 try {
                     val input = BufferedInputStream(socket.getInputStream(), 64 * 1024)
-                    val line = readLine(input, 4096) ?: return
+                    val line = readLine(input, 4096, deadline) ?: return
                     val parts = line.split(' ')
                     if (parts.size != 3 || parts[2] != "HTTP/1.1") return fail(out, 400, "Invalid request")
                     val method = parts[0]
                     val path = parts[1].substringBefore('?')
                     val query = parts[1].substringAfter('?', "")
-                    val headers = readHeaders(input)
+                    // Malformed or ambiguous HTTP headers must receive a clear
+                    // rejection before any storage or download operation begins.
+                    val headers = try { readHeaders(input, deadline) }
+                        catch (_: IllegalArgumentException) { return fail(out, 400, "Invalid headers") }
+                    // Large file transfers have their own idle budget; only
+                    // request headers are constrained by the short absolute timer.
+                    socket.soTimeout = 90_000
+                    if (headers.containsKey("transfer-encoding")) {
+                        return fail(out, 400, "Transfer-Encoding is not supported")
+                    }
                     if (path != prefix && !path.startsWith("$prefix/")) return fail(out, 404, "Not found")
                     if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
                     when {
@@ -133,8 +172,10 @@ class TransferHttpEngine(
                         method == "GET" && path == "$prefix/list" -> list(out)
                         method == "GET" && path == "$prefix/browse" -> browse(out, query)
                         method == "GET" && path.startsWith("$prefix/browse-file/") -> download(out, path.removePrefix("$prefix/browse-file/"), headers["range"], folderMode = true)
+                        method == "GET" && path.startsWith("$prefix/browse-checksum/") -> checksum(out, path.removePrefix("$prefix/browse-checksum/"), folderMode = true)
                         method == "GET" && path.startsWith("$prefix/browse-archive/") -> downloadArchive(out, path.removePrefix("$prefix/browse-archive/"))
                         method == "GET" && path.startsWith("$prefix/file/") -> download(out, path.removePrefix("$prefix/file/"), headers["range"])
+                        method == "GET" && path.startsWith("$prefix/checksum/") -> checksum(out, path.removePrefix("$prefix/checksum/"))
                         method == "POST" && path == "$prefix/upload" -> upload(input, out, headers)
                         else -> fail(out, 405, "Unsupported route")
                     }
@@ -150,32 +191,48 @@ class TransferHttpEngine(
         }
     }
 
-    private fun readLine(input: InputStream, max: Int): String? {
+    private fun readLine(input: InputStream, max: Int, deadline: Long): String? {
         val bytes = java.io.ByteArrayOutputStream()
         while (true) {
+            check(System.nanoTime() - deadline < 0) { "HTTP header deadline exceeded" }
             val c = input.read()
+            check(System.nanoTime() - deadline < 0) { "HTTP header deadline exceeded" }
             if (c < 0) return if (bytes.size() == 0) null else throw IllegalArgumentException("Truncated headers")
             if (c == 10) {
                 val data = bytes.toByteArray()
-                return String(data, 0, if (data.isNotEmpty() && data.last() == 13.toByte()) data.size - 1 else data.size, StandardCharsets.ISO_8859_1)
+                // Require CRLF, not bare LF: ambiguous HTTP framing must not
+                // be accepted by the local HTTPS parser.
+                require(data.isNotEmpty() && data.last() == 13.toByte()) { "Bare LF in HTTP request" }
+                return String(data, 0, data.size - 1, StandardCharsets.ISO_8859_1)
             }
             if (bytes.size() >= max) throw IllegalArgumentException("Header line too long")
             bytes.write(c)
         }
     }
-    private fun readHeaders(input: InputStream): Map<String, String> {
+    private fun readHeaders(input: InputStream, deadline: Long): Map<String, String> {
         val headers = mutableMapOf<String, String>()
         var used = 0
+        var count = 0
         while (true) {
-            val line = readLine(input, 4096) ?: throw IllegalArgumentException("Missing header terminator")
+            val line = readLine(input, 4096, deadline) ?: throw IllegalArgumentException("Missing header terminator")
             used += line.length
             require(used < 32_768) { "Headers too long" }
             if (line.isEmpty()) return headers
+            require(++count <= 100) { "Too many HTTP headers" }
             val i = line.indexOf(':')
             require(i > 0) { "Bad header" }
-            val key = line.substring(0, i).trim().lowercase(java.util.Locale.ROOT)
+            // RFC 7230 token syntax: never normalize whitespace in a field name.
+            // Accepting "Content-Length : ..." or obs-fold permits HTTP parser
+            // disagreements and can conceal conflicting request framing.
+            val rawName = line.substring(0, i)
+            require(rawName.matches(Regex("[!#$%&'*+.^_`|~0-9A-Za-z-]+"))) { "Invalid header name" }
+            val key = rawName.lowercase(java.util.Locale.ROOT)
             require(!headers.containsKey(key)) { "Duplicate header" }
-            headers[key] = line.substring(i + 1).trim()
+            val value = line.substring(i + 1)
+            require(value.none { it.code < 0x20 && it != '\t' || it.code in 0x7f..0x9f }) {
+                "Invalid header value"
+            }
+            headers[key] = value.trim()
         }
     }
 
@@ -186,7 +243,7 @@ class TransferHttpEngine(
     )
 
     private fun head(out: OutputStream, status: Int, type: String, length: Long?, extra: Map<String,String> = emptyMap()) {
-        val reasons = mapOf(200 to "OK", 201 to "Created", 206 to "Partial Content", 400 to "Bad Request", 403 to "Forbidden", 404 to "Not Found", 405 to "Method Not Allowed", 409 to "Conflict", 410 to "Gone", 413 to "Content Too Large", 416 to "Range Not Satisfiable", 422 to "Unprocessable Content", 500 to "Server Error")
+        val reasons = mapOf(200 to "OK", 201 to "Created", 206 to "Partial Content", 400 to "Bad Request", 403 to "Forbidden", 404 to "Not Found", 405 to "Method Not Allowed", 409 to "Conflict", 410 to "Gone", 413 to "Content Too Large", 416 to "Range Not Satisfiable", 422 to "Unprocessable Content", 500 to "Server Error", 501 to "Not Implemented")
         val sb = StringBuilder("HTTP/1.1 $status ${reasons[status] ?: "Error"}\r\n")
         val headers = commonHeaders() + extra + mapOf("Content-Type" to type, "Connection" to "close") +
             if (length == null) mapOf("Transfer-Encoding" to "chunked") else mapOf("Content-Length" to length.toString())
@@ -216,12 +273,33 @@ class TransferHttpEngine(
     private fun browse(out: OutputStream, query: String) {
         val storage = storage as? DirectoryShareStorage ?: return fail(out, 404, "Folder browsing unavailable")
         if (!storage.hasSharedDirectory()) return response(out, 200, """{"entries":[],"nextOffset":null,"enabled":false}""", "application/json; charset=utf-8")
-        val args = query.split('&').mapNotNull { part ->
-            val eq = part.indexOf('=')
-            if (eq < 0) null else part.take(eq) to URLDecoder.decode(part.substring(eq + 1), "UTF-8")
-        }.toMap()
-        val dir = args["dir"]?.takeIf { it == "root" || it.matches(Regex("[a-fA-F0-9-]{36}")) } ?: "root"
-        val offset = args["offset"]?.toIntOrNull()?.coerceIn(0, 1000000) ?: 0
+        // Never silently fall back to the shared root for malformed, duplicate
+        // or ambiguous browser queries. Invalid percent-encoding and UTF-8
+        // must not cause an unhandled exception that drops the TLS connection.
+        val args = try {
+            val values = mutableMapOf<String, String>()
+            if (query.isNotEmpty()) for (part in query.split('&')) {
+                val eq = part.indexOf('=')
+                require(eq > 0) { "Malformed browse query" }
+                val key = part.substring(0, eq)
+                require(key == "dir" || key == "offset") { "Unknown browse parameter" }
+                require(!values.containsKey(key)) { "Duplicate browse parameter" }
+                val value = URLDecoder.decode(part.substring(eq + 1), "UTF-8")
+                require('\uFFFD' !in value) { "Malformed browse encoding" }
+                values[key] = value
+            }
+            values
+        } catch (_: IllegalArgumentException) {
+            return fail(out, 400, "Invalid browse query")
+        }
+        val dir = args["dir"] ?: "root"
+        if (dir != "root" && !dir.matches(Regex("[a-fA-F0-9-]{36}")))
+            return fail(out, 400, "Invalid browse directory")
+        val rawOffset = args["offset"]
+        if (rawOffset != null && (!rawOffset.matches(Regex("0|[1-9][0-9]{0,6}")) ||
+                (rawOffset.toIntOrNull() ?: Int.MAX_VALUE) > 1_000_000))
+            return fail(out, 400, "Invalid browse offset")
+        val offset = rawOffset?.toInt() ?: 0
         val page = storage.browseDirectory(dir, offset, 100)
         val content = page.entries.joinToString(",") { item ->
             """{"id":${jsonEscape(item.id)},"name":${jsonEscape(item.name)},"directory":${item.directory},"length":${item.length ?: "null"}}"""
@@ -269,9 +347,49 @@ class TransferHttpEngine(
         }
         ZipOutputStream(framed).use { zip ->
             zip.setLevel(Deflater.BEST_SPEED)
-            DirectoryArchive.write(id, provider, zip)
+            DirectoryArchive.write(id, provider, zip, includeChecksums = true)
         }
         framed.finishResponse()
+    }
+
+    /**
+     * On-demand, bounded-memory SHA-256 for an explicitly shared file. This
+     * computes the digest over the entire SAF stream without staging it in RAM.
+     * A checksum is a point-in-time reading, not a snapshot guarantee if a
+     * different app modifies the source during or after the request.
+     */
+    private fun checksum(out: OutputStream, id: String, folderMode: Boolean = false) {
+        if (!id.matches(Regex("[a-fA-F0-9-]{36}"))) return fail(out, 404, "No file")
+        val directory = storage as? DirectoryShareStorage
+        val item = if (folderMode) directory?.directoryItem(id)
+            else storage.items().firstOrNull { it.id == id }
+        if (item == null) return fail(out, 404, "No file")
+        val source = if (folderMode) directory?.openDirectoryItem(id) else storage.open(id)
+        if (source == null) return fail(out, 404, "File unavailable")
+        try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            var count = 0L
+            val buffer = ByteArray(64 * 1024)
+            source.stream.use { input ->
+                while (true) {
+                    if (!alive || !lease.isValid() || Thread.currentThread().isInterrupted)
+                        throw java.io.InterruptedIOException("Checksum cancelled")
+                    val n = StreamReadGuard.read(input, buffer, 0, buffer.size)
+                    if (n < 0) break
+                    if (count > Long.MAX_VALUE - n) error("Checksum byte count overflow")
+                    digest.update(buffer, 0, n)
+                    count += n
+                }
+            }
+            if (source.length != null && source.length >= 0L && count != source.length)
+                return fail(out, 409, "File size changed during checksum")
+            val hex = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+            response(out, 200, """{"sha256":"$hex","bytes":$count}""", "application/json; charset=utf-8")
+        } catch (_: java.io.InterruptedIOException) {
+            // Server stop/session expiry closes the socket; never report a partial digest.
+        } catch (_: Exception) {
+            if (alive && lease.isValid()) fail(out, 500, "Could not calculate checksum")
+        }
     }
 
     /** Single RFC 7233 byte ranges enable clients to resume DOWNLOADS.
@@ -311,9 +429,8 @@ class TransferHttpEngine(
                 var remaining = count
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
-                    val n = input.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                    val n = StreamReadGuard.read(input, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) break // Client detects a truncated Content-Length.
-                    if (n == 0) continue
                     out.write(buffer, 0, n)
                     remaining -= n
                 }
@@ -321,9 +438,8 @@ class TransferHttpEngine(
                 head(out, 200, "application/octet-stream", null, extra)
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
-                    val n = input.read(buffer)
+                    val n = StreamReadGuard.read(input, buffer, 0, buffer.size)
                     if (n < 0) break
-                    if (n == 0) continue
                     out.write("${n.toString(16)}\r\n".toByteArray(StandardCharsets.US_ASCII))
                     out.write(buffer, 0, n); out.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
                 }
@@ -358,7 +474,7 @@ class TransferHttpEngine(
         while (remaining > 0L) {
             val skipped = stream.skip(remaining)
             if (skipped > 0) { remaining -= skipped; continue }
-            val n = stream.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+            val n = StreamReadGuard.read(stream, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
             if (n < 0) return false
             if (n > 0) remaining -= n
         }
@@ -378,16 +494,35 @@ class TransferHttpEngine(
         if (expectedSha256 != null && !expectedSha256.matches(Regex("[0-9a-fA-F]{64}"))) {
             return fail(out, 400, "Invalid SHA-256")
         }
+        val folders = h["x-relative-path"]?.let { rawPath ->
+            try {
+                UploadPathPolicy.folders(URLDecoder.decode(rawPath, "UTF-8"), name)
+            } catch (_: IllegalArgumentException) {
+                return fail(out, 400, "Invalid upload folder path")
+            }
+        }
         try {
-            val stored = storage.upload(name, input, length, expectedSha256) { current -> progress(current, length) }
+            val stored = if (folders == null) {
+                storage.upload(name, input, length, expectedSha256) { current -> progress(current, length) }
+            } else {
+                storage.uploadRelative(folders, name, input, length, expectedSha256) {
+                    current -> progress(current, length)
+                }
+            }
             response(out, 201, "Saved: $stored")
+        } catch (_: UnsupportedOperationException) {
+            fail(out, 501, "Folder uploads not supported by this storage")
         } catch (_: UploadHashMismatchException) {
             fail(out, 422, "Upload SHA-256 mismatch. File was not committed")
+        } catch (_: UploadPermissionRevokedException) {
+            fail(out, 403, "Browser upload consent revoked. Partial file was not committed")
         } catch (_: Exception) { fail(out, 500, "Could not save upload") }
     }
-    private fun validName(v: String): Boolean = v.isNotBlank() && v.length <= 180 &&
-        v != "." && v != ".." && !v.contains('/') && !v.contains('\\') &&
-        v.none { it.code < 32 || it.code == 127 } && !v.startsWith(".netkit-")
+    /** Browser-supplied filenames are untrusted even when the upload session is authorized.
+     * Reject names that Windows/SAF extractors may alias or display deceptively.
+     * Normal Arabic filenames remain supported.
+     */
+    internal fun validName(v: String): Boolean = UploadPathPolicy.validName(v)
 
     private fun html(out: OutputStream) = response(out, 200, """
         <!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8" />
@@ -446,6 +581,8 @@ class TransferHttpEngine(
           <div class="glass"><h2>📥 ملفات محددة</h2><p>الملفات الفردية المختارة من جهاز Android. التحميل يدعم HTTP Range عندما يكون الحجم معروفًا.</p><ul id="files">جارٍ القراءة…</ul></div>
           <div class="glass"><h2>📤 إرسال ملفات للجهاز</h2><p>اختَر ملفات من اللابتوب لإرسالها إلى المجلد المحدد على Android. يتم التحقق من SHA-256 للملفات حتى 16 MiB عندما يدعم المتصفح Web Crypto؛ الملفات الأكبر تُنقل دون مقارنة تجزئة طرفية حاليًا.</p>
             <input id="choose" type="file" multiple />
+            <p>أو اختر مجلدًا كاملًا (متصفح يدعم اختيار المجلدات):</p>
+            <input id="chooseFolder" type="file" webkitdirectory multiple />
             <div class="actions"><button id="upload">ابدأ الإرسال</button><button class="secondary" id="cancel" disabled>إلغاء النقل</button></div>
             <div class="meter" role="progressbar" aria-label="Transfer progress"><div id="bar"></div></div>
             <p id="stats">0%</p><p id="status" role="status"></p>
@@ -480,6 +617,8 @@ class TransferHttpEngine(
             } else {
               const a=document.createElement('a');a.textContent='📄 '+entry.name+' · '+(entry.length==null?'حجم غير معروف':humanBytes(entry.length));
               a.href=base+'/browse-file/'+encodeURIComponent(entry.id);li.append(a);
+              const checksum=document.createElement('a');checksum.href=base+'/browse-checksum/'+encodeURIComponent(entry.id);
+              checksum.textContent=' · SHA-256';checksum.target='_blank';checksum.rel='noopener';li.append(checksum);
             }
             el('folders').append(li);
           }
@@ -502,7 +641,9 @@ class TransferHttpEngine(
           for(const f of data.items) {
             const li=document.createElement('li'),a=document.createElement('a');
             a.textContent='📄 '+f.name+' · '+(f.length==null?'حجم غير معروف':humanBytes(f.length));
-            a.href=base+'/file/'+encodeURIComponent(f.id);li.append(a);el('files').append(li);
+            a.href=base+'/file/'+encodeURIComponent(f.id);li.append(a);
+            const checksum=document.createElement('a');checksum.href=base+'/checksum/'+encodeURIComponent(f.id);
+            checksum.textContent=' · SHA-256';checksum.target='_blank';checksum.rel='noopener';li.append(checksum);el('files').append(li);
           }
           if(!data.items.length)el('files').textContent='ما في ملفات محددة للمشاركة حاليًا.';
           if(!receivingAllowed)el('status').textContent='اختَر مجلد استقبال من تطبيق Android أولًا.';
@@ -523,6 +664,7 @@ class TransferHttpEngine(
           const start=performance.now();
           xhr.open('POST',base+'/upload');
           xhr.setRequestHeader('X-File-Name',encodeURIComponent(file.name));
+          if(file.webkitRelativePath) xhr.setRequestHeader('X-Relative-Path',encodeURIComponent(file.webkitRelativePath));
           if(hash)xhr.setRequestHeader('X-Content-SHA256',hash);
           xhr.setRequestHeader('Content-Type','application/octet-stream');
           xhr.upload.onprogress=e=>{
@@ -541,7 +683,7 @@ class TransferHttpEngine(
         })}
         el('cancel').onclick=()=>{if(activeRequest)activeRequest.abort()};
         el('upload').onclick=async()=>{
-          const files=Array.from(el('choose').files);if(!files.length)return;
+          const files=[...Array.from(el('choose').files),...Array.from(el('chooseFolder').files)];if(!files.length)return;
           resetButtons(true);el('bar').style.width='0%';
           try {let verified=0;
           for(let i=0;i<files.length;i++) {
@@ -549,7 +691,7 @@ class TransferHttpEngine(
             if(await sendFile(files[i],i,files.length))verified++;
           }
           el('bar').style.width='100%';el('stats').textContent='100% · اكتمل الإرسال';
-          el('status').textContent='✅ الملفات وصلت بنجاح · '+verified+'/'+files.length+' تحقق SHA-256';el('choose').value='';
+          el('status').textContent='✅ الملفات وصلت بنجاح · '+verified+'/'+files.length+' تحقق SHA-256';el('choose').value='';el('chooseFolder').value='';
           await refresh();
           } catch(e) {el('status').textContent='⚠️ '+e.message}
           finally {activeRequest=null;resetButtons(false)}

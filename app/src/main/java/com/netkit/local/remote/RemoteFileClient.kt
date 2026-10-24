@@ -9,6 +9,7 @@ import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import java.io.Closeable
 import java.security.MessageDigest
+import java.security.DigestInputStream
 import java.util.Base64
 
 /** Remote file protocols operate only on explicitly chosen SAF streams; never on arbitrary app-private paths. */
@@ -16,7 +17,8 @@ data class RemoteEntry(val name: String, val directory: Boolean, val size: Long)
 interface RemoteFileClient : Closeable {
     fun entries(path: String): List<RemoteEntry>
     fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit = {}): Boolean
-    fun upload(source: Uri, remotePath: String, context: Context, progress: (Long) -> Unit = {}): Boolean
+    fun upload(source: Uri, remotePath: String, context: Context,
+        progress: (Long) -> Unit = {}, verifySha256: Boolean = false): Boolean
 }
 
 class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeoutMs: Int) : RemoteFileClient {
@@ -26,23 +28,49 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
         ftp.connectTimeout = timeoutMs
         ftp.defaultTimeout = timeoutMs
         ftp.dataTimeout = java.time.Duration.ofMillis(timeoutMs.toLong())
-        ftp.connect(host, port)
+        ftp.connect(RemotePathPolicy.host(host), port)
         try {
-            check(ftp.login(user, pass)) { "FTP login rejected" }
+            check(ftp.login(RemotePathPolicy.credential(user), RemotePathPolicy.credential(pass, allowEmpty = true))) { "FTP login rejected" }
             ftp.enterLocalPassiveMode()
             check(ftp.setFileType(FTP.BINARY_FILE_TYPE)) { "FTP binary mode rejected" }
         } catch (failure: Exception) { runCatching { ftp.disconnect() }; throw failure }
     }
-    override fun entries(path: String): List<RemoteEntry> = ftp.listFiles(path).map {
+    override fun entries(path: String): List<RemoteEntry> = ftp.listFiles(RemotePathPolicy.path(path)).map {
         RemoteEntry(it.name, it.isDirectory, it.size)
-    }.filter { it.name != "." && it.name != ".." }
+    }.filter { RemotePathPolicy.safeEntryName(it.name) }
     override fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit): Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
+        val expected = runCatching { ftp.mlistFile(safePath)?.size }.getOrNull()
         val output = context.contentResolver.openOutputStream(destination, "w") ?: error("No permission to write")
-        ProgressOutputStream(output, progress).use { return ftp.retrieveFile(remotePath, it) }
+        ProgressOutputStream(output, progress).use {
+            val ok = ftp.retrieveFile(safePath, it)
+            if (ok) TransferLengthVerifier.requireMatch(expected, it.transferred)
+            return ok
+        }
     }
-    override fun upload(source: Uri, remotePath: String, context: Context, progress: (Long) -> Unit): Boolean {
+    override fun upload(source: Uri, remotePath: String, context: Context,
+        progress: (Long) -> Unit, verifySha256: Boolean): Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
         val input = context.contentResolver.openInputStream(source) ?: error("No permission to read")
-        ProgressInputStream(input, progress).use { return ftp.storeFile(remotePath, it) }
+        val localDigest = MessageDigest.getInstance("SHA-256")
+        ProgressInputStream(DigestInputStream(input, localDigest), progress).use {
+            val ok = ftp.storeFile(safePath, it)
+            if (ok) {
+                val remoteBytes = runCatching { ftp.mlistFile(safePath)?.size }.getOrNull()
+                TransferLengthVerifier.requireMatch(remoteBytes, it.transferred)
+                if (verifySha256) {
+                    // A readback is explicit: some FTP accounts are upload-only.
+                    // retrieveFileStream requires completePendingCommand AFTER
+                    // the data stream is closed, even on a fully consumed file.
+                    val remote = ftp.retrieveFileStream(safePath)
+                        ?: error("FTP server refused SHA-256 readback")
+                    val remoteDigest = remote.use { stream -> RemoteDigestVerifier.digest(stream) }
+                    check(ftp.completePendingCommand()) { "FTP readback completion rejected" }
+                    RemoteDigestVerifier.requireMatch(localDigest.digest(), remoteDigest)
+                }
+            }
+            return ok
+        }
     }
     override fun close() { runCatching { ftp.logout() }; if (ftp.isConnected) ftp.disconnect() }
 }
@@ -60,8 +88,8 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
             "Enter an independently verified SHA256:... SSH host key fingerprint"
         }
         val jsch=JSch()
-        val established=jsch.getSession(user,host,port)
-        established.setPassword(pass)
+        val established=jsch.getSession(RemotePathPolicy.credential(user),RemotePathPolicy.host(host),port)
+        established.setPassword(RemotePathPolicy.credential(pass, allowEmpty = true))
         established.setConfig("StrictHostKeyChecking", "yes")
         // JSch's public-key repository expects canonical host keys. Trust only a key whose
         // SHA-256 matches explicit input; never accept every/unknown presented key.
@@ -87,19 +115,37 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
             sftp.connect(timeoutMs)
         } catch(ex:Exception) { session.disconnect(); throw ex }
     }
-    override fun entries(path:String):List<RemoteEntry> = sftp.ls(path).toList().mapNotNull { raw ->
+    override fun entries(path:String):List<RemoteEntry> = sftp.ls(RemotePathPolicy.path(path)).toList().mapNotNull { raw ->
         val item=raw as? ChannelSftp.LsEntry ?: return@mapNotNull null
-        if(item.filename=="." || item.filename=="..") null else
+        if(!RemotePathPolicy.safeEntryName(item.filename)) null else
             RemoteEntry(item.filename,item.attrs.isDir,item.attrs.size)
     }
     override fun download(remotePath:String,destination:Uri,context:Context,progress:(Long)->Unit):Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
+        val expected = sftp.stat(safePath).size
         val out=context.contentResolver.openOutputStream(destination,"w")?:error("Cannot write destination")
-        ProgressOutputStream(out,progress).use { sftp.get(remotePath,it) }
+        ProgressOutputStream(out,progress).use {
+            sftp.get(safePath,it)
+            TransferLengthVerifier.requireMatch(expected,it.transferred)
+        }
         return true
     }
-    override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit):Boolean {
+    override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit,
+        verifySha256:Boolean):Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
         val input=context.contentResolver.openInputStream(source)?:error("Cannot read source")
-        ProgressInputStream(input,progress).use { sftp.put(it,remotePath,ChannelSftp.OVERWRITE) }
+        val localDigest = MessageDigest.getInstance("SHA-256")
+        ProgressInputStream(DigestInputStream(input, localDigest),progress).use {
+            sftp.put(it,safePath,ChannelSftp.OVERWRITE)
+            val remoteBytes = sftp.stat(safePath).size
+            TransferLengthVerifier.requireMatch(remoteBytes,it.transferred)
+            if (verifySha256) {
+                val remoteDigest = sftp.get(safePath).use { stream ->
+                    RemoteDigestVerifier.digest(stream)
+                }
+                RemoteDigestVerifier.requireMatch(localDigest.digest(), remoteDigest)
+            }
+        }
         return true
     }
     override fun close() {runCatching{sftp.disconnect()};runCatching{session.disconnect()}}

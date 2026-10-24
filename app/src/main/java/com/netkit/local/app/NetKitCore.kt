@@ -16,6 +16,7 @@ import com.netkit.local.share.AndroidShareStorage
 import com.netkit.local.share.AndroidTls
 import com.netkit.local.share.TransferHttpEngine
 import com.netkit.local.tools.Diagnostics
+import com.netkit.local.tools.WakeOnLan
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -174,6 +175,8 @@ class NetKitCore(context: Context) {
     }
     fun runDns(host: String) = runDiagnostic { Diagnostics.dns(host) }
     fun runTcp(host: String, port: Int) = runDiagnostic { Diagnostics.tcp(host, port) }
+    fun runWakeOnLan(mac: String, broadcast: String, port: Int) =
+        runDiagnostic { WakeOnLan.send(mac, broadcast, port) }
     private fun runDiagnostic(block: () -> String) {
         if (busy) return
         busy = true

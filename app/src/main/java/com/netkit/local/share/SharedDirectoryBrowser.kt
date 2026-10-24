@@ -7,7 +7,6 @@ import android.os.Environment
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.io.FileInputStream
-import java.util.UUID
 
 /**
  * Lazy, user-authorized directory browser for SAF trees and shared storage.
@@ -19,8 +18,7 @@ class SharedDirectoryBrowser(private val context: Context) {
         data class Local(val file: File) : Handle
     }
     private val lock = Any()
-    private val nodes = mutableMapOf<String, Handle>()
-    private val ids = mutableMapOf<String, String>()
+    private val handles = ShareHandleRegistry<Handle>()
     private var root: Handle? = null
     var description: String = "لم يتم اختيار مجلد للمشاركة"
         private set
@@ -75,9 +73,7 @@ class SharedDirectoryBrowser(private val context: Context) {
     fun hasRoot(): Boolean = synchronized(lock) { root != null }
 
     private fun resetHandles() {
-        nodes.clear()
-        ids.clear()
-        root?.let { nodes["root"] = it }
+        handles.reset(root)
     }
 
     private fun key(h: Handle): String = when (h) {
@@ -87,7 +83,7 @@ class SharedDirectoryBrowser(private val context: Context) {
 
     private fun handleId(h: Handle): String {
         val key = key(h)
-        return ids.getOrPut(key) { UUID.randomUUID().toString() }.also { nodes[it] = h }
+        return handles.register(key, h)
     }
 
     private fun localAllowed(file: File): Boolean {
@@ -100,7 +96,7 @@ class SharedDirectoryBrowser(private val context: Context) {
     }
 
     fun page(directoryId: String, offset: Int, size: Int): ShareBrowsePage = synchronized(lock) {
-        val folder = nodes[directoryId] ?: return ShareBrowsePage(emptyList(), null)
+        val folder = handles.find(directoryId) ?: return ShareBrowsePage(emptyList(), null)
         val all: List<Handle> = when (folder) {
             is Handle.Saf -> if (folder.document.isDirectory) folder.document.listFiles()
                 .filter { it.canRead() }.map { Handle.Saf(it) } else emptyList()
@@ -127,7 +123,7 @@ class SharedDirectoryBrowser(private val context: Context) {
     }
 
     fun file(id: String): Pair<ShareItem, SharedStream>? = synchronized(lock) {
-        val node = nodes[id] ?: return null
+        val node = handles.find(id) ?: return null
         when (node) {
             is Handle.Saf -> {
                 if (!node.document.isFile || !node.document.canRead()) return null
@@ -144,7 +140,7 @@ class SharedDirectoryBrowser(private val context: Context) {
     }
 
     fun item(id: String): ShareItem? = synchronized(lock) {
-        when (val n = nodes[id]) {
+        when (val n = handles.find(id)) {
             is Handle.Saf -> if (n.document.isFile && n.document.canRead())
                 ShareItem(id, n.document.name.orEmpty(), n.document.length()) else null
             is Handle.Local -> if (localAllowed(n.file) && n.file.isFile && n.file.canRead())

@@ -160,6 +160,9 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         var rows by remember { mutableStateOf(core.transfers.snapshot().takeLast(30).reversed()) }
         var rates by remember { mutableStateOf<Map<String, TransferSnapshot>>(emptyMap()) }
         val estimators = remember { mutableMapOf<String, TransferTelemetry>() }
+        val cleanupScope = rememberCoroutineScope()
+        var confirmCleanup by remember { mutableStateOf(false) }
+        var cleanupNotice by remember { mutableStateOf("") }
         LaunchedEffect(core.transfers) {
             while (true) {
                 val updated = core.transfers.snapshot().takeLast(30).reversed()
@@ -172,11 +175,43 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                 delay(450)
             }
         }
+        val finishedCount = core.transfers.snapshot().count {
+            it.state == TransferState.COMPLETED || it.state == TransferState.CANCELLED
+        }
+        Row(verticalAlignment=Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick={ confirmCleanup = true },enabled=finishedCount>0) {
+                Text("تنظيف المكتمل والملغى ($finishedCount)")
+            }
+        }
+        if (cleanupNotice.isNotEmpty()) MutedText(cleanupNotice)
+        if (confirmCleanup) {
+            AlertDialog(
+                onDismissRequest={ confirmCleanup = false },
+                title={ Text("تنظيف سجل النقل") },
+                text={ Text("سيُحذف سجل العمليات المكتملة والملغاة فقط. لن تُحذف الملفات أو العمليات المنتظرة أو المتوقفة أو الفاشلة.") },
+                confirmButton={
+                    TextButton(onClick={
+                        confirmCleanup = false
+                        cleanupScope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching { core.transfers.clearFinished() }
+                            }
+                            cleanupNotice = result.fold(
+                                onSuccess={ "تم تنظيف $it عملية من السجل دون حذف أي ملف." },
+                                onFailure={ "تعذّر حفظ تنظيف السجل؛ لم تُحذف العمليات من الذاكرة." }
+                            )
+                        }
+                    }) { Text("تأكيد التنظيف") }
+                },
+                dismissButton={ TextButton(onClick={ confirmCleanup = false }) { Text("إلغاء") } }
+            )
+        }
         if (rows.isEmpty()) MutedText("لا توجد عمليات مسجّلة بعد")
         rows.forEach { task ->
             HorizontalDivider(color=p.ink.copy(alpha=.12f))
             Text(task.destination.substringAfterLast('/'),color=p.ink,maxLines=1)
-            MutedText("${task.state} · ${task.completedBytes} / ${task.size} bytes · Attempts ${task.attempts}")
+            MutedText("${task.state} · ${task.completedBytes} / ${if (task.size < 0) "حجم غير معروف" else "${task.size} bytes"} · Attempts ${task.attempts}")
             val snapshot = rates[task.id]
             if (snapshot != null && snapshot.bytesPerSecond != null && snapshot.bytesPerSecond > 0.0) {
                 val mibPerSec = "%.2f".format(java.util.Locale.US, snapshot.bytesPerSecond / 1048576.0)
@@ -225,28 +260,31 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
     var result by remember {mutableStateOf("غير متصل")}
     var chosen by remember {mutableStateOf<RemoteEntry?>(null)}
     var uploadName by remember {mutableStateOf("")}
+    var verifyUploadSha256 by remember {mutableStateOf(false)}
     val createDocument=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val selected=chosen
         val connected=client
         if(uri != null && selected != null && connected != null) {
             working=true
             val remotePath = folder.trimEnd('/') + "/" + selected.name
-            val task = runCatching { core.transfers.add(remotePath, uri.toString(), selected.size.coerceAtLeast(0L)) }.getOrNull()
+            val task = runCatching { core.transfers.add(remotePath, uri.toString(), selected.size.coerceAtLeast(-1L)) }.getOrNull()
             scope.launch {
+                var runningAttempt: Int? = null
                 result = runCatching {
                     check(task != null) { "Transfer journal unavailable or full" }
-                    core.transfers.begin(task.id)
-                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, bytes) })
+                    val running = checkNotNull(core.transfers.begin(task.id)) { "Transfer cannot start" }
+                    runningAttempt = running.attempts
+                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, running.attempts, bytes) })
                     val completed = try {
                         withContext(Dispatchers.IO) {
                             connected.download(remotePath, uri, ctx) { bytes -> checkpoint.onBytes(bytes) }
                         }
                     } finally { checkpoint.flush() }
                     check(completed) { "FTP server rejected download" }
-                    core.transfers.finish(task.id)
+                    checkNotNull(core.transfers.finish(task.id, running.attempts)) { "Transfer length was not verified" }
                     "تم تنزيل ${selected.name}"
                 }.getOrElse { failure ->
-                    if(task != null) core.transfers.fail(task.id, failure.localizedMessage.orEmpty())
+                    if(task != null) runningAttempt?.let { core.transfers.fail(task.id, it, failure.localizedMessage.orEmpty()) }
                     "فشل التنزيل: ${failure.localizedMessage}"
                 }
                 working=false
@@ -258,25 +296,31 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         if(uri != null && connected != null && uploadName.isNotBlank()) {
             working=true
             val remotePath=folder.trimEnd('/') + "/" + uploadName
+            val verifyThisUpload=verifyUploadSha256
             val localSize=runCatching { ctx.contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)
-                ?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else 0L } ?: 0L }.getOrDefault(0L)
-            val task=runCatching { core.transfers.add(uri.toString(),remotePath,localSize.coerceAtLeast(0L)) }.getOrNull()
+                ?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else -1L } ?: -1L }.getOrDefault(-1L)
+            val task=runCatching { core.transfers.add(uri.toString(),remotePath,localSize.coerceAtLeast(-1L)) }.getOrNull()
             scope.launch {
+                var runningAttempt: Int? = null
                 result=runCatching {
                     check(task!=null) { "Transfer journal unavailable or full" }
-                    core.transfers.begin(task.id)
-                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, bytes) })
+                    val running = checkNotNull(core.transfers.begin(task.id)) { "Transfer cannot start" }
+                    runningAttempt = running.attempts
+                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, running.attempts, bytes) })
                     val ok = try {
                         withContext(Dispatchers.IO) {
-                            connected.upload(uri, remotePath, ctx) { bytes -> checkpoint.onBytes(bytes) }
+                            connected.upload(uri, remotePath, ctx,
+                                { bytes -> checkpoint.onBytes(bytes) }, verifyThisUpload)
                         }
                     } finally { checkpoint.flush() }
                     check(ok) { "FTP server rejected upload" }
-                    core.transfers.finish(task.id)
+                    checkNotNull(core.transfers.finish(task.id, running.attempts)) { "Transfer length was not verified" }
                     entries=withContext(Dispatchers.IO){ connected.entries(folder) }
-                    "تم رفع $uploadName"
+                    if(verifyThisUpload) "تم رفع $uploadName والتحقق من SHA-256 بقراءة الملف من الخادم"
+                    else if (localSize >= 0) "تم رفع $uploadName (فحص الحجم فقط، دون SHA-256)"
+                    else "تم رفع $uploadName (الحجم غير معروف؛ لم يُتحقق من SHA-256)"
                 }.getOrElse { failure ->
-                    if(task!=null) core.transfers.fail(task.id,failure.localizedMessage.orEmpty())
+                    if(task!=null) runningAttempt?.let { core.transfers.fail(task.id, it, failure.localizedMessage.orEmpty()) }
                     "فشل الرفع: ${failure.localizedMessage}"
                 }
                 working=false
@@ -348,6 +392,11 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                 Text("تنزيل ${selected.name}")
             }}
             OutlinedTextField(value=uploadName,onValueChange={uploadName=it.take(180)},label={Text("اسم الملف البعيد عند الرفع")},modifier=Modifier.fillMaxWidth())
+            SwitchSetting(
+                title="التحقق من SHA-256 بعد الرفع",
+                desc="يعيد قراءة الملف كاملًا من الخادم ويقارن بصمته بالمصدر. يحتاج صلاحية قراءة على الخادم ويستهلك نقل بيانات إضافيًا؛ لا يثبت التخزين الدائم.",
+                checked=verifyUploadSha256,onChange={verifyUploadSha256=it},p=p
+            )
             OutlinedButton(enabled=!working && uploadName.isNotBlank(),onClick={pickUpload.launch(arrayOf("*/*"))}) {Text("رفع ملف")}
         }
     }
