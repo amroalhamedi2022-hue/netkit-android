@@ -37,12 +37,14 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
         RemoteEntry(it.name, it.isDirectory, it.size)
     }.filter { RemotePathPolicy.safeEntryName(it.name) }
     override fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit): Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
         val output = context.contentResolver.openOutputStream(destination, "w") ?: error("No permission to write")
-        ProgressOutputStream(output, progress).use { return ftp.retrieveFile(RemotePathPolicy.path(remotePath), it) }
+        ProgressOutputStream(output, progress).use { return ftp.retrieveFile(safePath, it) }
     }
     override fun upload(source: Uri, remotePath: String, context: Context, progress: (Long) -> Unit): Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
         val input = context.contentResolver.openInputStream(source) ?: error("No permission to read")
-        ProgressInputStream(input, progress).use { return ftp.storeFile(RemotePathPolicy.path(remotePath), it) }
+        ProgressInputStream(input, progress).use { return ftp.storeFile(safePath, it) }
     }
     override fun close() { runCatching { ftp.logout() }; if (ftp.isConnected) ftp.disconnect() }
 }
@@ -93,13 +95,15 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
             RemoteEntry(item.filename,item.attrs.isDir,item.attrs.size)
     }
     override fun download(remotePath:String,destination:Uri,context:Context,progress:(Long)->Unit):Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
         val out=context.contentResolver.openOutputStream(destination,"w")?:error("Cannot write destination")
-        ProgressOutputStream(out,progress).use { sftp.get(RemotePathPolicy.path(remotePath),it) }
+        ProgressOutputStream(out,progress).use { sftp.get(safePath,it) }
         return true
     }
     override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit):Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
         val input=context.contentResolver.openInputStream(source)?:error("Cannot read source")
-        ProgressInputStream(input,progress).use { sftp.put(it,RemotePathPolicy.path(remotePath),ChannelSftp.OVERWRITE) }
+        ProgressInputStream(input,progress).use { sftp.put(it,safePath,ChannelSftp.OVERWRITE) }
         return true
     }
     override fun close() {runCatching{sftp.disconnect()};runCatching{session.disconnect()}}
