@@ -37,4 +37,8 @@ java -jar "$TEMP_DIR/checkpoint.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/PeerAddressPolicy.kt" \
   "$ROOT/qa/PeerAddressPolicyTest.kt" -include-runtime -d "$TEMP_DIR/nsd-address-policy.jar"
 java -jar "$TEMP_DIR/nsd-address-policy.jar"
+# Browsing an entire storage tree must not grow remembered SAF handles forever.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/ShareHandleRegistry.kt" \
+  "$ROOT/qa/ShareHandleRegistryTest.kt" -include-runtime -d "$TEMP_DIR/share-handles.jar"
+java -jar "$TEMP_DIR/share-handles.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
