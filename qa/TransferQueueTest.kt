@@ -28,6 +28,9 @@ fun main() {
         check(queue.progress(second.id, secondAttempt1, 15) == null) // stale callback
         check(queue.finish(second.id, secondAttempt1) == null) // stale completion
         check(queue.fail(second.id, secondAttempt1, "stale failure") == null)
+        check(queue.progress(second.id, secondAttempt2, 9)?.completedBytes == 9L)
+        check(queue.finish(second.id, secondAttempt2) == null) // partial bytes cannot be fabricated
+        check(queue.snapshot().single { it.id == second.id }.state == TransferState.RUNNING)
         check(queue.progress(second.id, secondAttempt2, 15)?.completedBytes == 15L)
         check(queue.finish(second.id, secondAttempt2)?.state == TransferState.COMPLETED)
         check(queue.fail(second.id, secondAttempt2, "should be refused") == null)
@@ -113,7 +116,7 @@ fun main() {
             check(pending.next() == null)
         }
         println("PASS: exhausted retry counts cannot starve queued transfers")
-        println("PASS: impossible progress bytes rejected without false completion")
+        println("PASS: impossible progress and incomplete known-size finish rejected")
         println("PASS: startup journal write elision and durable crash recovery")
         println("PASS: corrupted journal rejection and preservation")
         println("PASS: attempt-scoped callbacks, retry reset, durable journal and cancel")
