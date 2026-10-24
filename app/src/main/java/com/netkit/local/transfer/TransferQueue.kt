@@ -52,6 +52,23 @@ class TransferQueue(private val journal: TransferJournal) {
         task
     }
 
+    /**
+     * Reclaim bounded journal capacity without ever deleting pending, paused or
+     * failed work. Terminal records are removed only by an explicit user action.
+     * A failed journal write leaves the in-memory queue unchanged.
+     */
+    fun clearFinished(): Int = synchronized(mutex) {
+        val count = tasks.count {
+            it.state == TransferState.COMPLETED || it.state == TransferState.CANCELLED
+        }
+        if (count > 0) persistChange {
+            removeAll {
+                it.state == TransferState.COMPLETED || it.state == TransferState.CANCELLED
+            }
+        }
+        count
+    }
+
     /** Explicit start of the exact selected task, with no accidental start of a different task. */
     fun begin(id: String): TransferTask? = synchronized(mutex) {
         val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.QUEUED && it.attempts < Int.MAX_VALUE }
