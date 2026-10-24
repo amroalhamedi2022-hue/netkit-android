@@ -38,13 +38,25 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
     }.filter { RemotePathPolicy.safeEntryName(it.name) }
     override fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit): Boolean {
         val safePath = RemotePathPolicy.path(remotePath)
+        val expected = runCatching { ftp.mlistFile(safePath)?.size }.getOrNull()
         val output = context.contentResolver.openOutputStream(destination, "w") ?: error("No permission to write")
-        ProgressOutputStream(output, progress).use { return ftp.retrieveFile(safePath, it) }
+        ProgressOutputStream(output, progress).use {
+            val ok = ftp.retrieveFile(safePath, it)
+            if (ok) TransferLengthVerifier.requireMatch(expected, it.transferred)
+            return ok
+        }
     }
     override fun upload(source: Uri, remotePath: String, context: Context, progress: (Long) -> Unit): Boolean {
         val safePath = RemotePathPolicy.path(remotePath)
         val input = context.contentResolver.openInputStream(source) ?: error("No permission to read")
-        ProgressInputStream(input, progress).use { return ftp.storeFile(safePath, it) }
+        ProgressInputStream(input, progress).use {
+            val ok = ftp.storeFile(safePath, it)
+            if (ok) {
+                val remoteBytes = runCatching { ftp.mlistFile(safePath)?.size }.getOrNull()
+                TransferLengthVerifier.requireMatch(remoteBytes, it.transferred)
+            }
+            return ok
+        }
     }
     override fun close() { runCatching { ftp.logout() }; if (ftp.isConnected) ftp.disconnect() }
 }
@@ -96,14 +108,22 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
     }
     override fun download(remotePath:String,destination:Uri,context:Context,progress:(Long)->Unit):Boolean {
         val safePath = RemotePathPolicy.path(remotePath)
+        val expected = sftp.stat(safePath).size
         val out=context.contentResolver.openOutputStream(destination,"w")?:error("Cannot write destination")
-        ProgressOutputStream(out,progress).use { sftp.get(safePath,it) }
+        ProgressOutputStream(out,progress).use {
+            sftp.get(safePath,it)
+            TransferLengthVerifier.requireMatch(expected,it.transferred)
+        }
         return true
     }
     override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit):Boolean {
         val safePath = RemotePathPolicy.path(remotePath)
         val input=context.contentResolver.openInputStream(source)?:error("Cannot read source")
-        ProgressInputStream(input,progress).use { sftp.put(it,safePath,ChannelSftp.OVERWRITE) }
+        ProgressInputStream(input,progress).use {
+            sftp.put(it,safePath,ChannelSftp.OVERWRITE)
+            val remoteBytes = sftp.stat(safePath).size
+            TransferLengthVerifier.requireMatch(remoteBytes,it.transferred)
+        }
         return true
     }
     override fun close() {runCatching{sftp.disconnect()};runCatching{session.disconnect()}}
