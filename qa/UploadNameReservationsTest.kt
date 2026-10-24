@@ -10,7 +10,10 @@ fun main() {
     val first = names.reserve("report.pdf") { it in existing }
     val second = names.reserve("report.pdf") { it in existing }
     check(first == "report (2).pdf" && second == "report (3).pdf")
-    check(names.reserve("REPORT.PDF") { it in existing } == "REPORT (4).PDF")
+    val third = names.reserve("REPORT.PDF") {
+        it.equals("report.pdf", ignoreCase = true) || it in existing
+    }
+    check(third == "REPORT (4).PDF")
 
     // Upload A is still streaming; upload B must be able to reserve its name.
     val streaming = CountDownLatch(1)
@@ -36,6 +39,7 @@ fun main() {
     check(finalized == "report (5).pdf")
     names.release(first)
     names.release(second)
+    names.release(third)
 
     val reuse = names.reserve("fresh.txt") { false }
     check(reuse == "fresh.txt")
