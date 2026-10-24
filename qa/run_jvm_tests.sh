@@ -49,4 +49,8 @@ java -jar "$TEMP_DIR/upload-names.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/UploadConsentGate.kt" \
   "$ROOT/qa/UploadConsentGateTest.kt" -include-runtime -d "$TEMP_DIR/upload-consent.jar"
 java -jar "$TEMP_DIR/upload-consent.jar"
+# Real Wake-on-LAN UDP packet generation and LAN-only destination validation.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/tools/WakeOnLan.kt" \
+  "$ROOT/qa/WakeOnLanTest.kt" -include-runtime -d "$TEMP_DIR/wol.jar"
+java -jar "$TEMP_DIR/wol.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
