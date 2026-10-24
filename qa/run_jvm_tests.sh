@@ -53,4 +53,8 @@ java -jar "$TEMP_DIR/upload-consent.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/tools/WakeOnLan.kt" \
   "$ROOT/qa/WakeOnLanTest.kt" -include-runtime -d "$TEMP_DIR/wol.jar"
 java -jar "$TEMP_DIR/wol.jar"
+# Validate every FTP/SFTP path before opening SAF streams or sending FTP commands.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/RemotePathPolicy.kt" \
+  "$ROOT/qa/RemotePathPolicyTest.kt" -include-runtime -d "$TEMP_DIR/remote-path-policy.jar"
+java -jar "$TEMP_DIR/remote-path-policy.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
