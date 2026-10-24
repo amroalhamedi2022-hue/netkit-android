@@ -32,6 +32,39 @@ fun main() {
         check(restored.cancel(first.id)?.state == TransferState.CANCELLED)
         check(restored.resume(first.id) == null)
         check(TransferQueue(FileTransferJournal(file)).snapshot().single { it.id == second.id }.state == TransferState.COMPLETED)
+        // Corrupt persisted state must fail closed BEFORE queue initialization
+        // can overwrite the original evidence with a normalized journal.
+        val badFile = File(dir, "bad-queue.properties")
+        fun malformed(mutator: (java.util.Properties) -> Unit) {
+            val props = java.util.Properties().apply {
+                setProperty("count", "2")
+                for (i in 0..1) {
+                    setProperty("$" + "{i}.id", "task-$" + "{i}")
+                    setProperty("$" + "{i}.source", "content://safe/$" + "i")
+                    setProperty("$" + "{i}.dest", "peer/$" + "i")
+                    setProperty("$" + "{i}.size", "10")
+                    setProperty("$" + "{i}.done", "0")
+                    setProperty("$" + "{i}.state", "PAUSED")
+                    setProperty("$" + "{i}.attempts", "1")
+                }
+            }
+            mutator(props)
+            badFile.outputStream().use { props.store(it, "test") }
+            val before = badFile.readBytes()
+            val rejected = runCatching { TransferQueue(FileTransferJournal(badFile)) }.exceptionOrNull()
+            check(rejected is IllegalArgumentException) { "Malformed journal accepted: $" + "rejected" }
+            check(badFile.readBytes().contentEquals(before)) { "Corrupt journal was overwritten" }
+        }
+        malformed { it.setProperty("1.id", "task-0") } // duplicate identities
+        malformed { it.setProperty("0.id", "  ") } // blank identity
+        malformed { it.setProperty("1.source", "") } // lost SAF endpoint
+        malformed { it.setProperty("0.dest", "") } // lost peer destination
+        malformed { it.setProperty("0.attempts", "-1") } // impossible retry count
+        malformed {
+            it.setProperty("1.state", "COMPLETED")
+            it.setProperty("1.done", "9")
+        } // never mark an incomplete file as completed
+        println("PASS: corrupted journal rejection and preservation")
         println("PASS: exact task selection, durable journal, retry, recover, monotonic progress, cancel")
     } finally { dir.deleteRecursively() }
 }
