@@ -96,3 +96,21 @@ AUTOMATION_COMPLETE: BLOCKED
 - **Regressions:** `qa/CoreSmokeTest.kt` exercises malformed UTF-8, invalid surrogate halves, valid emoji, HTTP 403 after simulated revocation and the absence of a committed file. These are portable JVM/HTTPS tests, not an Android SAF integration test.
 - **PASS:** exact source SHA `74daa547881a61053378e2dca91fc0dbb3c695f2`, GitHub Actions run https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40011453462 — `source-qa` success, `verified-build` skipped. No new APK or package generated.
 - **NOT TESTED:** Android compilation of the modified SAF adapter (deferred by explicit final-build rule), real mid-transfer toggle and provider cleanup on Xiaomi Pad 5, device SHA-256/large-file resume, FTP/SFTP server, secure native pairing, and final UI. PR #7 remains draft; no main merge or release.
+
+## 2026-10-24 — Milestone N-FTP-VERIFY: optional full remote SHA-256 readback
+
+**Production path:** FTP and pinned SFTP clients now accept an explicit `verifySha256` upload option. During upload the chosen SAF input stream is hashed without buffering it in memory; after successful upload and size check, the app reads the remote file back, hashes all bytes and compares full SHA-256. FTP uses `retrieveFileStream` followed by `completePendingCommand`; SFTP uses the pinned authenticated session's `get` stream. A mismatch, unavailable readback or incomplete FTP final reply fails the operation rather than displaying a verified success. The Liquid FTP/SFTP UI exposes an opt-in switch (off by default because write-only servers and metered/slow LANs exist), and distinguishes verified readback from size-only success. FTP remains plaintext: SHA-256 is integrity detection, NOT transport authentication.
+
+**Acceptance ledger:**
+
+| Gate | State | Evidence / next check |
+| --- | --- | --- |
+| N1: portable bounded streaming SHA-256, mismatch and zero-read tests | CODE COMPLETE — CI PENDING | `RemoteDigestVerifier.kt`, `qa/RemoteDigestVerifierTest.kt`, `qa/run_jvm_tests.sh` |
+| N2: FTP readback, final FTP reply, explicit opt-in and UI result | CODE COMPLETE — ANDROID COMPILE NOT TESTED | `RemoteFileClient.kt`, `NetKitProScreens.kt`; FTP server readback permission required |
+| N3: pinned SFTP readback and digest comparison | CODE COMPLETE — ANDROID COMPILE NOT TESTED | `RemoteFileClient.kt`; remote server must allow read |
+| N4: real LAN FTP and SFTP upload SHA equality (0 B, Arabic name, large file, denied readback) | NOT TESTED | Xiaomi Pad 5 ↔ Windows/other trusted server |
+| N5: cancellation, protocol error, source mutation, throughput and security review | NOT TESTED | End-to-end device logs and negative tests |
+
+**Current accepted gates:** 0/5 on hardware; 3 code paths implemented but exact-head CI and Android compilation remain unverified. Existing NetKit PR #6 unchanged; PR #7 remains Draft. No APK built in this source milestone. Source reference: https://commons.apache.org/proper/commons-net/apidocs/org/apache/commons/net/ftp/FTPClient.html and https://mwiede.github.io/jsch/0.2.7/com.jcraft.jsch/com/jcraft/jsch/ChannelSftp.html . Existing Apache Commons Net and mwiede JSch libraries reused; no new third-party dependency, API charge or license added.
+
+**Important limitation:** remote readback proves that bytes readable immediately after upload match the sent stream. It does not prove durability after server crash, cannot defend against malicious server replay, and does not implement protocol-confirmed resume or an embedded FTP/SFTP server.
