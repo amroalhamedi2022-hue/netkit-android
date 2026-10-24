@@ -115,6 +115,39 @@ fun main() {
             check(pending.snapshot().first() == exhausted)
             check(pending.next() == null)
         }
+        // Explicit cleanup must never delete failed or unfinished work, and
+        // must preserve the original state if durable journal writing fails.
+        run {
+            class Journal(var saved: List<TransferTask>, var rejectWrites: Boolean = false) : TransferJournal {
+                override fun load() = saved
+                override fun save(tasks: List<TransferTask>) {
+                    if (rejectWrites) error("storage unavailable")
+                    saved = tasks.toList()
+                }
+            }
+            fun item(id: String, state: TransferState) =
+                TransferTask(id, "content://$id", "peer/$id", 1,
+                    completedBytes = if (state == TransferState.COMPLETED) 1 else 0,
+                    state = state)
+            val journal = Journal(listOf(
+                item("done", TransferState.COMPLETED),
+                item("cancelled", TransferState.CANCELLED),
+                item("failed", TransferState.FAILED),
+                item("queued", TransferState.QUEUED),
+                item("paused", TransferState.PAUSED)
+            ))
+            val q = TransferQueue(journal)
+            journal.rejectWrites = true
+            check(runCatching { q.clearFinished() }.isFailure)
+            check(q.snapshot().size == 5)
+            check(journal.saved.size == 5)
+            journal.rejectWrites = false
+            check(q.clearFinished() == 2)
+            check(q.snapshot().map { it.id } == listOf("failed", "queued", "paused"))
+            check(TransferQueue(journal).snapshot().size == 3)
+            check(q.clearFinished() == 0)
+        }
+        println("PASS: explicit terminal cleanup is durable and preserves unfinished work")
         println("PASS: exhausted retry counts cannot starve queued transfers")
         println("PASS: impossible progress and incomplete known-size finish rejected")
         println("PASS: startup journal write elision and durable crash recovery")
