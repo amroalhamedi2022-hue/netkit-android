@@ -128,7 +128,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
             }
         }
         val scope = folders.joinToString("/")
-        val reservedName = uploadNames.reserve(fileName, { folder.findFile(it) != null }, scope)
+        val reservedName = uploadNames.reserve(fileName, scope) { folder.findFile(it) != null }
         var temp: DocumentFile? = null
         var completed = false
         val digest = if (expectedSha256 != null) MessageDigest.getInstance("SHA-256") else null
