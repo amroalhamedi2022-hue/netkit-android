@@ -160,6 +160,9 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         var rows by remember { mutableStateOf(core.transfers.snapshot().takeLast(30).reversed()) }
         var rates by remember { mutableStateOf<Map<String, TransferSnapshot>>(emptyMap()) }
         val estimators = remember { mutableMapOf<String, TransferTelemetry>() }
+        val cleanupScope = rememberCoroutineScope()
+        var confirmCleanup by remember { mutableStateOf(false) }
+        var cleanupNotice by remember { mutableStateOf("") }
         LaunchedEffect(core.transfers) {
             while (true) {
                 val updated = core.transfers.snapshot().takeLast(30).reversed()
@@ -171,6 +174,38 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                 }
                 delay(450)
             }
+        }
+        val finishedCount = core.transfers.snapshot().count {
+            it.state == TransferState.COMPLETED || it.state == TransferState.CANCELLED
+        }
+        Row(verticalAlignment=Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick={ confirmCleanup = true },enabled=finishedCount>0) {
+                Text("تنظيف المكتمل والملغى ($finishedCount)")
+            }
+        }
+        if (cleanupNotice.isNotEmpty()) MutedText(cleanupNotice)
+        if (confirmCleanup) {
+            AlertDialog(
+                onDismissRequest={ confirmCleanup = false },
+                title={ Text("تنظيف سجل النقل") },
+                text={ Text("سيُحذف سجل العمليات المكتملة والملغاة فقط. لن تُحذف الملفات أو العمليات المنتظرة أو المتوقفة أو الفاشلة.") },
+                confirmButton={
+                    TextButton(onClick={
+                        confirmCleanup = false
+                        cleanupScope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching { core.transfers.clearFinished() }
+                            }
+                            cleanupNotice = result.fold(
+                                onSuccess={ "تم تنظيف $it عملية من السجل دون حذف أي ملف." },
+                                onFailure={ "تعذّر حفظ تنظيف السجل؛ لم تُحذف العمليات من الذاكرة." }
+                            )
+                        }
+                    }) { Text("تأكيد التنظيف") }
+                },
+                dismissButton={ TextButton(onClick={ confirmCleanup = false }) { Text("إلغاء") } }
+            )
         }
         if (rows.isEmpty()) MutedText("لا توجد عمليات مسجّلة بعد")
         rows.forEach { task ->
