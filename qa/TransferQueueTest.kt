@@ -9,25 +9,32 @@ fun main() {
         val queue = TransferQueue(FileTransferJournal(file))
         val first = queue.add("content://safe/a", "peer/a", 100)
         val second = queue.add("content://safe/b", "peer/b", 15)
-        check(queue.begin(second.id)?.id == second.id)
+        val secondAttempt1 = checkNotNull(queue.begin(second.id)).attempts
+        check(secondAttempt1 == 1)
         check(queue.begin(second.id) == null)
         check(queue.snapshot().first().state == TransferState.QUEUED)
-        check(queue.progress(second.id, 9)?.completedBytes == 9L)
-        check(queue.progress(second.id, 4)?.completedBytes == 9L) // monotonic
-        check(queue.progress(second.id, 99)?.completedBytes == 15L) // clamped
+        check(queue.progress(second.id, secondAttempt1, 9)?.completedBytes == 9L)
+        check(queue.progress(second.id, secondAttempt1, 4)?.completedBytes == 9L) // monotonic
+        check(queue.progress(second.id, secondAttempt1, 99)?.completedBytes == 15L) // clamped
         check(queue.pause(second.id)?.state == TransferState.PAUSED)
         check(queue.begin(second.id) == null)
         check(TransferQueue(FileTransferJournal(file)).snapshot()[1].completedBytes == 15L)
-        check(queue.resume(second.id)?.state == TransferState.QUEUED)
-        check(queue.begin(second.id)?.attempts == 2)
-        check(queue.finish(second.id)?.state == TransferState.COMPLETED)
-        check(queue.fail(second.id, "should be refused") == null)
+        check(queue.resume(second.id)?.completedBytes == 0L) // no verified remote offset
+        val secondAttempt2 = checkNotNull(queue.begin(second.id)).attempts
+        check(secondAttempt2 == 2)
+        check(queue.progress(second.id, secondAttempt1, 15) == null) // stale callback
+        check(queue.finish(second.id, secondAttempt1) == null) // stale completion
+        check(queue.fail(second.id, secondAttempt1, "stale failure") == null)
+        check(queue.progress(second.id, secondAttempt2, 15)?.completedBytes == 15L)
+        check(queue.finish(second.id, secondAttempt2)?.state == TransferState.COMPLETED)
+        check(queue.fail(second.id, secondAttempt2, "should be refused") == null)
         check(queue.next()?.id == first.id)
         check(TransferQueue(FileTransferJournal(file)).snapshot()[0].state == TransferState.PAUSED) // crashed RUNNING recovery
         val restored = TransferQueue(FileTransferJournal(file))
         check(restored.resume(first.id)?.state == TransferState.QUEUED)
-        check(restored.next()?.id == first.id)
-        check(restored.fail(first.id, "timeout")?.state == TransferState.FAILED)
+        val firstAttempt = checkNotNull(restored.next())
+        check(firstAttempt.id == first.id)
+        check(restored.fail(first.id, firstAttempt.attempts, "timeout")?.state == TransferState.FAILED)
         check(restored.resume(first.id)?.state == TransferState.QUEUED)
         check(restored.cancel(first.id)?.state == TransferState.CANCELLED)
         check(restored.resume(first.id) == null)
@@ -88,6 +95,6 @@ fun main() {
         }
         println("PASS: startup journal write elision and durable crash recovery")
         println("PASS: corrupted journal rejection and preservation")
-        println("PASS: exact task selection, durable journal, retry, recover, monotonic progress, cancel")
+        println("PASS: attempt-scoped callbacks, retry reset, durable journal and cancel")
     } finally { dir.deleteRecursively() }
 }

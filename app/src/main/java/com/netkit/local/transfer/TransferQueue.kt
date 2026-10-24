@@ -54,7 +54,7 @@ class TransferQueue(private val journal: TransferJournal) {
 
     /** Explicit start of the exact selected task, with no accidental start of a different task. */
     fun begin(id: String): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.QUEUED }
+        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.QUEUED && it.attempts < Int.MAX_VALUE }
         if (index < 0) null else edit(index) { it.copy(state = TransferState.RUNNING, attempts = it.attempts + 1, error = "") }
     }
 
@@ -63,8 +63,9 @@ class TransferQueue(private val journal: TransferJournal) {
         begin(item.id)
     }
 
-    fun progress(id: String, bytes: Long): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
+    /** Reject late progress callbacks from a cancelled or superseded attempt. */
+    fun progress(id: String, attempt: Int, bytes: Long): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
         if (index < 0) null else edit(index) {
             it.copy(completedBytes = bytes.coerceIn(it.completedBytes, it.size))
         }
@@ -72,19 +73,25 @@ class TransferQueue(private val journal: TransferJournal) {
 
     // API state changes don't magically pause an existing network stream. Execution controller must close it.
     fun pause(id: String) = transition(id, setOf(TransferState.RUNNING, TransferState.QUEUED), TransferState.PAUSED)
-    fun resume(id: String) = transition(id, setOf(TransferState.PAUSED, TransferState.FAILED), TransferState.QUEUED)
+    /** A journal byte count is not a verified remote offset: restart from zero. */
+    fun resume(id: String): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst { it.id == id && it.state in setOf(TransferState.PAUSED, TransferState.FAILED) }
+        if (index < 0) null else edit(index) {
+            it.copy(state = TransferState.QUEUED, completedBytes = 0, error = "")
+        }
+    }
     fun cancel(id: String) = transition(id,
         setOf(TransferState.QUEUED, TransferState.RUNNING, TransferState.PAUSED, TransferState.FAILED), TransferState.CANCELLED)
 
-    fun finish(id: String): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
+    fun finish(id: String, attempt: Int): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
         if (index < 0) null else edit(index) {
             it.copy(state = TransferState.COMPLETED, completedBytes = it.size, error = "")
         }
     }
 
-    fun fail(id: String, message: String): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
+    fun fail(id: String, attempt: Int, message: String): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
         if (index < 0) null else edit(index) {
             it.copy(state = TransferState.FAILED, error = message.take(200))
         }

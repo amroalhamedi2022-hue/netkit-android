@@ -233,20 +233,22 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
             val remotePath = folder.trimEnd('/') + "/" + selected.name
             val task = runCatching { core.transfers.add(remotePath, uri.toString(), selected.size.coerceAtLeast(0L)) }.getOrNull()
             scope.launch {
+                var runningAttempt: Int? = null
                 result = runCatching {
                     check(task != null) { "Transfer journal unavailable or full" }
-                    core.transfers.begin(task.id)
-                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, bytes) })
+                    val running = checkNotNull(core.transfers.begin(task.id)) { "Transfer cannot start" }
+                    runningAttempt = running.attempts
+                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, running.attempts, bytes) })
                     val completed = try {
                         withContext(Dispatchers.IO) {
                             connected.download(remotePath, uri, ctx) { bytes -> checkpoint.onBytes(bytes) }
                         }
                     } finally { checkpoint.flush() }
                     check(completed) { "FTP server rejected download" }
-                    core.transfers.finish(task.id)
+                    core.transfers.finish(task.id, running.attempts)
                     "تم تنزيل ${selected.name}"
                 }.getOrElse { failure ->
-                    if(task != null) core.transfers.fail(task.id, failure.localizedMessage.orEmpty())
+                    if(task != null) runningAttempt?.let { core.transfers.fail(task.id, it, failure.localizedMessage.orEmpty()) }
                     "فشل التنزيل: ${failure.localizedMessage}"
                 }
                 working=false
@@ -262,21 +264,23 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                 ?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else 0L } ?: 0L }.getOrDefault(0L)
             val task=runCatching { core.transfers.add(uri.toString(),remotePath,localSize.coerceAtLeast(0L)) }.getOrNull()
             scope.launch {
+                var runningAttempt: Int? = null
                 result=runCatching {
                     check(task!=null) { "Transfer journal unavailable or full" }
-                    core.transfers.begin(task.id)
-                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, bytes) })
+                    val running = checkNotNull(core.transfers.begin(task.id)) { "Transfer cannot start" }
+                    runningAttempt = running.attempts
+                    val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, running.attempts, bytes) })
                     val ok = try {
                         withContext(Dispatchers.IO) {
                             connected.upload(uri, remotePath, ctx) { bytes -> checkpoint.onBytes(bytes) }
                         }
                     } finally { checkpoint.flush() }
                     check(ok) { "FTP server rejected upload" }
-                    core.transfers.finish(task.id)
+                    core.transfers.finish(task.id, running.attempts)
                     entries=withContext(Dispatchers.IO){ connected.entries(folder) }
                     "تم رفع $uploadName"
                 }.getOrElse { failure ->
-                    if(task!=null) core.transfers.fail(task.id,failure.localizedMessage.orEmpty())
+                    if(task!=null) runningAttempt?.let { core.transfers.fail(task.id, it, failure.localizedMessage.orEmpty()) }
                     "فشل الرفع: ${failure.localizedMessage}"
                 }
                 working=false
