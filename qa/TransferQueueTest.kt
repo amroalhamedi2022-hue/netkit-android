@@ -39,20 +39,20 @@ fun main() {
             val props = java.util.Properties().apply {
                 setProperty("count", "2")
                 for (i in 0..1) {
-                    setProperty("$" + "{i}.id", "task-$" + "{i}")
-                    setProperty("$" + "{i}.source", "content://safe/$" + "i")
-                    setProperty("$" + "{i}.dest", "peer/$" + "i")
-                    setProperty("$" + "{i}.size", "10")
-                    setProperty("$" + "{i}.done", "0")
-                    setProperty("$" + "{i}.state", "PAUSED")
-                    setProperty("$" + "{i}.attempts", "1")
+                    setProperty("$i.id", "task-$i")
+                    setProperty("$i.source", "content://safe/$i")
+                    setProperty("$i.dest", "peer/$i")
+                    setProperty("$i.size", "10")
+                    setProperty("$i.done", "0")
+                    setProperty("$i.state", "PAUSED")
+                    setProperty("$i.attempts", "1")
                 }
             }
             mutator(props)
             badFile.outputStream().use { props.store(it, "test") }
             val before = badFile.readBytes()
             val rejected = runCatching { TransferQueue(FileTransferJournal(badFile)) }.exceptionOrNull()
-            check(rejected is IllegalArgumentException) { "Malformed journal accepted: $" + "rejected" }
+            check(rejected is IllegalArgumentException) { "Malformed journal accepted: $rejected" }
             check(badFile.readBytes().contentEquals(before)) { "Corrupt journal was overwritten" }
         }
         malformed { it.setProperty("1.id", "task-0") } // duplicate identities
