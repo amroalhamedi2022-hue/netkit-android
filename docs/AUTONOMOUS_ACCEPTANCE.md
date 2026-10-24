@@ -114,3 +114,20 @@ AUTOMATION_COMPLETE: BLOCKED
 **Current accepted gates:** 0/5 on hardware; 3 code paths implemented but exact-head CI and Android compilation remain unverified. Existing NetKit PR #6 unchanged; PR #7 remains Draft. No APK built in this source milestone. Source reference: https://commons.apache.org/proper/commons-net/apidocs/org/apache/commons/net/ftp/FTPClient.html and https://mwiede.github.io/jsch/0.2.7/com.jcraft.jsch/com/jcraft/jsch/ChannelSftp.html . Existing Apache Commons Net and mwiede JSch libraries reused; no new third-party dependency, API charge or license added.
 
 **Important limitation:** remote readback proves that bytes readable immediately after upload match the sent stream. It does not prove durability after server crash, cannot defend against malicious server replay, and does not implement protocol-confirmed resume or an embedded FTP/SFTP server.
+
+
+## 2026-10-25 — M4 prerequisite: honest SAF unknown-length FTP/SFTP transfers
+
+**Scope:** PR #7 only, layered over PR #6; no change to PR #6/main.
+**Functional outcome:** the durable FTP/SFTP transfer queue now distinguishes **unknown size = -1** from **known empty file = 0**. A provider without `OpenableColumns.SIZE` is not misreported as empty. Unknown-size progress can increase, persists across restarts, and retains actual bytes on successful protocol completion. Known-size progress remains bounded; an explicitly empty file cannot accept nonzero progress. UI displays unknown size and does not claim SHA verification when it was not requested.
+
+**Source:** `TransferQueue.kt`, `NetKitProScreens.kt`, `qa/TransferQueueTest.kt`.
+**Acceptance gate (6 checks):**
+1. Queue sentinel/progress/finish semantics: **PASS (source inspection)**.
+2. SAF picker size propagation and honest status text: **PASS (source inspection)**.
+3. Persistence/reload and known-empty negative regression added: **PASS (source inspection)**.
+4. Kotlin/JVM regression execution on final SHA: **NOT TESTED** until CI finishes: https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40133913426 .
+5. Android compilation and physical SAF provider tests: **NOT TESTED**.
+6. Verified remote-offset resume, FTP/SFTP server, Pad 5↔Windows acceptance: **FAIL / not implemented**.
+
+**Boundary:** protocol completion is not a cryptographic proof. Unknown-size completion relies on FTP/SFTP success; optional SHA readback remains separate. This is a real upload/download queue correctness fix, **not** verified remote-offset resumption. No APK/EXE build was requested for this source-only gate.
