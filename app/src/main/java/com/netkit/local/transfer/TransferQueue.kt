@@ -30,13 +30,17 @@ interface TransferJournal {
 /** Thread-safe state transitions; journal failures must never silently leave an in-memory change. */
 class TransferQueue(private val journal: TransferJournal) {
     private val mutex = Any()
-    private val tasks = journal.load().map {
+    private val loaded = journal.load()
+    private val tasks = loaded.map {
         if (it.state == TransferState.RUNNING) it.copy(
             state = TransferState.PAUSED, error = "Interrupted; verify remote offset before retry"
         ) else it
     }.toMutableList()
 
-    init { journal.save(tasks) }
+    // Only persist when recovering a previously RUNNING task. Rewriting a
+    // healthy journal on every app launch adds I/O and can erase forensic
+    // evidence if storage is unreliable, without changing queue state.
+    init { if (tasks != loaded) journal.save(tasks) }
 
     fun snapshot(): List<TransferTask> = synchronized(mutex) { tasks.toList() }
 
