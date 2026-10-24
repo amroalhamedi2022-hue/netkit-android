@@ -9,6 +9,7 @@ import java.util.zip.Deflater
 import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
+import java.security.MessageDigest
 import java.util.Base64
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -162,8 +163,10 @@ class TransferHttpEngine(
                         method == "GET" && path == "$prefix/list" -> list(out)
                         method == "GET" && path == "$prefix/browse" -> browse(out, query)
                         method == "GET" && path.startsWith("$prefix/browse-file/") -> download(out, path.removePrefix("$prefix/browse-file/"), headers["range"], folderMode = true)
+                        method == "GET" && path.startsWith("$prefix/browse-checksum/") -> checksum(out, path.removePrefix("$prefix/browse-checksum/"), folderMode = true)
                         method == "GET" && path.startsWith("$prefix/browse-archive/") -> downloadArchive(out, path.removePrefix("$prefix/browse-archive/"))
                         method == "GET" && path.startsWith("$prefix/file/") -> download(out, path.removePrefix("$prefix/file/"), headers["range"])
+                        method == "GET" && path.startsWith("$prefix/checksum/") -> checksum(out, path.removePrefix("$prefix/checksum/"))
                         method == "POST" && path == "$prefix/upload" -> upload(input, out, headers)
                         else -> fail(out, 405, "Unsupported route")
                     }
@@ -336,6 +339,46 @@ class TransferHttpEngine(
             DirectoryArchive.write(id, provider, zip, includeChecksums = true)
         }
         framed.finishResponse()
+    }
+
+    /**
+     * On-demand, bounded-memory SHA-256 for an explicitly shared file. This
+     * computes the digest over the entire SAF stream without staging it in RAM.
+     * A checksum is a point-in-time reading, not a snapshot guarantee if a
+     * different app modifies the source during or after the request.
+     */
+    private fun checksum(out: OutputStream, id: String, folderMode: Boolean = false) {
+        if (!id.matches(Regex("[a-fA-F0-9-]{36}"))) return fail(out, 404, "No file")
+        val directory = storage as? DirectoryShareStorage
+        val item = if (folderMode) directory?.directoryItem(id)
+            else storage.items().firstOrNull { it.id == id }
+        if (item == null) return fail(out, 404, "No file")
+        val source = if (folderMode) directory?.openDirectoryItem(id) else storage.open(id)
+        if (source == null) return fail(out, 404, "File unavailable")
+        try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            var count = 0L
+            val buffer = ByteArray(64 * 1024)
+            source.stream.use { input ->
+                while (true) {
+                    if (!alive || !lease.isValid() || Thread.currentThread().isInterrupted)
+                        throw java.io.InterruptedIOException("Checksum cancelled")
+                    val n = StreamReadGuard.read(input, buffer, 0, buffer.size)
+                    if (n < 0) break
+                    if (count > Long.MAX_VALUE - n) error("Checksum byte count overflow")
+                    digest.update(buffer, 0, n)
+                    count += n
+                }
+            }
+            if (source.length != null && source.length >= 0L && count != source.length)
+                return fail(out, 409, "File size changed during checksum")
+            val hex = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+            response(out, 200, """{"sha256":"$hex","bytes":$count}""", "application/json; charset=utf-8")
+        } catch (_: java.io.InterruptedIOException) {
+            // Server stop/session expiry closes the socket; never report a partial digest.
+        } catch (_: Exception) {
+            if (alive && lease.isValid()) fail(out, 500, "Could not calculate checksum")
+        }
     }
 
     /** Single RFC 7233 byte ranges enable clients to resume DOWNLOADS.
@@ -563,6 +606,8 @@ class TransferHttpEngine(
             } else {
               const a=document.createElement('a');a.textContent='📄 '+entry.name+' · '+(entry.length==null?'حجم غير معروف':humanBytes(entry.length));
               a.href=base+'/browse-file/'+encodeURIComponent(entry.id);li.append(a);
+              const checksum=document.createElement('a');checksum.href=base+'/browse-checksum/'+encodeURIComponent(entry.id);
+              checksum.textContent=' · SHA-256';checksum.target='_blank';checksum.rel='noopener';li.append(checksum);
             }
             el('folders').append(li);
           }
@@ -585,7 +630,9 @@ class TransferHttpEngine(
           for(const f of data.items) {
             const li=document.createElement('li'),a=document.createElement('a');
             a.textContent='📄 '+f.name+' · '+(f.length==null?'حجم غير معروف':humanBytes(f.length));
-            a.href=base+'/file/'+encodeURIComponent(f.id);li.append(a);el('files').append(li);
+            a.href=base+'/file/'+encodeURIComponent(f.id);li.append(a);
+            const checksum=document.createElement('a');checksum.href=base+'/checksum/'+encodeURIComponent(f.id);
+            checksum.textContent=' · SHA-256';checksum.target='_blank';checksum.rel='noopener';li.append(checksum);el('files').append(li);
           }
           if(!data.items.length)el('files').textContent='ما في ملفات محددة للمشاركة حاليًا.';
           if(!receivingAllowed)el('status').textContent='اختَر مجلد استقبال من تطبيق Android أولًا.';
