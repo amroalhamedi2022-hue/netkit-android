@@ -87,7 +87,12 @@ class TransferQueue(private val journal: TransferJournal) {
 
     fun finish(id: String, attempt: Int): TransferTask? = synchronized(mutex) {
         val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
-        if (index < 0) null else edit(index) {
+        // A transport success flag alone is not evidence of a complete known-size
+        // transfer. Never fabricate the missing bytes in the persisted journal.
+        // Size 0 is also used by SAF providers that cannot report a size; those
+        // transfers still need the transport's own completion/integrity checks.
+        if (index < 0 || (tasks[index].size > 0 &&
+                tasks[index].completedBytes != tasks[index].size)) null else edit(index) {
             it.copy(state = TransferState.COMPLETED, completedBytes = it.size, error = "")
         }
     }
