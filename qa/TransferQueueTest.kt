@@ -166,6 +166,38 @@ fun main() {
             check(queue.add("content://extra", "peer/extra", 1).state == TransferState.QUEUED)
             check(TransferQueue(full).snapshot().size == 501)
         }
+        // Unknown SAF provider size is -1; known zero must stay strictly zero.
+        // Never turn observed progress into -1 or silently accept bytes for an
+        // explicitly empty file. Persist/reload both cases without corruption.
+        run {
+            val journalFile = File(dir, "unknown-size.properties")
+            val unknownQueue = TransferQueue(FileTransferJournal(journalFile))
+            val unknown = unknownQueue.add("content://unknown", "peer/unknown", -1)
+            val empty = unknownQueue.add("content://empty", "peer/empty", 0)
+            val unknownAttempt = checkNotNull(unknownQueue.begin(unknown.id)).attempts
+            val emptyAttempt = checkNotNull(unknownQueue.begin(empty.id)).attempts
+            check(unknownQueue.progress(unknown.id, unknownAttempt, 4096)?.completedBytes == 4096L)
+            check(unknownQueue.progress(unknown.id, unknownAttempt, 8192)?.completedBytes == 8192L)
+            check(unknownQueue.progress(empty.id, emptyAttempt, 1) == null)
+            check(unknownQueue.finish(empty.id, emptyAttempt)?.completedBytes == 0L)
+            check(unknownQueue.finish(unknown.id, unknownAttempt)?.completedBytes == 8192L)
+            val reloaded = TransferQueue(FileTransferJournal(journalFile)).snapshot()
+            check(reloaded.single { it.id == unknown.id }.let {
+                it.size == -1L && it.completedBytes == 8192L &&
+                    it.state == TransferState.COMPLETED
+            })
+            check(reloaded.single { it.id == empty.id }.let {
+                it.size == 0L && it.completedBytes == 0L &&
+                    it.state == TransferState.COMPLETED
+            })
+            val unknownRetry = unknownQueue.add("content://retry", "peer/retry", -1)
+            val attempt = checkNotNull(unknownQueue.begin(unknownRetry.id)).attempts
+            check(unknownQueue.progress(unknownRetry.id, attempt, 50)?.completedBytes == 50L)
+            check(unknownQueue.pause(unknownRetry.id)?.state == TransferState.PAUSED)
+            check(unknownQueue.resume(unknownRetry.id)?.completedBytes == 0L)
+            check(runCatching { unknownQueue.add("content://bad", "peer/bad", -2) }.isFailure)
+        }
+        println("PASS: unknown SAF size, known empty, progress, persistence and retry")
         println("PASS: terminal cleanup restores bounded journal capacity")
         println("PASS: explicit terminal cleanup is durable and preserves unfinished work")
         println("PASS: exhausted retry counts cannot starve queued transfers")
