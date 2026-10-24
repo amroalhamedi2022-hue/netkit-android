@@ -149,6 +149,33 @@ fun main(args: Array<String>) {
             return code to data
         }
         check(request(root + "/").first == 200)
+        // A client that sends a partial HTTP header must not keep a TLS
+        // worker occupied indefinitely by slowly dripping more bytes.
+        check(runCatching {
+            TransferHttpEngine(serverSsl.serverSocketFactory, store, headerTimeoutMillis = 0L)
+        }.isFailure)
+        TransferHttpEngine(serverSsl.serverSocketFactory, store, headerTimeoutMillis = 800L).use { guarded ->
+            guarded.start()
+            (clientSsl.socketFactory.createSocket("127.0.0.1", guarded.port) as SSLSocket).use { slow ->
+                slow.soTimeout = 3_000
+                slow.startHandshake()
+                slow.outputStream.write(
+                    "GET /s/${guarded.token}/list HTTP/1.1\r\nHost: localhost\r\nX-Slow:".toByteArray(Charsets.ISO_8859_1)
+                )
+                slow.outputStream.flush()
+                Thread.sleep(1_050)
+                // The worker must close this incomplete request without
+                // waiting for a missing CRLF or an eventual upload body.
+                val closed = runCatching { slow.inputStream.read() }.getOrElse { -1 } == -1
+                check(closed) { "Timed-out HTTPS header remained open" }
+            }
+            repeat(40) {
+                if (guarded.activeClientCount == 0) return@repeat
+                Thread.sleep(25)
+            }
+            check(guarded.activeClientCount == 0) { "Timed-out HTTPS client leaked" }
+        }
+        println("PASS: absolute TLS request-header deadline and worker cleanup")
         // Exercise the real TLS request parser, not a mock. Invalid field-name
         // whitespace, folded headers, controls, duplicate framing and chunked
         // request bodies must be rejected before invoking ShareStorage.
