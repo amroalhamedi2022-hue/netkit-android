@@ -113,6 +113,9 @@ class FileTransferJournal(private val file: File) : TransferJournal {
         val count = properties.getProperty("count")?.toIntOrNull()
             ?: throw IllegalStateException("Invalid transfer journal count")
         require(count in 0..1000) { "Too many saved transfer tasks" }
+        // A malformed journal must never be silently normalized and re-saved
+        // by TransferQueue initialization: reject duplicate task identities.
+        val seenIds = HashSet<String>()
         return (0 until count).map { n ->
             val prefix = "$n."
             fun required(key: String) = properties.getProperty(prefix + key)
@@ -120,10 +123,21 @@ class FileTransferJournal(private val file: File) : TransferJournal {
             val size = required("size").toLong()
             val done = required("done").toLong()
             require(size >= 0 && done in 0..size) { "Invalid saved task byte count" }
+            val id = required("id")
+            val source = required("source")
+            val destination = required("dest")
+            val attempts = required("attempts").toInt()
+            val state = TransferState.valueOf(required("state"))
+            require(id.isNotBlank() && seenIds.add(id)) { "Duplicate or blank saved task id" }
+            require(source.isNotBlank() && destination.isNotBlank()) { "Missing saved task endpoint" }
+            require(attempts >= 0) { "Negative saved task attempts" }
+            require(state != TransferState.COMPLETED || done == size) {
+                "Completed task has incomplete saved byte count"
+            }
             TransferTask(
-                id = required("id"), source = required("source"), destination = required("dest"),
-                size = size, completedBytes = done, state = TransferState.valueOf(required("state")),
-                attempts = required("attempts").toInt(), error = properties.getProperty(prefix + "error", "")
+                id = id, source = source, destination = destination,
+                size = size, completedBytes = done, state = state,
+                attempts = attempts, error = properties.getProperty(prefix + "error", "")
             )
         }
     }
