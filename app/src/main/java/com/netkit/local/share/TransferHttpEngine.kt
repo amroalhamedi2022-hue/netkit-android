@@ -40,6 +40,10 @@ interface ShareStorage {
     fun canUpload(): Boolean
     fun maxUploadSize(): Long = 16L * 1024 * 1024 * 1024
     fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String
+    /** SAF-aware implementations may opt into bounded nested-folder uploads. */
+    fun uploadRelative(folders: List<String>, fileName: String, body: InputStream,
+                       length: Long, expectedSha256: String?, progress: (Long) -> Unit): String =
+        throw UnsupportedOperationException("Folder upload unavailable")
 }
 
 /**
@@ -225,7 +229,7 @@ class TransferHttpEngine(
     )
 
     private fun head(out: OutputStream, status: Int, type: String, length: Long?, extra: Map<String,String> = emptyMap()) {
-        val reasons = mapOf(200 to "OK", 201 to "Created", 206 to "Partial Content", 400 to "Bad Request", 403 to "Forbidden", 404 to "Not Found", 405 to "Method Not Allowed", 409 to "Conflict", 410 to "Gone", 413 to "Content Too Large", 416 to "Range Not Satisfiable", 422 to "Unprocessable Content", 500 to "Server Error")
+        val reasons = mapOf(200 to "OK", 201 to "Created", 206 to "Partial Content", 400 to "Bad Request", 403 to "Forbidden", 404 to "Not Found", 405 to "Method Not Allowed", 409 to "Conflict", 410 to "Gone", 413 to "Content Too Large", 416 to "Range Not Satisfiable", 422 to "Unprocessable Content", 500 to "Server Error", 501 to "Not Implemented")
         val sb = StringBuilder("HTTP/1.1 $status ${reasons[status] ?: "Error"}\r\n")
         val headers = commonHeaders() + extra + mapOf("Content-Type" to type, "Connection" to "close") +
             if (length == null) mapOf("Transfer-Encoding" to "chunked") else mapOf("Content-Length" to length.toString())
@@ -436,9 +440,24 @@ class TransferHttpEngine(
         if (expectedSha256 != null && !expectedSha256.matches(Regex("[0-9a-fA-F]{64}"))) {
             return fail(out, 400, "Invalid SHA-256")
         }
+        val folders = h["x-relative-path"]?.let { rawPath ->
+            try {
+                UploadPathPolicy.folders(URLDecoder.decode(rawPath, "UTF-8"), name)
+            } catch (_: IllegalArgumentException) {
+                return fail(out, 400, "Invalid upload folder path")
+            }
+        }
         try {
-            val stored = storage.upload(name, input, length, expectedSha256) { current -> progress(current, length) }
+            val stored = if (folders == null) {
+                storage.upload(name, input, length, expectedSha256) { current -> progress(current, length) }
+            } else {
+                storage.uploadRelative(folders, name, input, length, expectedSha256) {
+                    current -> progress(current, length)
+                }
+            }
             response(out, 201, "Saved: $stored")
+        } catch (_: UnsupportedOperationException) {
+            fail(out, 501, "Folder uploads not supported by this storage")
         } catch (_: UploadHashMismatchException) {
             fail(out, 422, "Upload SHA-256 mismatch. File was not committed")
         } catch (_: UploadPermissionRevokedException) {
@@ -449,37 +468,7 @@ class TransferHttpEngine(
      * Reject names that Windows/SAF extractors may alias or display deceptively.
      * Normal Arabic filenames remain supported.
      */
-    internal fun validName(v: String): Boolean {
-        if (v.isBlank() || v.length > 180 || v == "." || v == ".." ||
-            v.endsWith('.') || v.endsWith(' ') ||
-            v.startsWith(".netkit-", ignoreCase = true)) return false
-        // URLDecoder replaces malformed UTF-8 percent sequences with U+FFFD.
-        // Reject the replacement character and unpaired UTF-16 surrogates
-        // before SAF providers normalize or silently alias filenames.
-        if ('\uFFFD' in v) return false
-        var index = 0
-        while (index < v.length) {
-            val c = v[index]
-            if (Character.isHighSurrogate(c)) {
-                if (index + 1 >= v.length || !Character.isLowSurrogate(v[index + 1])) return false
-                index += 2
-            } else {
-                if (Character.isLowSurrogate(c)) return false
-                index++
-            }
-        }
-        if (v.any { c ->
-                c == '/' || c == '\\' || c.code < 32 || c.code in 0x7f..0x9f ||
-                c in "<>:\"|?*" || c.code == 0x061c ||
-                c.code in 0x200e..0x200f || c.code in 0x202a..0x202e ||
-                c.code in 0x2066..0x206f || c.code in 0x2028..0x2029 ||
-                c.code in 0xfff9..0xfffb || c.code == 0xfeff
-            }) return false
-        val stem = v.substringBefore('.').trimEnd(' ').uppercase(java.util.Locale.ROOT)
-        if (stem in setOf("CON", "PRN", "AUX", "NUL") ||
-            Regex("^(COM|LPT)[1-9¹²³]$").matches(stem)) return false
-        return true
-    }
+    internal fun validName(v: String): Boolean = UploadPathPolicy.validName(v)
 
     private fun html(out: OutputStream) = response(out, 200, """
         <!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8" />
@@ -538,6 +527,8 @@ class TransferHttpEngine(
           <div class="glass"><h2>📥 ملفات محددة</h2><p>الملفات الفردية المختارة من جهاز Android. التحميل يدعم HTTP Range عندما يكون الحجم معروفًا.</p><ul id="files">جارٍ القراءة…</ul></div>
           <div class="glass"><h2>📤 إرسال ملفات للجهاز</h2><p>اختَر ملفات من اللابتوب لإرسالها إلى المجلد المحدد على Android. يتم التحقق من SHA-256 للملفات حتى 16 MiB عندما يدعم المتصفح Web Crypto؛ الملفات الأكبر تُنقل دون مقارنة تجزئة طرفية حاليًا.</p>
             <input id="choose" type="file" multiple />
+            <p>أو اختر مجلدًا كاملًا (متصفح يدعم اختيار المجلدات):</p>
+            <input id="chooseFolder" type="file" webkitdirectory multiple />
             <div class="actions"><button id="upload">ابدأ الإرسال</button><button class="secondary" id="cancel" disabled>إلغاء النقل</button></div>
             <div class="meter" role="progressbar" aria-label="Transfer progress"><div id="bar"></div></div>
             <p id="stats">0%</p><p id="status" role="status"></p>
@@ -615,6 +606,7 @@ class TransferHttpEngine(
           const start=performance.now();
           xhr.open('POST',base+'/upload');
           xhr.setRequestHeader('X-File-Name',encodeURIComponent(file.name));
+          if(file.webkitRelativePath) xhr.setRequestHeader('X-Relative-Path',encodeURIComponent(file.webkitRelativePath));
           if(hash)xhr.setRequestHeader('X-Content-SHA256',hash);
           xhr.setRequestHeader('Content-Type','application/octet-stream');
           xhr.upload.onprogress=e=>{
@@ -633,7 +625,7 @@ class TransferHttpEngine(
         })}
         el('cancel').onclick=()=>{if(activeRequest)activeRequest.abort()};
         el('upload').onclick=async()=>{
-          const files=Array.from(el('choose').files);if(!files.length)return;
+          const files=[...Array.from(el('choose').files),...Array.from(el('chooseFolder').files)];if(!files.length)return;
           resetButtons(true);el('bar').style.width='0%';
           try {let verified=0;
           for(let i=0;i<files.length;i++) {
@@ -641,7 +633,7 @@ class TransferHttpEngine(
             if(await sendFile(files[i],i,files.length))verified++;
           }
           el('bar').style.width='100%';el('stats').textContent='100% · اكتمل الإرسال';
-          el('status').textContent='✅ الملفات وصلت بنجاح · '+verified+'/'+files.length+' تحقق SHA-256';el('choose').value='';
+          el('status').textContent='✅ الملفات وصلت بنجاح · '+verified+'/'+files.length+' تحقق SHA-256';el('choose').value='';el('chooseFolder').value='';
           await refresh();
           } catch(e) {el('status').textContent='⚠️ '+e.message}
           finally {activeRequest=null;resetButtons(false)}
