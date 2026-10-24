@@ -67,4 +67,9 @@ java -jar "$TEMP_DIR/remote-path-policy.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/TransferLengthVerifier.kt" \
   "$ROOT/qa/TransferLengthVerifierTest.kt" -include-runtime -d "$TEMP_DIR/remote-length.jar"
 java -jar "$TEMP_DIR/remote-length.jar"
+# Optional FTP/SFTP upload readback integrity: compare SHA-256 without
+# buffering files, reject changed bytes and bounded stalled network streams.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/RemoteDigestVerifier.kt" \
+  "$ROOT/qa/RemoteDigestVerifierTest.kt" -include-runtime -d "$TEMP_DIR/remote-digest.jar"
+java -jar "$TEMP_DIR/remote-digest.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
