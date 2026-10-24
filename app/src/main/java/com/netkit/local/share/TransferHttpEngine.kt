@@ -255,12 +255,33 @@ class TransferHttpEngine(
     private fun browse(out: OutputStream, query: String) {
         val storage = storage as? DirectoryShareStorage ?: return fail(out, 404, "Folder browsing unavailable")
         if (!storage.hasSharedDirectory()) return response(out, 200, """{"entries":[],"nextOffset":null,"enabled":false}""", "application/json; charset=utf-8")
-        val args = query.split('&').mapNotNull { part ->
-            val eq = part.indexOf('=')
-            if (eq < 0) null else part.take(eq) to URLDecoder.decode(part.substring(eq + 1), "UTF-8")
-        }.toMap()
-        val dir = args["dir"]?.takeIf { it == "root" || it.matches(Regex("[a-fA-F0-9-]{36}")) } ?: "root"
-        val offset = args["offset"]?.toIntOrNull()?.coerceIn(0, 1000000) ?: 0
+        // Never silently fall back to the shared root for malformed, duplicate
+        // or ambiguous browser queries. Invalid percent-encoding and UTF-8
+        // must not cause an unhandled exception that drops the TLS connection.
+        val args = try {
+            val values = mutableMapOf<String, String>()
+            if (query.isNotEmpty()) for (part in query.split('&')) {
+                val eq = part.indexOf('=')
+                require(eq > 0) { "Malformed browse query" }
+                val key = part.substring(0, eq)
+                require(key == "dir" || key == "offset") { "Unknown browse parameter" }
+                require(!values.containsKey(key)) { "Duplicate browse parameter" }
+                val value = URLDecoder.decode(part.substring(eq + 1), "UTF-8")
+                require('\uFFFD' !in value) { "Malformed browse encoding" }
+                values[key] = value
+            }
+            values
+        } catch (_: IllegalArgumentException) {
+            return fail(out, 400, "Invalid browse query")
+        }
+        val dir = args["dir"] ?: "root"
+        if (dir != "root" && !dir.matches(Regex("[a-fA-F0-9-]{36}")))
+            return fail(out, 400, "Invalid browse directory")
+        val rawOffset = args["offset"]
+        if (rawOffset != null && (!rawOffset.matches(Regex("0|[1-9][0-9]{0,6}")) ||
+                (rawOffset.toIntOrNull() ?: Int.MAX_VALUE) > 1_000_000))
+            return fail(out, 400, "Invalid browse offset")
+        val offset = rawOffset?.toInt() ?: 0
         val page = storage.browseDirectory(dir, offset, 100)
         val content = page.entries.joinToString(",") { item ->
             """{"id":${jsonEscape(item.id)},"name":${jsonEscape(item.name)},"directory":${item.directory},"length":${item.length ?: "null"}}"""
