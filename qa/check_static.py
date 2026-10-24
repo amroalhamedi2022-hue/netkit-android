@@ -54,6 +54,13 @@ assert 'activeClients.remove(client)' in engine
 assert 'x-content-sha256' in engine
 assert 'UploadHashMismatchException' in engine
 assert 'sha256SmallFile' in engine
+assert 'webkitdirectory' in engine and 'x-relative-path' in engine
+assert 'UploadPathPolicy.folders' in engine and 'storage.uploadRelative' in engine
+storage_source = (root / 'app/src/main/java/com/netkit/local/share/AndroidShareStorage.kt').read_text()
+assert 'override fun uploadRelative(' in storage_source
+assert 'UploadPathPolicy.checkFolders' in storage_source
+assert 'uploadConsent.withCurrent(' in storage_source
+assert 'uploadNames.reserve(fileName, scope)' in storage_source
 assert 'downloadArchive' in engine and 'browseDirectory' in engine and 'browse-archive/' in engine
 assert 'shareExpirationMinutes' in (root / 'app/src/main/java/com/netkit/local/app/NetKitCore.kt').read_text()
 assert (root / 'app/src/main/java/com/netkit/local/share/DirectoryArchive.kt').is_file()
