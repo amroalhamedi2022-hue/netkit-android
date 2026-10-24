@@ -260,6 +260,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
     var result by remember {mutableStateOf("غير متصل")}
     var chosen by remember {mutableStateOf<RemoteEntry?>(null)}
     var uploadName by remember {mutableStateOf("")}
+    var verifyUploadSha256 by remember {mutableStateOf(false)}
     val createDocument=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val selected=chosen
         val connected=client
@@ -295,6 +296,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         if(uri != null && connected != null && uploadName.isNotBlank()) {
             working=true
             val remotePath=folder.trimEnd('/') + "/" + uploadName
+            val verifyThisUpload=verifyUploadSha256
             val localSize=runCatching { ctx.contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)
                 ?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else 0L } ?: 0L }.getOrDefault(0L)
             val task=runCatching { core.transfers.add(uri.toString(),remotePath,localSize.coerceAtLeast(0L)) }.getOrNull()
@@ -307,13 +309,15 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                     val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, running.attempts, bytes) })
                     val ok = try {
                         withContext(Dispatchers.IO) {
-                            connected.upload(uri, remotePath, ctx) { bytes -> checkpoint.onBytes(bytes) }
+                            connected.upload(uri, remotePath, ctx,
+                                { bytes -> checkpoint.onBytes(bytes) }, verifyThisUpload)
                         }
                     } finally { checkpoint.flush() }
                     check(ok) { "FTP server rejected upload" }
                     checkNotNull(core.transfers.finish(task.id, running.attempts)) { "Transfer length was not verified" }
                     entries=withContext(Dispatchers.IO){ connected.entries(folder) }
-                    "تم رفع $uploadName"
+                    if(verifyThisUpload) "تم رفع $uploadName والتحقق من SHA-256 بقراءة الملف من الخادم"
+                    else "تم رفع $uploadName (فحص الحجم فقط)"
                 }.getOrElse { failure ->
                     if(task!=null) runningAttempt?.let { core.transfers.fail(task.id, it, failure.localizedMessage.orEmpty()) }
                     "فشل الرفع: ${failure.localizedMessage}"
@@ -387,6 +391,11 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                 Text("تنزيل ${selected.name}")
             }}
             OutlinedTextField(value=uploadName,onValueChange={uploadName=it.take(180)},label={Text("اسم الملف البعيد عند الرفع")},modifier=Modifier.fillMaxWidth())
+            SwitchSetting(
+                title="التحقق من SHA-256 بعد الرفع",
+                desc="يعيد قراءة الملف كاملًا من الخادم ويقارن بصمته بالمصدر. يحتاج صلاحية قراءة على الخادم ويستهلك نقل بيانات إضافيًا؛ لا يثبت التخزين الدائم.",
+                checked=verifyUploadSha256,onChange={verifyUploadSha256=it},p=p
+            )
             OutlinedButton(enabled=!working && uploadName.isNotBlank(),onClick={pickUpload.launch(arrayOf("*/*"))}) {Text("رفع ملف")}
         }
     }
