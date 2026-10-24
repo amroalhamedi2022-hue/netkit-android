@@ -45,4 +45,8 @@ java -jar "$TEMP_DIR/share-handles.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/UploadNameReservations.kt" \
   "$ROOT/qa/UploadNameReservationsTest.kt" -include-runtime -d "$TEMP_DIR/upload-names.jar"
 java -jar "$TEMP_DIR/upload-names.jar"
+# Consent must remain revoked even if settings are immediately restored.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/UploadConsentGate.kt" \
+  "$ROOT/qa/UploadConsentGateTest.kt" -include-runtime -d "$TEMP_DIR/upload-consent.jar"
+java -jar "$TEMP_DIR/upload-consent.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
