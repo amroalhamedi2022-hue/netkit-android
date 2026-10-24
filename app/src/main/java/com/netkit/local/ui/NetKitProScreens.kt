@@ -211,7 +211,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         rows.forEach { task ->
             HorizontalDivider(color=p.ink.copy(alpha=.12f))
             Text(task.destination.substringAfterLast('/'),color=p.ink,maxLines=1)
-            MutedText("${task.state} · ${task.completedBytes} / ${task.size} bytes · Attempts ${task.attempts}")
+            MutedText("${task.state} · ${task.completedBytes} / ${if (task.size < 0) "حجم غير معروف" else "${task.size} bytes"} · Attempts ${task.attempts}")
             val snapshot = rates[task.id]
             if (snapshot != null && snapshot.bytesPerSecond != null && snapshot.bytesPerSecond > 0.0) {
                 val mibPerSec = "%.2f".format(java.util.Locale.US, snapshot.bytesPerSecond / 1048576.0)
@@ -267,7 +267,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         if(uri != null && selected != null && connected != null) {
             working=true
             val remotePath = folder.trimEnd('/') + "/" + selected.name
-            val task = runCatching { core.transfers.add(remotePath, uri.toString(), selected.size.coerceAtLeast(0L)) }.getOrNull()
+            val task = runCatching { core.transfers.add(remotePath, uri.toString(), selected.size.coerceAtLeast(-1L)) }.getOrNull()
             scope.launch {
                 var runningAttempt: Int? = null
                 result = runCatching {
@@ -298,8 +298,8 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
             val remotePath=folder.trimEnd('/') + "/" + uploadName
             val verifyThisUpload=verifyUploadSha256
             val localSize=runCatching { ctx.contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)
-                ?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else 0L } ?: 0L }.getOrDefault(0L)
-            val task=runCatching { core.transfers.add(uri.toString(),remotePath,localSize.coerceAtLeast(0L)) }.getOrNull()
+                ?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else -1L } ?: -1L }.getOrDefault(-1L)
+            val task=runCatching { core.transfers.add(uri.toString(),remotePath,localSize.coerceAtLeast(-1L)) }.getOrNull()
             scope.launch {
                 var runningAttempt: Int? = null
                 result=runCatching {
@@ -317,7 +317,8 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                     checkNotNull(core.transfers.finish(task.id, running.attempts)) { "Transfer length was not verified" }
                     entries=withContext(Dispatchers.IO){ connected.entries(folder) }
                     if(verifyThisUpload) "تم رفع $uploadName والتحقق من SHA-256 بقراءة الملف من الخادم"
-                    else "تم رفع $uploadName (فحص الحجم فقط)"
+                    else if (localSize >= 0) "تم رفع $uploadName (فحص الحجم فقط، دون SHA-256)"
+                    else "تم رفع $uploadName (الحجم غير معروف؛ لم يُتحقق من SHA-256)"
                 }.getOrElse { failure ->
                     if(task!=null) runningAttempt?.let { core.transfers.fail(task.id, it, failure.localizedMessage.orEmpty()) }
                     "فشل الرفع: ${failure.localizedMessage}"
