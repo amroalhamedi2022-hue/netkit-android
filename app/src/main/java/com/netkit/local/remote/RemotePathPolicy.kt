@@ -31,11 +31,22 @@ object RemotePathPolicy {
         require(value.toByteArray(StandardCharsets.UTF_8).size <= maximumBytes) {
             "Remote text too long"
         }
-        require(value.none {
-            it.code < 0x20 || it.code in 0x7f..0x9f || it == '\uFFFD' ||
-                it.code in 0x202a..0x202e || it.code in 0x2066..0x2069 ||
-                it.code == 0x061c || it.code in 0x200e..0x200f
-        }) { "Unsafe remote text control character" }
+        // Validate complete Unicode code points, not UTF-16 halves: invisible
+        // supplementary tag characters can spoof remote filenames in listings.
+        // Keep U+200D (ZWJ), which is needed for ordinary emoji filenames.
+        var index = 0
+        while (index < value.length) {
+            val cp = Character.codePointAt(value, index)
+            require(
+                cp >= 0x20 && cp !in 0x7f..0x9f &&
+                    cp !in 0x2028..0x202e && cp !in 0x2060..0x206f &&
+                    cp !in 0x200b..0x200c && cp !in 0x200e..0x200f &&
+                    cp !in 0xe0000..0xe007f && cp !in 0xfff9..0xfffb &&
+                    cp != 0x00ad && cp != 0x034f && cp != 0x061c &&
+                    cp != 0x180e && cp != 0xfeff && cp != 0xfffd
+            ) { "Unsafe remote text control character" }
+            index += Character.charCount(cp)
+        }
         return value
     }
 
