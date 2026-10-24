@@ -144,7 +144,13 @@ class TransferHttpEngine(
                     val method = parts[0]
                     val path = parts[1].substringBefore('?')
                     val query = parts[1].substringAfter('?', "")
-                    val headers = readHeaders(input)
+                    // Malformed or ambiguous HTTP headers must receive a clear
+                    // rejection before any storage or download operation begins.
+                    val headers = try { readHeaders(input) }
+                        catch (_: IllegalArgumentException) { return fail(out, 400, "Invalid headers") }
+                    if (headers.containsKey("transfer-encoding")) {
+                        return fail(out, 400, "Transfer-Encoding is not supported")
+                    }
                     if (path != prefix && !path.startsWith("$prefix/")) return fail(out, 404, "Not found")
                     if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
                     when {
@@ -192,9 +198,18 @@ class TransferHttpEngine(
             if (line.isEmpty()) return headers
             val i = line.indexOf(':')
             require(i > 0) { "Bad header" }
-            val key = line.substring(0, i).trim().lowercase(java.util.Locale.ROOT)
+            // RFC 7230 token syntax: never normalize whitespace in a field name.
+            // Accepting "Content-Length : ..." or obs-fold permits HTTP parser
+            // disagreements and can conceal conflicting request framing.
+            val rawName = line.substring(0, i)
+            require(rawName.matches(Regex("[!#$%&'*+.^_`|~0-9A-Za-z-]+"))) { "Invalid header name" }
+            val key = rawName.lowercase(java.util.Locale.ROOT)
             require(!headers.containsKey(key)) { "Duplicate header" }
-            headers[key] = line.substring(i + 1).trim()
+            val value = line.substring(i + 1)
+            require(value.none { it.code < 0x20 && it != '\t' || it.code in 0x7f..0x9f }) {
+                "Invalid header value"
+            }
+            headers[key] = value.trim()
         }
     }
 
