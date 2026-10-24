@@ -150,21 +150,21 @@ fun main(args: Array<String>) {
         fun rawHeaderStatus(fields: String): String {
             (clientSsl.socketFactory.createSocket("127.0.0.1", engine.port) as SSLSocket).use { socket ->
                 socket.soTimeout = 5_000
-                val requestText = "GET /s/${engine.token}/list HTTP/1.1\\r\\nHost: localhost\\r\\n" +
-                    fields + "\\r\\n"
+                val requestText = "GET /s/${engine.token}/list HTTP/1.1\r\nHost: localhost\r\n" +
+                    fields + "\r\n"
                 socket.outputStream.write(requestText.toByteArray(Charsets.ISO_8859_1))
                 socket.outputStream.flush()
                 return socket.inputStream.bufferedReader().readLine().orEmpty()
             }
         }
-        check(rawHeaderStatus("X-Test: safe\\r\\n").contains("200"))
+        check(rawHeaderStatus("X-Test: safe\r\n").contains("200"))
         for (badHeaders in listOf(
-            "Content-Length : 0\\r\\n", // whitespace in header name
-            "Bad Name: value\\r\\n",
-            "X-Test: okay\\r\\n folded\\r\\n", // obsolete line folding
-            "X-Test: bad\\u0001value\\r\\n",
-            "Content-Length: 0\\r\\nTransfer-Encoding: chunked\\r\\n",
-            "Content-Length: 0\\r\\ncontent-length: 0\\r\\n"
+            "Content-Length : 0\r\n", // whitespace in header name
+            "Bad Name: value\r\n",
+            "X-Test: okay\r\n folded\r\n", // obsolete line folding
+            "X-Test: bad\u0001value\r\n",
+            "Content-Length: 0\r\nTransfer-Encoding: chunked\r\n",
+            "Content-Length: 0\r\ncontent-length: 0\r\n"
         )) {
             check(rawHeaderStatus(badHeaders).contains("400")) {
                 "Unsafe HTTP headers accepted: ${badHeaders.toByteArray().contentToString()}"
