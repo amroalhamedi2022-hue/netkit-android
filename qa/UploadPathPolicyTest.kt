@@ -24,7 +24,7 @@ fun main() {
     val root = names.reserve("file.txt") { false }
     val inA = names.reserve("file.txt", "A") { false }
     val inB = names.reserve("file.txt", "B") { false }
-    val secondInA = names.reserve("file.txt", { false }, "A")
+    val secondInA = names.reserve("file.txt", "A") { false }
     check(root == "file.txt" && inA == "file.txt" && inB == "file.txt")
     check(secondInA == "file (2).txt")
     names.release(root)
