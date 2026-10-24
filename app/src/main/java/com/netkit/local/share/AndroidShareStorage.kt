@@ -12,10 +12,13 @@ import java.util.UUID
 class AndroidShareStorage(private val context: Context) : ShareStorage, DirectoryShareStorage {
     private val directoryBrowser = SharedDirectoryBrowser(context)
     private val transferSettings = context.getSharedPreferences("netkit_transfer_settings", Context.MODE_PRIVATE)
+    private val uploadConsent = UploadConsentGate()
     val browserUploadsEnabled: Boolean get() = transferSettings.getBoolean("uploads_enabled", false)
     val maxBrowserUploadMiB: Int get() = transferSettings.getInt("max_upload_mib", 2048).coerceIn(128, 16384)
     fun setBrowserUploadsEnabled(enabled: Boolean) {
-        transferSettings.edit().putBoolean("uploads_enabled", enabled).apply()
+        uploadConsent.change {
+            transferSettings.edit().putBoolean("uploads_enabled", enabled).apply()
+        }
     }
     fun setMaxBrowserUploadMiB(size: Int) {
         require(size in listOf(512, 2048, 16384)) { "Unsupported limit" }
@@ -48,7 +51,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
             documents[id] = Pair(uri, ShareItem(id, name, size))
         }
     }
-    fun setUploadTree(uri: Uri) { uploadTree = uri }
+    fun setUploadTree(uri: Uri) { uploadConsent.change { uploadTree = uri } }
     fun uploadFolderLabel(): String = uploadTree?.let { DocumentFile.fromTreeUri(context, it)?.name } ?: "لم يتم تحديد مجلد"
     @Synchronized override fun items(): List<ShareItem> = documents.values.map { it.second }
     @Synchronized override fun open(id: String): SharedStream? {
@@ -58,12 +61,12 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
     }
     override fun canUpload(): Boolean = uploadTree != null && browserUploadsEnabled
 
-    private fun ensureUploadConsent(treeUri: Uri) {
-        // Changing the destination or turning browser uploads off must also revoke
-        // a transfer already in progress, not merely block the next HTTP request.
-        if (!browserUploadsEnabled || uploadTree != treeUri) {
-            throw UploadPermissionRevokedException()
-        }
+    private fun ensureUploadConsent(treeUri: Uri, ticket: Long) {
+        // The generation also rejects disable/re-enable and A -> B -> A changes.
+        uploadConsent.withCurrent(
+            ticket, { browserUploadsEnabled && uploadTree == treeUri },
+            { throw UploadPermissionRevokedException() }
+        ) {}
     }
 
     override fun upload(
@@ -73,15 +76,19 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
         expectedSha256: String?,
         progress: (Long) -> Unit
     ): String {
-        val treeUri = uploadTree ?: throw UploadPermissionRevokedException()
-        ensureUploadConsent(treeUri)
+        val (consentTicket, treeUri) = uploadConsent.snapshot {
+            val tree = uploadTree ?: throw UploadPermissionRevokedException()
+            if (!browserUploadsEnabled) throw UploadPermissionRevokedException()
+            tree
+        }
+        ensureUploadConsent(treeUri, consentTicket)
         val folder = DocumentFile.fromTreeUri(context, treeUri) ?: error("Folder grant unavailable")
         val reservedName = uploadNames.reserve(fileName) { folder.findFile(it) != null }
         var temp: DocumentFile? = null
         var completed = false
         val digest = if (expectedSha256 != null) MessageDigest.getInstance("SHA-256") else null
         try {
-            ensureUploadConsent(treeUri)
+            ensureUploadConsent(treeUri, consentTicket)
             temp = folder.createFile("application/octet-stream", ".netkit-${UUID.randomUUID()}.part")
                 ?: error("Storage provider denied create")
             val currentTemp = temp
@@ -92,7 +99,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 var received = 0L
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
-                    ensureUploadConsent(treeUri)
+                    ensureUploadConsent(treeUri, consentTicket)
                     val n = StreamReadGuard.read(body, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) error("Connection closed before complete upload")
                     out.write(buffer, 0, n)
@@ -107,14 +114,20 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 val actual = digest.digest().joinToString("") { "%02x".format(it) }
                 if (!actual.equals(expectedSha256, ignoreCase = true)) throw UploadHashMismatchException()
             }
-            ensureUploadConsent(treeUri)
+            ensureUploadConsent(treeUri, consentTicket)
             // A different SAF client may have created the reserved name while
             // the upload was streaming. Recheck under the short commit lock.
-            val finalName = uploadNames.commit(
-                reservedName, fileName,
-                exists = { folder.findFile(it) != null },
-                rename = { currentTemp.renameTo(it) }
-            )
+            val finalName = uploadConsent.withCurrent(
+                consentTicket,
+                { browserUploadsEnabled && uploadTree == treeUri },
+                { throw UploadPermissionRevokedException() }
+            ) {
+                uploadNames.commit(
+                    reservedName, fileName,
+                    exists = { folder.findFile(it) != null },
+                    rename = { currentTemp.renameTo(it) }
+                )
+            }
             completed = true
             return finalName
         } finally {
