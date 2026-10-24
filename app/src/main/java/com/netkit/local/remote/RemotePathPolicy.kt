@@ -40,7 +40,8 @@ object RemotePathPolicy {
     }
 
     fun path(value: String): String = safeText(value, 4096)
-    fun credential(value: String): String = safeText(value, 1024)
+    fun credential(value: String, allowEmpty: Boolean = false): String =
+        if (allowEmpty && value.isEmpty()) value else safeText(value, 1024)
 
     fun host(value: String): String {
         require(value.length in 1..253 && value.matches(Regex("[A-Za-z0-9.:%_-]+"))) {
