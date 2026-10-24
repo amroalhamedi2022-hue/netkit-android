@@ -147,10 +147,10 @@ fun main(args: Array<String>) {
         // Exercise the real TLS request parser, not a mock. Invalid field-name
         // whitespace, folded headers, controls, duplicate framing and chunked
         // request bodies must be rejected before invoking ShareStorage.
-        fun rawHeaderStatus(fields: String): String {
+        fun rawHeaderStatus(fields: String, target: String = "/s/${engine.token}/list"): String {
             (clientSsl.socketFactory.createSocket("127.0.0.1", engine.port) as SSLSocket).use { socket ->
                 socket.soTimeout = 5_000
-                val requestText = "GET /s/${engine.token}/list HTTP/1.1\r\nHost: localhost\r\n" +
+                val requestText = "GET $target HTTP/1.1\r\nHost: localhost\r\n" +
                     fields + "\r\n"
                 socket.outputStream.write(requestText.toByteArray(Charsets.ISO_8859_1))
                 socket.outputStream.flush()
@@ -177,6 +177,20 @@ fun main(args: Array<String>) {
                 "Unsafe HTTP headers accepted: ${badHeaders.toByteArray().contentToString()}"
             }
         }
+        // Browse parameters are security-sensitive SAF selectors. Malformed
+        // encodings, duplicates and bad offsets must return HTTP 400 instead
+        // of silently browsing root or dropping the TLS connection.
+        val browseTarget = "/s/${engine.token}/browse"
+        for (badQuery in listOf(
+            "dir=not-a-uuid", "dir=root&dir=$folderId", "offset=1&offset=2",
+            "offset=-1", "offset=1000001", "offset=abc", "offset=01",
+            "dir=%GG", "dir=%C3%28", "dir=root&", "unexpected=value"
+        )) {
+            val status = rawHeaderStatus("", "$browseTarget?$badQuery")
+            check(status.contains("400")) { "Invalid browse query accepted: $badQuery ($status)" }
+        }
+        check(rawHeaderStatus("", "$browseTarget?dir=root&offset=0").contains("200"))
+        check(rawHeaderStatus("", "$browseTarget?dir=$folderId&offset=0").contains("200"))
         val listing = request(root + "/list")
         check(listing.first == 200 && String(listing.second).contains("shared.txt"))
         val folderRoot = request(root + "/browse?dir=root")
