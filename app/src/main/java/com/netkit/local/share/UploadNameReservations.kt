@@ -27,7 +27,7 @@ internal class UploadNameReservations {
         error("Too many duplicate upload names")
     }
 
-    fun reserve(requested: String, exists: (String) -> Boolean, scope: String = ""): String = synchronized(lock) {
+    fun reserve(requested: String, scope: String = "", exists: (String) -> Boolean): String = synchronized(lock) {
         val name = available(requested, exists, scope)
         check(inFlight.add(key(name, scope)))
         name
@@ -42,8 +42,8 @@ internal class UploadNameReservations {
         reservedName: String,
         requested: String,
         exists: (String) -> Boolean,
-        rename: (String) -> Boolean,
-        scope: String = ""
+        scope: String = "",
+        rename: (String) -> Boolean
     ): String = synchronized(lock) {
         check(key(reservedName, scope) in inFlight) { "Unknown upload reservation" }
         val destination = if (exists(reservedName)) available(requested, exists, scope) else reservedName
