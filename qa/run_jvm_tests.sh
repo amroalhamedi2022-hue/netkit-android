@@ -10,6 +10,7 @@ keytool -genkeypair -alias test -keyalg RSA -keysize 2048 -validity 2 \
   -keystore "$TEMP_DIR/test.p12" -storetype PKCS12 -storepass temporary-test-only \
   -keypass temporary-test-only -dname 'CN=NetKit QA, O=Tests' -noprompt >/dev/null 2>&1
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt" \
+  "$ROOT/app/src/main/java/com/netkit/local/share/UploadPathPolicy.kt" \
   "$ROOT/app/src/main/java/com/netkit/local/share/DirectoryArchive.kt" \
   "$ROOT/app/src/main/java/com/netkit/local/share/SessionLease.kt" \
   "$ROOT/qa/CoreSmokeTest.kt" -include-runtime -d "$TEMP_DIR/transport.jar"
@@ -45,6 +46,11 @@ java -jar "$TEMP_DIR/share-handles.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/UploadNameReservations.kt" \
   "$ROOT/qa/UploadNameReservationsTest.kt" -include-runtime -d "$TEMP_DIR/upload-names.jar"
 java -jar "$TEMP_DIR/upload-names.jar"
+# Folder upload paths must remain scoped to SAF grants and independent name reservations.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/UploadPathPolicy.kt" \
+  "$ROOT/app/src/main/java/com/netkit/local/share/UploadNameReservations.kt" \
+  "$ROOT/qa/UploadPathPolicyTest.kt" -include-runtime -d "$TEMP_DIR/upload-paths.jar"
+java -jar "$TEMP_DIR/upload-paths.jar"
 # Consent must remain revoked even if settings are immediately restored.
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/UploadConsentGate.kt" \
   "$ROOT/qa/UploadConsentGateTest.kt" -include-runtime -d "$TEMP_DIR/upload-consent.jar"
