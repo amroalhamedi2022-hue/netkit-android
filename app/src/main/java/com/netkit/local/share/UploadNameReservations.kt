@@ -38,11 +38,19 @@ internal class UploadNameReservations {
      * created the reserved name while bytes were arriving. Never overwrite it.
      * The caller must release the original reservation in a finally block.
      */
+    // Keep both positional-lambda and trailing-lambda callers source-compatible.
     fun commit(
         reservedName: String,
         requested: String,
         exists: (String) -> Boolean,
-        scope: String = "",
+        rename: (String) -> Boolean
+    ): String = commit(reservedName, requested, exists, "", rename)
+
+    fun commit(
+        reservedName: String,
+        requested: String,
+        exists: (String) -> Boolean,
+        scope: String,
         rename: (String) -> Boolean
     ): String = synchronized(lock) {
         check(key(reservedName, scope) in inFlight) { "Unknown upload reservation" }
