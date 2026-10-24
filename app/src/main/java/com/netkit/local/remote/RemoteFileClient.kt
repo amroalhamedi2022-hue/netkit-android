@@ -26,23 +26,23 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
         ftp.connectTimeout = timeoutMs
         ftp.defaultTimeout = timeoutMs
         ftp.dataTimeout = java.time.Duration.ofMillis(timeoutMs.toLong())
-        ftp.connect(host, port)
+        ftp.connect(RemotePathPolicy.host(host), port)
         try {
-            check(ftp.login(user, pass)) { "FTP login rejected" }
+            check(ftp.login(RemotePathPolicy.credential(user), RemotePathPolicy.credential(pass, allowEmpty = true))) { "FTP login rejected" }
             ftp.enterLocalPassiveMode()
             check(ftp.setFileType(FTP.BINARY_FILE_TYPE)) { "FTP binary mode rejected" }
         } catch (failure: Exception) { runCatching { ftp.disconnect() }; throw failure }
     }
-    override fun entries(path: String): List<RemoteEntry> = ftp.listFiles(path).map {
+    override fun entries(path: String): List<RemoteEntry> = ftp.listFiles(RemotePathPolicy.path(path)).map {
         RemoteEntry(it.name, it.isDirectory, it.size)
-    }.filter { it.name != "." && it.name != ".." }
+    }.filter { RemotePathPolicy.safeEntryName(it.name) }
     override fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit): Boolean {
         val output = context.contentResolver.openOutputStream(destination, "w") ?: error("No permission to write")
-        ProgressOutputStream(output, progress).use { return ftp.retrieveFile(remotePath, it) }
+        ProgressOutputStream(output, progress).use { return ftp.retrieveFile(RemotePathPolicy.path(remotePath), it) }
     }
     override fun upload(source: Uri, remotePath: String, context: Context, progress: (Long) -> Unit): Boolean {
         val input = context.contentResolver.openInputStream(source) ?: error("No permission to read")
-        ProgressInputStream(input, progress).use { return ftp.storeFile(remotePath, it) }
+        ProgressInputStream(input, progress).use { return ftp.storeFile(RemotePathPolicy.path(remotePath), it) }
     }
     override fun close() { runCatching { ftp.logout() }; if (ftp.isConnected) ftp.disconnect() }
 }
@@ -60,8 +60,8 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
             "Enter an independently verified SHA256:... SSH host key fingerprint"
         }
         val jsch=JSch()
-        val established=jsch.getSession(user,host,port)
-        established.setPassword(pass)
+        val established=jsch.getSession(RemotePathPolicy.credential(user),RemotePathPolicy.host(host),port)
+        established.setPassword(RemotePathPolicy.credential(pass, allowEmpty = true))
         established.setConfig("StrictHostKeyChecking", "yes")
         // JSch's public-key repository expects canonical host keys. Trust only a key whose
         // SHA-256 matches explicit input; never accept every/unknown presented key.
@@ -87,19 +87,19 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
             sftp.connect(timeoutMs)
         } catch(ex:Exception) { session.disconnect(); throw ex }
     }
-    override fun entries(path:String):List<RemoteEntry> = sftp.ls(path).toList().mapNotNull { raw ->
+    override fun entries(path:String):List<RemoteEntry> = sftp.ls(RemotePathPolicy.path(path)).toList().mapNotNull { raw ->
         val item=raw as? ChannelSftp.LsEntry ?: return@mapNotNull null
-        if(item.filename=="." || item.filename=="..") null else
+        if(!RemotePathPolicy.safeEntryName(item.filename)) null else
             RemoteEntry(item.filename,item.attrs.isDir,item.attrs.size)
     }
     override fun download(remotePath:String,destination:Uri,context:Context,progress:(Long)->Unit):Boolean {
         val out=context.contentResolver.openOutputStream(destination,"w")?:error("Cannot write destination")
-        ProgressOutputStream(out,progress).use { sftp.get(remotePath,it) }
+        ProgressOutputStream(out,progress).use { sftp.get(RemotePathPolicy.path(remotePath),it) }
         return true
     }
     override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit):Boolean {
         val input=context.contentResolver.openInputStream(source)?:error("Cannot read source")
-        ProgressInputStream(input,progress).use { sftp.put(it,remotePath,ChannelSftp.OVERWRITE) }
+        ProgressInputStream(input,progress).use { sftp.put(it,RemotePathPolicy.path(remotePath),ChannelSftp.OVERWRITE) }
         return true
     }
     override fun close() {runCatching{sftp.disconnect()};runCatching{session.disconnect()}}
