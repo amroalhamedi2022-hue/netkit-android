@@ -41,4 +41,8 @@ java -jar "$TEMP_DIR/nsd-address-policy.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/ShareHandleRegistry.kt" \
   "$ROOT/qa/ShareHandleRegistryTest.kt" -include-runtime -d "$TEMP_DIR/share-handles.jar"
 java -jar "$TEMP_DIR/share-handles.jar"
+# Parallel SAF browser uploads must not hold the name lock for the whole stream.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/UploadNameReservations.kt" \
+  "$ROOT/qa/UploadNameReservationsTest.kt" -include-runtime -d "$TEMP_DIR/upload-names.jar"
+java -jar "$TEMP_DIR/upload-names.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
