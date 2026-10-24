@@ -9,6 +9,7 @@ import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import java.io.Closeable
 import java.security.MessageDigest
+import java.security.DigestInputStream
 import java.util.Base64
 
 /** Remote file protocols operate only on explicitly chosen SAF streams; never on arbitrary app-private paths. */
@@ -16,7 +17,8 @@ data class RemoteEntry(val name: String, val directory: Boolean, val size: Long)
 interface RemoteFileClient : Closeable {
     fun entries(path: String): List<RemoteEntry>
     fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit = {}): Boolean
-    fun upload(source: Uri, remotePath: String, context: Context, progress: (Long) -> Unit = {}): Boolean
+    fun upload(source: Uri, remotePath: String, context: Context,
+        progress: (Long) -> Unit = {}, verifySha256: Boolean = false): Boolean
 }
 
 class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeoutMs: Int) : RemoteFileClient {
@@ -46,14 +48,26 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
             return ok
         }
     }
-    override fun upload(source: Uri, remotePath: String, context: Context, progress: (Long) -> Unit): Boolean {
+    override fun upload(source: Uri, remotePath: String, context: Context,
+        progress: (Long) -> Unit, verifySha256: Boolean): Boolean {
         val safePath = RemotePathPolicy.path(remotePath)
         val input = context.contentResolver.openInputStream(source) ?: error("No permission to read")
-        ProgressInputStream(input, progress).use {
+        val localDigest = MessageDigest.getInstance("SHA-256")
+        ProgressInputStream(DigestInputStream(input, localDigest), progress).use {
             val ok = ftp.storeFile(safePath, it)
             if (ok) {
                 val remoteBytes = runCatching { ftp.mlistFile(safePath)?.size }.getOrNull()
                 TransferLengthVerifier.requireMatch(remoteBytes, it.transferred)
+                if (verifySha256) {
+                    // A readback is explicit: some FTP accounts are upload-only.
+                    // retrieveFileStream requires completePendingCommand AFTER
+                    // the data stream is closed, even on a fully consumed file.
+                    val remote = ftp.retrieveFileStream(safePath)
+                        ?: error("FTP server refused SHA-256 readback")
+                    val remoteDigest = remote.use { stream -> RemoteDigestVerifier.digest(stream) }
+                    check(ftp.completePendingCommand()) { "FTP readback completion rejected" }
+                    RemoteDigestVerifier.requireMatch(localDigest.digest(), remoteDigest)
+                }
             }
             return ok
         }
@@ -116,13 +130,21 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
         }
         return true
     }
-    override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit):Boolean {
+    override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit,
+        verifySha256:Boolean):Boolean {
         val safePath = RemotePathPolicy.path(remotePath)
         val input=context.contentResolver.openInputStream(source)?:error("Cannot read source")
-        ProgressInputStream(input,progress).use {
+        val localDigest = MessageDigest.getInstance("SHA-256")
+        ProgressInputStream(DigestInputStream(input, localDigest),progress).use {
             sftp.put(it,safePath,ChannelSftp.OVERWRITE)
             val remoteBytes = sftp.stat(safePath).size
             TransferLengthVerifier.requireMatch(remoteBytes,it.transferred)
+            if (verifySha256) {
+                val remoteDigest = sftp.get(safePath).use { stream ->
+                    RemoteDigestVerifier.digest(stream)
+                }
+                RemoteDigestVerifier.requireMatch(localDigest.digest(), remoteDigest)
+            }
         }
         return true
     }
