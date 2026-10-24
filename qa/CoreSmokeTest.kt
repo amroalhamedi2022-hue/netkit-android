@@ -158,6 +158,13 @@ fun main(args: Array<String>) {
             }
         }
         check(rawHeaderStatus("X-Test: safe\r\n").contains("200"))
+        // Strict CRLF prevents ambiguous request framing across HTTP parsers.
+        check(rawHeaderStatus("X-Test: bare-LF\n").contains("400"))
+        // Bound unique-header count even when total bytes stay below 32 KiB.
+        val tooManyHeaders = (1..101).joinToString("") { "X-Guard-$it: v\r\n" }
+        check(rawHeaderStatus(tooManyHeaders).contains("400"))
+        val maxHeaders = (1..99).joinToString("") { "X-Guard-$it: v\r\n" }
+        check(rawHeaderStatus(maxHeaders).contains("200"))
         for (badHeaders in listOf(
             "Content-Length : 0\r\n", // whitespace in header name
             "Bad Name: value\r\n",
