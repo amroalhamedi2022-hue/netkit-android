@@ -245,7 +245,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                         }
                     } finally { checkpoint.flush() }
                     check(completed) { "FTP server rejected download" }
-                    core.transfers.finish(task.id, running.attempts)
+                    checkNotNull(core.transfers.finish(task.id, running.attempts)) { "Transfer length was not verified" }
                     "تم تنزيل ${selected.name}"
                 }.getOrElse { failure ->
                     if(task != null) runningAttempt?.let { core.transfers.fail(task.id, it, failure.localizedMessage.orEmpty()) }
@@ -276,7 +276,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                         }
                     } finally { checkpoint.flush() }
                     check(ok) { "FTP server rejected upload" }
-                    core.transfers.finish(task.id, running.attempts)
+                    checkNotNull(core.transfers.finish(task.id, running.attempts)) { "Transfer length was not verified" }
                     entries=withContext(Dispatchers.IO){ connected.entries(folder) }
                     "تم رفع $uploadName"
                 }.getOrElse { failure ->
