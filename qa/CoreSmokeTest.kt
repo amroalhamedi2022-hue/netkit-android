@@ -259,6 +259,21 @@ fun main(args: Array<String>) {
         check(request(root + "/upload", "POST", byteArrayOf(1, 2, 3), folderName,
             relativePath = relative).first == 201)
         check(uploaded["Photos/2026/صورة-😀.png"]!!.contentEquals(byteArrayOf(1, 2, 3)))
+        val nestedHash = MessageDigest.getInstance("SHA-256").digest(byteArrayOf(9, 8))
+            .joinToString("") { "%02x".format(it) }
+        val nestedName = java.net.URLEncoder.encode("proof.bin", "UTF-8")
+        val nestedRelative = java.net.URLEncoder.encode("Evidence/proof.bin", "UTF-8")
+        check(request(root + "/upload", "POST", byteArrayOf(9, 8), nestedName,
+            sha256 = nestedHash, relativePath = nestedRelative).first == 201)
+        check(uploaded["Evidence/proof.bin"]!!.contentEquals(byteArrayOf(9, 8)))
+        check(request(root + "/upload", "POST", byteArrayOf(4, 5), nestedName,
+            sha256 = "0".repeat(64),
+            relativePath = java.net.URLEncoder.encode("Evidence/bad.bin", "UTF-8")).first == 400)
+        check("Evidence/bad.bin" !in uploaded)
+        check(request(root + "/upload", "POST", byteArrayOf(4, 5),
+            java.net.URLEncoder.encode("bad.bin", "UTF-8"), sha256 = "0".repeat(64),
+            relativePath = java.net.URLEncoder.encode("Evidence/bad.bin", "UTF-8")).first == 422)
+        check("Evidence/bad.bin" !in uploaded)
         for (badPath in listOf(
             "Photos%2F..%2Ffile.txt", "Photos%2Ffile.txt%2F", "Photos%2FCON.txt",
             "Photos%2Fother.txt", "Photos%2F%2Ffile.txt", "Photos%2Fbad%EF%BF%BDfile.txt",
