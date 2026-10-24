@@ -5,6 +5,15 @@ fun main() {
         listOf("Pictures", "2026"))
     check(UploadPathPolicy.folders("Books/Ortho.pdf", "Ortho.pdf") == listOf("Books"))
     check(UploadPathPolicy.validName("تقرير نهائي.pdf"))
+    // Arabic and emoji joiner sequences remain valid, but invisible tag and
+    // soft-hyphen tricks must not enter SAF folder names.
+    check(UploadPathPolicy.validName("family-👨‍👩‍👧.png"))
+    check(UploadPathPolicy.validName("می‌خواهم.txt"))
+    for (bad in listOf("invoice\u00ad.pdf", "name\u034f.txt", "name\u180e.txt",
+        "name\u200b.txt", "name\u2060.txt", "name\uDB40\uDC20.txt")) {
+        check(!UploadPathPolicy.validName(bad)) { "Accepted invisible filename: $bad" }
+        check(runCatching { UploadPathPolicy.folders("Shared/$bad", bad) }.isFailure)
+    }
     for (path in listOf(
         "", "file.txt", "/file.txt", "a//file.txt", "a/../file.txt",
         "a/./file.txt", "a\\b/file.txt", "a/CON.txt", "a/.netkit-secret/file.txt",
