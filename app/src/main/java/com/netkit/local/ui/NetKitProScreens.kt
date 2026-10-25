@@ -261,6 +261,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
     var chosen by remember {mutableStateOf<RemoteEntry?>(null)}
     var uploadName by remember {mutableStateOf("")}
     var verifyUploadSha256 by remember {mutableStateOf(false)}
+    var resumeExistingUpload by remember {mutableStateOf(false)}
     val createDocument=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val selected=chosen
         val connected=client
@@ -297,6 +298,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
             working=true
             val remotePath=folder.trimEnd('/') + "/" + uploadName
             val verifyThisUpload=verifyUploadSha256
+            val resumeThisUpload=resumeExistingUpload
             val localSize=runCatching { ctx.contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)
                 ?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else -1L } ?: -1L }.getOrDefault(-1L)
             val task=runCatching { core.transfers.add(uri.toString(),remotePath,localSize.coerceAtLeast(-1L)) }.getOrNull()
@@ -309,14 +311,17 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                     val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, running.attempts, bytes) })
                     val ok = try {
                         withContext(Dispatchers.IO) {
-                            connected.upload(uri, remotePath, ctx,
+                            if (resumeThisUpload) connected.resumeUpload(uri, remotePath, ctx) {
+                                bytes -> checkpoint.onBytes(bytes)
+                            } else connected.upload(uri, remotePath, ctx,
                                 { bytes -> checkpoint.onBytes(bytes) }, verifyThisUpload)
                         }
                     } finally { checkpoint.flush() }
                     check(ok) { "FTP server rejected upload" }
                     checkNotNull(core.transfers.finish(task.id, running.attempts)) { "Transfer length was not verified" }
                     entries=withContext(Dispatchers.IO){ connected.entries(folder) }
-                    if(verifyThisUpload) "تم رفع $uploadName والتحقق من SHA-256 بقراءة الملف من الخادم"
+                    if(resumeThisUpload) "اكتمل استئناف $uploadName بعد مطابقة الجزء السابق والتحقق من SHA-256 الكامل"
+                    else if(verifyThisUpload) "تم رفع $uploadName والتحقق من SHA-256 بقراءة الملف من الخادم"
                     else if (localSize >= 0) "تم رفع $uploadName (فحص الحجم فقط، دون SHA-256)"
                     else "تم رفع $uploadName (الحجم غير معروف؛ لم يُتحقق من SHA-256)"
                 }.getOrElse { failure ->
@@ -397,7 +402,14 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                 desc="يعيد قراءة الملف كاملًا من الخادم ويقارن بصمته بالمصدر. يحتاج صلاحية قراءة على الخادم ويستهلك نقل بيانات إضافيًا؛ لا يثبت التخزين الدائم.",
                 checked=verifyUploadSha256,onChange={verifyUploadSha256=it},p=p
             )
-            OutlinedButton(enabled=!working && uploadName.isNotBlank(),onClick={pickUpload.launch(arrayOf("*/*"))}) {Text("رفع ملف")}
+            SwitchSetting(
+                title="استئناف رفع ملف موجود (تحقق صارم)",
+                desc="يتطلب ملفًا بعيدًا موجودًا وقابلًا للقراءة وMLST في FTP. يقارن كل بايت من الجزء السابق بالمصدر ثم يُلحق الباقي ويتحقق من SHA-256 كاملًا. قد يرفضه الخادم؛ لا يحمي من تعديل متزامن من عميل آخر. FTP غير مشفّر.",
+                checked=resumeExistingUpload,onChange={resumeExistingUpload=it},p=p
+            )
+            OutlinedButton(enabled=!working && uploadName.isNotBlank(),onClick={pickUpload.launch(arrayOf("*/*"))}) {
+                Text(if(resumeExistingUpload) "استئناف رفع ملف موجود" else "رفع ملف")
+            }
         }
     }
 }
