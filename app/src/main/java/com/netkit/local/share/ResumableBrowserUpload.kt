@@ -79,21 +79,30 @@ internal class ResumableBrowserUpload(
         require(ID.matches(id)) { "Invalid upload ID" }
         synchronized(lock) {
             cleanupLocked()
-            val session = sessions[id] ?: return false
+            val session = sessions[id]
+            if (session == null) {
+                // The cancellation may overtake the first network chunk. Revoke
+                // its ID anyway, but never claim that an unknown file was deleted.
+                rememberCancelledLocked(id)
+                return false
+            }
             synchronized(session) {
                 if (session.committed) return false
                 session.invalid = true
-                // Preserve a bounded revocation tombstone before releasing the session lock.
-                cancelledIds[id] = clockMillis()
-                while (cancelledIds.size > MAX_CANCELLED_IDS) {
-                    cancelledIds.remove(cancelledIds.keys.first())
-                }
+                rememberCancelledLocked(id)
                 if (session.part.exists() && !session.part.delete()) {
                     throw IOException("Could not discard cancelled upload staging")
                 }
                 sessions.remove(id)
                 return true
             }
+        }
+    }
+
+    private fun rememberCancelledLocked(id: String) {
+        cancelledIds[id] = clockMillis()
+        while (cancelledIds.size > MAX_CANCELLED_IDS) {
+            cancelledIds.remove(cancelledIds.keys.first())
         }
     }
 
