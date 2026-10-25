@@ -727,35 +727,94 @@ class TransferHttpEngine(
             return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
           } catch (_) {return null}
         }
-        async function sendFile(file, index, count) {
-          el('status').textContent='فحص سلامة '+file.name+'…';
-          const hash=await sha256SmallFile(file);
+        const resumeIds=new Map();
+        let cancelRequested=false;
+        function randomUploadId() {
+          if(!globalThis.crypto?.getRandomValues)throw Error('HTTPS secure random required');
+          return Array.from(crypto.getRandomValues(new Uint8Array(16)),v=>v.toString(16).padStart(2,'0')).join('');
+        }
+        function resumeKey(file) {
+          return 'netkit-resume:'+base+':'+file.name+':'+file.size+':'+file.lastModified+':'+(file.webkitRelativePath||'');
+        }
+        function getResumeId(key) {
+          let id=resumeIds.get(key);
+          if(!id)try{id=sessionStorage.getItem(key)}catch(_){}
+          if(!/^[0-9a-f]{32}$/.test(id||''))id=randomUploadId();
+          resumeIds.set(key,id);
+          try{sessionStorage.setItem(key,id)}catch(_){}
+          return id;
+        }
+        function forgetResumeId(key) {
+          resumeIds.delete(key);
+          try{sessionStorage.removeItem(key)}catch(_){}
+        }
+        async function uploadStatus(id) {
+          const r=await fetch(base+'/upload-status/'+id,{cache:'no-store'});
+          if(r.status===404)return null;
+          if(!r.ok)throw Error('Resume status HTTP '+r.status);
+          return r.json();
+        }
+        function uploadChunk(file,id,offset,length,hash) {
           return new Promise((resolve,reject)=>{
-          const xhr=new XMLHttpRequest();activeRequest=xhr;
+            const xhr=new XMLHttpRequest();activeRequest=xhr;
+            xhr.open('POST',base+'/upload-chunk');
+            xhr.setRequestHeader('X-Upload-ID',id);
+            xhr.setRequestHeader('X-Upload-Total',String(file.size));
+            xhr.setRequestHeader('X-Upload-Offset',String(offset));
+            xhr.setRequestHeader('X-File-Name',encodeURIComponent(file.name));
+            if(file.webkitRelativePath)xhr.setRequestHeader('X-Relative-Path',encodeURIComponent(file.webkitRelativePath));
+            if(hash)xhr.setRequestHeader('X-Content-SHA256',hash);
+            xhr.setRequestHeader('Content-Type','application/octet-stream');
+            xhr.onload=()=>{
+              activeRequest=null;
+              if(xhr.status===200||xhr.status===201){
+                try{resolve(JSON.parse(xhr.responseText))}catch(e){reject(e)}
+              }else reject(Error('HTTP '+xhr.status+': '+xhr.responseText));
+            };
+            xhr.onerror=()=>{activeRequest=null;reject(Error('Network disconnected'))};
+            xhr.onabort=()=>{activeRequest=null;reject(Error('Transfer cancelled'))};
+            xhr.send(file.slice(offset,offset+length));
+          });
+        }
+        async function sendFile(file,index,count) {
+          el('status').textContent='تحضير نقل قابل للاستئناف: '+file.name;
+          const hash=await sha256SmallFile(file);
+          const key=resumeKey(file),id=getResumeId(key);
+          let state=await uploadStatus(id);
+          if(state&&state.total!==file.size)throw Error('Saved upload has different file length');
+          let offset=state?.received??0,retries=0;
           const start=performance.now();
-          xhr.open('POST',base+'/upload');
-          xhr.setRequestHeader('X-File-Name',encodeURIComponent(file.name));
-          if(file.webkitRelativePath) xhr.setRequestHeader('X-Relative-Path',encodeURIComponent(file.webkitRelativePath));
-          if(hash)xhr.setRequestHeader('X-Content-SHA256',hash);
-          xhr.setRequestHeader('Content-Type','application/octet-stream');
-          xhr.upload.onprogress=e=>{
-            if(!e.lengthComputable)return;
-            const pct=Math.min(100,Math.round((index+e.loaded/Math.max(1,e.total))/count*100));
+          while(!state?.complete) {
+            if(cancelRequested)throw Error('Transfer cancelled');
+            if(offset>file.size)throw Error('Invalid remote resume offset');
+            const length=Math.min(512*1024,file.size-offset);
+            try {
+              state=await uploadChunk(file,id,offset,length,hash);
+              retries=0;
+            } catch(e) {
+              if(cancelRequested)throw e;
+              // A response may be lost after bytes were committed. Never resend
+              // blindly; ask the server for the actual staged byte offset.
+              const known=await uploadStatus(id);
+              if(!known)throw e;
+              if(known.received===offset&&++retries>=3)throw e;
+              state=known;
+            }
+            offset=state.received;
+            const pct=Math.min(100,Math.round((index+offset/Math.max(1,file.size))/count*100));
             el('bar').style.width=pct+'%';
             const elapsed=Math.max(.1,(performance.now()-start)/1000);
-            const speed=e.loaded/elapsed;
-            const eta=speed>0?(e.total-e.loaded)/speed:0;
-            el('stats').textContent=pct+'% · '+humanBytes(e.loaded)+' / '+humanBytes(e.total)+' · '+humanBytes(speed)+'/s · '+Math.ceil(eta)+'s remaining';
-          };
-          xhr.onload=()=>{activeRequest=null;xhr.status===201?resolve(Boolean(hash)):reject(Error('HTTP '+xhr.status+': '+xhr.responseText))};
-          xhr.onerror=()=>{activeRequest=null;reject(Error('Network disconnected'))};
-          xhr.onabort=()=>{activeRequest=null;reject(Error('Transfer cancelled'))};
-          xhr.send(file);
-        })}
-        el('cancel').onclick=()=>{if(activeRequest)activeRequest.abort()};
+            const speed=offset/elapsed;
+            const eta=speed>0?(file.size-offset)/speed:0;
+            el('stats').textContent=pct+'% · '+humanBytes(offset)+' / '+humanBytes(file.size)+' · '+humanBytes(speed)+'/s · '+Math.ceil(eta)+'s remaining';
+          }
+          forgetResumeId(key);
+          return true; // Server verified SHA-256 again while publishing into SAF.
+        }
+        el('cancel').onclick=()=>{cancelRequested=true;if(activeRequest)activeRequest.abort()};
         el('upload').onclick=async()=>{
           const files=[...Array.from(el('choose').files),...Array.from(el('chooseFolder').files)];if(!files.length)return;
-          resetButtons(true);el('bar').style.width='0%';
+          cancelRequested=false;resetButtons(true);el('bar').style.width='0%';
           try {let verified=0;
           for(let i=0;i<files.length;i++) {
             el('status').textContent='إرسال '+files[i].name+' ('+(i+1)+'/'+files.length+')';
