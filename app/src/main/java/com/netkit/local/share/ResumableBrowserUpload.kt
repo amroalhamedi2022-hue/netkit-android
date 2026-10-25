@@ -179,7 +179,7 @@ internal class ResumableBrowserUpload(
             sessions.values.forEach { synchronized(it) { it.part.delete() } }
             sessions.clear()
         }
-        directory.delete()
+        directory.deleteRecursively()
     }
 
     private fun sha256(file: File): String {
