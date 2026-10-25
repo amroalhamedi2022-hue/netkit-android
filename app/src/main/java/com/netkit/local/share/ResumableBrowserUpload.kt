@@ -27,6 +27,7 @@ internal class ResumableBrowserUpload(
     companion object {
         const val MAX_CHUNK = 1024 * 1024
         private const val MAX_SESSIONS = 4
+        private const val MAX_CANCELLED_IDS = 256
         private const val TTL_MILLIS = 15L * 60 * 1000
         private const val DISK_RESERVE = 16L * 1024 * 1024
         private val ID = Regex("[0-9a-f]{32}")
@@ -49,6 +50,8 @@ internal class ResumableBrowserUpload(
 
     private val lock = Any()
     private val sessions = LinkedHashMap<String, Session>()
+    // Bounded tombstones prevent delayed browser requests from resurrecting a cancelled ID.
+    private val cancelledIds = LinkedHashMap<String, Long>()
     @Volatile private var closed = false
 
     init { check(directory.isDirectory || directory.mkdirs()) { "Cannot create private upload cache" } }
@@ -67,6 +70,29 @@ internal class ResumableBrowserUpload(
                 // A status-only poll must not extend the private disk staging TTL.
                 // Only actual upload progress (or commit) refreshes activity.
                 return Status(session.received, session.total, session.committed)
+            }
+        }
+    }
+
+    /** Discard an incomplete browser upload immediately; a committed SAF file is never deleted. */
+    fun cancel(id: String): Boolean {
+        require(ID.matches(id)) { "Invalid upload ID" }
+        synchronized(lock) {
+            cleanupLocked()
+            val session = sessions[id] ?: return false
+            synchronized(session) {
+                if (session.committed) return false
+                session.invalid = true
+                // Preserve a bounded revocation tombstone before releasing the session lock.
+                cancelledIds[id] = clockMillis()
+                while (cancelledIds.size > MAX_CANCELLED_IDS) {
+                    cancelledIds.remove(cancelledIds.keys.first())
+                }
+                if (session.part.exists() && !session.part.delete()) {
+                    throw IOException("Could not discard cancelled upload staging")
+                }
+                sessions.remove(id)
+                return true
             }
         }
     }
@@ -93,6 +119,9 @@ internal class ResumableBrowserUpload(
         val epoch = consentEpoch()
         val session = synchronized(lock) {
             cleanupLocked()
+            if (cancelledIds.containsKey(id)) {
+                throw InvalidSession("Cancelled upload ID cannot be resumed")
+            }
             val existing = sessions[id]
             if (existing != null) existing else {
                 if (offset != 0L) throw OffsetConflict(0L)
@@ -174,6 +203,10 @@ internal class ResumableBrowserUpload(
         !closed && !session.invalid && allowed() && consentEpoch() == session.epoch
 
     private fun cleanupLocked() {
+        val cancelled = cancelledIds.entries.iterator()
+        while (cancelled.hasNext()) {
+            if (clockMillis() - cancelled.next().value > TTL_MILLIS) cancelled.remove()
+        }
         val iterator = sessions.entries.iterator()
         while (iterator.hasNext()) {
             val session = iterator.next().value
@@ -193,6 +226,7 @@ internal class ResumableBrowserUpload(
         synchronized(lock) {
             sessions.values.forEach { synchronized(it) { it.part.delete() } }
             sessions.clear()
+            cancelledIds.clear()
         }
         directory.deleteRecursively()
     }
