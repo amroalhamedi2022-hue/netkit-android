@@ -115,7 +115,8 @@ fun main(args: Array<String>) {
                                     length: Long, expectedSha256: String?, progress: (Long) -> Unit): String =
             upload(folders.joinToString("/") + "/" + fileName, body, length, expectedSha256, progress)
     }
-    TransferHttpEngine(serverSsl.serverSocketFactory, store).use { engine ->
+    TransferHttpEngine(serverSsl.serverSocketFactory, store,
+        uploadCacheRoot = File(System.getProperty("java.io.tmpdir"), "netkit-https-chunks-test")).use { engine ->
         // The browser URL decoder can replace invalid UTF-8 with U+FFFD.
         // Invalid UTF-16 surrogates can also alias valid names on SAF providers.
         check(!engine.validName("bad\uFFFDname.txt"))
@@ -127,7 +128,8 @@ fun main(args: Array<String>) {
         var lastContentRange: String? = null
         fun request(path: String, method: String = "GET", bytes: ByteArray? = null, filename: String? = null,
                     range: String? = null, sha256: String? = null,
-                    relativePath: String? = null): Pair<Int, ByteArray> {
+                    relativePath: String? = null, uploadId: String? = null,
+                     uploadTotal: Long? = null, uploadOffset: Long? = null): Pair<Int, ByteArray> {
             val con = URI(path).toURL().openConnection() as HttpsURLConnection
             con.sslSocketFactory = clientSsl.socketFactory
             con.hostnameVerifier = HostnameVerifier { _, _ -> true }
@@ -139,6 +141,9 @@ fun main(args: Array<String>) {
                 con.setRequestProperty("X-File-Name", filename!!)
                 if (sha256 != null) con.setRequestProperty("X-Content-SHA256", sha256)
                 if (relativePath != null) con.setRequestProperty("X-Relative-Path", relativePath)
+                if (uploadId != null) con.setRequestProperty("X-Upload-ID", uploadId)
+                if (uploadTotal != null) con.setRequestProperty("X-Upload-Total", uploadTotal.toString())
+                if (uploadOffset != null) con.setRequestProperty("X-Upload-Offset", uploadOffset.toString())
                 con.setRequestProperty("Content-Type", "application/octet-stream")
                 con.outputStream.use { it.write(bytes) }
             }
@@ -363,6 +368,35 @@ fun main(args: Array<String>) {
         val arabicEncoded = java.net.URLEncoder.encode(arabicName, "UTF-8")
         check(request(root + "/upload", "POST", byteArrayOf(10, 20), arabicEncoded).first == 201)
         check(uploaded[arabicName]!!.contentEquals(byteArrayOf(10, 20)))
+        // Actual HTTPS chunk endpoints: recover authoritative offset, reject
+        // duplicate requests, and publish to SAF only after the final chunk.
+        val resumeId = "a".repeat(32)
+        val resumeData = "resumable LAN browser payload".toByteArray()
+        val firstChunk = resumeData.copyOfRange(0, 9)
+        val finalChunk = resumeData.copyOfRange(9, resumeData.size)
+        val firstReply = request(root + "/upload-chunk", "POST", firstChunk, "resumed.txt",
+            uploadId = resumeId, uploadTotal = resumeData.size.toLong(), uploadOffset = 0)
+        check(firstReply.first == 200) { "First HTTPS chunk rejected: ${firstReply.first}" }
+        check(!uploaded.containsKey("resumed.txt")) { "Partial chunk was published" }
+        val statusReply = request(root + "/upload-status/" + resumeId)
+        check(statusReply.first == 200 && String(statusReply.second).contains("\\"received\\":9"))
+        check(request(root + "/upload-chunk", "POST", firstChunk, "resumed.txt",
+            uploadId = resumeId, uploadTotal = resumeData.size.toLong(), uploadOffset = 0).first == 409)
+        check(request(root + "/upload-chunk", "POST", finalChunk, "resumed.txt",
+            uploadId = resumeId, uploadTotal = resumeData.size.toLong(), uploadOffset = 9).first == 201)
+        check(uploaded["resumed.txt"]!!.contentEquals(resumeData))
+        check(String(request(root + "/upload-status/" + resumeId).second).contains("\\"complete\\":true"))
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(), "resumed.txt",
+            uploadId = resumeId, uploadTotal = resumeData.size.toLong(),
+            uploadOffset = resumeData.size.toLong()).first == 201)
+        val badId = "b".repeat(32)
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(5), "bad-hash.bin",
+            sha256 = "0".repeat(64), uploadId = badId, uploadTotal = 1, uploadOffset = 0).first == 422)
+        check("bad-hash.bin" !in uploaded)
+        check(request(root + "/upload-status/" + badId).first == 404)
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(1), "bad.bin",
+            uploadId = "invalid", uploadTotal = 1, uploadOffset = 0).first == 400)
+        println("PASS: real TLS resumable browser upload, offset conflict, final commit and hash refusal")
         check(request(root + "/missing").first == 405)
         uploadsAllowed = false
         check(request(root + "/upload", "POST", byteArrayOf(1), "refused.bin").first == 409)
