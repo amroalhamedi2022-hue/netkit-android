@@ -13,6 +13,7 @@ kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt" \
   "$ROOT/app/src/main/java/com/netkit/local/share/UploadPathPolicy.kt" \
   "$ROOT/app/src/main/java/com/netkit/local/share/DirectoryArchive.kt" \
   "$ROOT/app/src/main/java/com/netkit/local/share/SessionLease.kt" \
+  "$ROOT/app/src/main/java/com/netkit/local/share/ResumableBrowserUpload.kt" \
   "$ROOT/qa/CoreSmokeTest.kt" -include-runtime -d "$TEMP_DIR/transport.jar"
 java -jar "$TEMP_DIR/transport.jar" "$TEMP_DIR/test.p12"
 
@@ -84,4 +85,15 @@ java -jar "$TEMP_DIR/ftp-size.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/VerifiedDownloadStaging.kt" \
   "$ROOT/qa/VerifiedDownloadStagingTest.kt" -include-runtime -d "$TEMP_DIR/verified-download.jar"
 java -jar "$TEMP_DIR/verified-download.jar"
+
+# HTTPS browser uploads must resume only from verified disk offsets and never
+# resurrect staged files after SAF consent changes or share expiry.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt" \
+  "$ROOT/app/src/main/java/com/netkit/local/share/UploadPathPolicy.kt" \
+  "$ROOT/app/src/main/java/com/netkit/local/share/DirectoryArchive.kt" \
+  "$ROOT/app/src/main/java/com/netkit/local/share/SessionLease.kt" \
+  "$ROOT/app/src/main/java/com/netkit/local/share/ResumableBrowserUpload.kt" \
+  "$ROOT/qa/ResumableBrowserUploadTest.kt" -include-runtime -d "$TEMP_DIR/browser-resume.jar"
+java -jar "$TEMP_DIR/browser-resume.jar"
+
 echo 'NetKit JVM transport & reliability QA passed.'
