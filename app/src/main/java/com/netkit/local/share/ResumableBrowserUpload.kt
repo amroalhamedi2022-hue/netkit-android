@@ -27,7 +27,7 @@ internal class ResumableBrowserUpload(
     companion object {
         const val MAX_CHUNK = 1024 * 1024
         private const val MAX_SESSIONS = 4
-        private const val MAX_CANCELLED_IDS = 256
+        private const val MAX_CANCELLED_IDS = 4096
         private const val TTL_MILLIS = 15L * 60 * 1000
         private const val DISK_RESERVE = 16L * 1024 * 1024
         private val ID = Regex("[0-9a-f]{32}")
