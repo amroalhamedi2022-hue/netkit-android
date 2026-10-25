@@ -78,8 +78,8 @@ internal class ResumableBrowserUpload(
         require(ID.matches(id)) { "Invalid upload ID" }
         require(UploadPathPolicy.validName(name)) { "Invalid upload name" }
         if (folders.isNotEmpty()) UploadPathPolicy.checkFolders(folders, name)
-        require(total in 0..storage.maxUploadSize()) { "Upload exceeds configured limit" }
-        require(length in 0..MAX_CHUNK.toLong()) { "Chunk exceeds 1 MiB limit" }
+        require(total in 0L..storage.maxUploadSize()) { "Upload exceeds configured limit" }
+        require(length in 0L..MAX_CHUNK.toLong()) { "Chunk exceeds 1 MiB limit" }
         require(offset >= 0 && offset <= total && length <= total - offset) { "Invalid chunk range" }
         require(expectedSha == null || SHA.matches(expectedSha)) { "Invalid SHA-256" }
         if (closed || !allowed()) throw InvalidSession("Upload permission is disabled")
