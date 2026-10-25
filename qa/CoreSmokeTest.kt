@@ -379,13 +379,13 @@ fun main(args: Array<String>) {
         check(firstReply.first == 200) { "First HTTPS chunk rejected: ${firstReply.first}" }
         check(!uploaded.containsKey("resumed.txt")) { "Partial chunk was published" }
         val statusReply = request(root + "/upload-status/" + resumeId)
-        check(statusReply.first == 200 && String(statusReply.second).contains("\\"received\\":9"))
+        check(statusReply.first == 200 && String(statusReply.second).contains("\"received\":9"))
         check(request(root + "/upload-chunk", "POST", firstChunk, "resumed.txt",
             uploadId = resumeId, uploadTotal = resumeData.size.toLong(), uploadOffset = 0).first == 409)
         check(request(root + "/upload-chunk", "POST", finalChunk, "resumed.txt",
             uploadId = resumeId, uploadTotal = resumeData.size.toLong(), uploadOffset = 9).first == 201)
         check(uploaded["resumed.txt"]!!.contentEquals(resumeData))
-        check(String(request(root + "/upload-status/" + resumeId).second).contains("\\"complete\\":true"))
+        check(String(request(root + "/upload-status/" + resumeId).second).contains("\"complete\":true"))
         check(request(root + "/upload-chunk", "POST", byteArrayOf(), "resumed.txt",
             uploadId = resumeId, uploadTotal = resumeData.size.toLong(),
             uploadOffset = resumeData.size.toLong()).first == 201)
