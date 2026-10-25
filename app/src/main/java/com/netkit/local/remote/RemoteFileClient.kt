@@ -69,6 +69,7 @@ private fun verifiedDownloadToSaf(
 
 class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeoutMs: Int) : RemoteFileClient {
     private val ftp = FTPClient()
+    private val endpointIdentity = "ftp|" + RemotePathPolicy.host(host) + "|" + port + "|" + user
     init {
         require(port in 1..65535)
         ftp.connectTimeout = timeoutMs
@@ -100,7 +101,7 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
         val expected = ftp.mlistFile(safePath)?.size
             ?: error("FTP MLST/SIZE required for verified download")
         return verifiedDownloadToSaf(context, destination,
-            "ftp|" + ftp.remoteAddress.hostAddress + "|" + ftp.remotePort + "|" + ftp.user,
+            endpointIdentity,
             safePath, expected, progress,
             {
                 val stream = ftp.retrieveFileStream(safePath)
@@ -190,6 +191,7 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
     trustedKeySha256: String, timeoutMs: Int) : RemoteFileClient {
     private val session: Session
     private val sftp: ChannelSftp
+    private val endpointIdentity = "sftp|" + RemotePathPolicy.host(host) + "|" + port + "|" + user + "|" + trustedKeySha256
     init {
         require(port in 1..65535)
         require(trustedKeySha256.matches(Regex("SHA256:[a-zA-Z0-9+/]{43}=?"))) {
@@ -243,7 +245,7 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
         val safePath = RemotePathPolicy.path(remotePath)
         val expected = sftp.stat(safePath).size
         return verifiedDownloadToSaf(context, destination,
-            "sftp|" + session.host + "|" + session.port + "|" + session.userName + "|" + session.hostKey.type,
+            endpointIdentity,
             safePath, expected, progress,
             { sftp.get(safePath) },
             { sftp.stat(safePath).size })
