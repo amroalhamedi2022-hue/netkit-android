@@ -50,7 +50,51 @@ fun main(args: Array<String>) {
         check(error is IllegalStateException && error.message == "Shared stream read stalled")
         check(attempts == 33) { "Unexpected zero-read retry budget: $attempts" }
     }
-    println("PASS: HTTPS/SAF stream guard recovers transient zeros and rejects permanent stalls")
+    // A Range prefix skip/read can block inside a SAF provider. Recheck the
+    // lease immediately after each provider call, even when that call consumes
+    // the entire prefix and no next loop iteration would otherwise run.
+    run {
+        var active = true
+        var skips = 0
+        val duringSkip = object : InputStream() {
+            override fun read(): Int = -1
+            override fun skip(n: Long): Long {
+                skips++
+                active = false
+                return n
+            }
+        }
+        val skipError = runCatching {
+            RangePrefixDiscarder.discardExactly(duringSkip, 128) {
+                if (!active) throw java.io.InterruptedIOException("HTTPS sharing session ended")
+            }
+        }.exceptionOrNull()
+        check(skipError is java.io.InterruptedIOException &&
+            skipError.message == "HTTPS sharing session ended")
+        check(skips == 1) { "Expired Range skip must not continue or succeed" }
+
+        var reads = 0
+        var readActive = true
+        val duringRead = object : InputStream() {
+            override fun read(): Int = -1
+            override fun skip(n: Long): Long = 0L
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                reads++
+                b[off] = 7
+                readActive = false
+                return 1
+            }
+        }
+        val readError = runCatching {
+            RangePrefixDiscarder.discardExactly(duringRead, 1) {
+                if (!readActive) throw java.io.InterruptedIOException("HTTPS sharing session ended")
+            }
+        }.exceptionOrNull()
+        check(readError is java.io.InterruptedIOException &&
+            readError.message == "HTTPS sharing session ended")
+        check(reads == 1) { "Expired Range read must not be accepted" }
+    }
+    println("PASS: HTTPS/SAF stream guard recovers transient zeros and rejects permanent stalls; Range prefix expiry checked after skip/read")
     val ks = KeyStore.getInstance("PKCS12")
     val password = "temporary-test-only".toCharArray()
     File(args[0]).inputStream().use { ks.load(it, password) }

@@ -53,6 +53,34 @@ interface ShareStorage {
 }
 
 /**
+ * Consumes a Range prefix without allowing a slow SAF skip/read to outlive its share lease.
+ * The callback is checked both before and after each provider call, including the final one.
+ */
+internal object RangePrefixDiscarder {
+    fun discardExactly(stream: InputStream, bytes: Long, checkActive: () -> Unit): Boolean {
+        require(bytes >= 0L)
+        var remaining = bytes
+        val buffer = ByteArray(64 * 1024)
+        while (remaining > 0L) {
+            checkActive()
+            val skipped = stream.skip(remaining)
+            checkActive()
+            check(skipped >= 0L && skipped <= remaining) { "Shared stream returned invalid skip count" }
+            if (skipped > 0L) {
+                remaining -= skipped
+                continue
+            }
+            val n = StreamReadGuard.read(stream, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+            checkActive()
+            if (n < 0) return false
+            if (n > 0) remaining -= n
+        }
+        checkActive()
+        return true
+    }
+}
+
+/**
  * SAF/cloud providers can transiently return zero bytes for a positive-length read.
  * Bound repeated zero reads so a broken provider cannot spin a download/Range
  * worker indefinitely. This does not alter normal EOF or partial reads.
@@ -501,19 +529,8 @@ class TransferHttpEngine(
         return begin..minOf(finish, size - 1L)
     }
 
-    private fun discardExactly(stream: InputStream, bytes: Long): Boolean {
-        var remaining = bytes
-        val buffer = ByteArray(64 * 1024)
-        while (remaining > 0L) {
-            requireLiveShare()
-            val skipped = stream.skip(remaining)
-            if (skipped > 0) { remaining -= skipped; continue }
-            val n = StreamReadGuard.read(stream, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
-            if (n < 0) return false
-            if (n > 0) remaining -= n
-        }
-        return true
-    }
+    private fun discardExactly(stream: InputStream, bytes: Long): Boolean =
+        RangePrefixDiscarder.discardExactly(stream, bytes) { requireLiveShare() }
 
 
     /** Query authoritative persisted offset after a lost chunk response. */
