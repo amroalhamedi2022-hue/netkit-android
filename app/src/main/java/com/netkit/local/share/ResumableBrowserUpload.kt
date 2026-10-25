@@ -174,14 +174,13 @@ internal class ResumableBrowserUpload(
         !closed && !session.invalid && allowed() && consentEpoch() == session.epoch
 
     private fun cleanupLocked() {
-        val now = clockMillis()
         val iterator = sessions.entries.iterator()
         while (iterator.hasNext()) {
             val session = iterator.next().value
             synchronized(session) {
                 // Recheck under the session lock: an append may have advanced the
                 // activity timestamp while cleanup waited for that append to finish.
-                if (now - session.touched > TTL_MILLIS || !valid(session)) {
+                if (clockMillis() - session.touched > TTL_MILLIS || !valid(session)) {
                     session.part.delete()
                     iterator.remove()
                 }
