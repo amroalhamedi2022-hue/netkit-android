@@ -161,6 +161,9 @@ internal class ResumableBrowserUpload(
                 }
                 if (!valid(session)) throw InvalidSession("Share revoked during SAF commit")
                 session.committed = true
+                // A slow SAF provider can take longer than the idle TTL to publish.
+                // Start the completed-result replay window only after commit succeeds.
+                session.touched = clockMillis()
                 session.part.delete()
             }
             return Status(session.received, total, session.committed)
