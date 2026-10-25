@@ -1,3 +1,4 @@
+# Final M15 compile gate after fixing initial private-cache free-space check.
 name: NetKit M15 targeted Android compile
 on:
   push:
