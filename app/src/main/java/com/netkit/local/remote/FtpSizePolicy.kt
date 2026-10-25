@@ -3,16 +3,16 @@ package com.netkit.local.remote
 import java.io.IOException
 
 /**
- * Commons Net FTPClient.getSize() returns the raw FTP reply (e.g. "213 123\\r\\n").
+ * Commons Net FTPClient.getSize() returns the raw FTP reply (e.g. "213 123\r\n").
  * RFC 3659 MLST is optional; strict SIZE fallback enables verified resume
  * without trusting ambiguous LIST output or accepting malformed lengths.
  */
 object FtpSizePolicy {
-    private val positive = Regex("213[ \\t]+([0-9]{1,19})")
+    private val positive = Regex("213[ \t]+([0-9]{1,19})")
 
     fun parseReply(reply: String?): Long? {
         if (reply == null) return null
-        val line = reply.trimEnd('\\r', '\\n')
+        val line = reply.trimEnd('\r', '\n')
         if (!line.startsWith("213")) return null
         val match = positive.matchEntire(line)
             ?: throw IOException("Malformed FTP SIZE response")
