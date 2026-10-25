@@ -44,6 +44,7 @@ internal class ResumableBrowserUpload(
     ) {
         var received: Long = 0
         var committed: Boolean = false
+        var invalid: Boolean = false
     }
 
     private val lock = Any()
@@ -134,11 +135,12 @@ internal class ResumableBrowserUpload(
             }
             session.touched = clockMillis()
             if (session.received == total) {
+                if (!session.part.exists()) FileOutputStream(session.part).use { it.fd.sync() }
                 if (!valid(session)) throw InvalidSession("Share stopped before SAF commit")
                 if (session.part.length() != total) throw IOException("Staging length mismatch")
                 val digest = sha256(session.part)
                 if (session.expectedSha != null && session.expectedSha != digest) {
-                    synchronized(lock) { sessions.remove(id) }
+                    session.invalid = true
                     session.part.delete()
                     throw UploadHashMismatchException()
                 }
@@ -157,7 +159,7 @@ internal class ResumableBrowserUpload(
     }
 
     private fun valid(session: Session): Boolean =
-        !closed && allowed() && consentEpoch() == session.epoch
+        !closed && !session.invalid && allowed() && consentEpoch() == session.epoch
 
     private fun cleanupLocked() {
         val now = clockMillis()
