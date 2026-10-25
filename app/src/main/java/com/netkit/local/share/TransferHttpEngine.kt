@@ -2,6 +2,7 @@ package com.netkit.local.share
 
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.ZipOutputStream
@@ -11,6 +12,7 @@ import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.UUID
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
@@ -39,6 +41,8 @@ interface ShareStorage {
     fun items(): List<ShareItem>
     fun open(id: String): SharedStream?
     fun canUpload(): Boolean
+    /** Epoch changes whenever Android SAF destination or browser-upload consent changes. */
+    fun uploadGrantEpoch(): Long = 0L
     fun maxUploadSize(): Long = 16L * 1024 * 1024 * 1024
     fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String
     /** SAF-aware implementations may opt into bounded nested-folder uploads. */
@@ -70,7 +74,8 @@ class TransferHttpEngine(
     private val storage: ShareStorage,
     private val progress: (Long, Long) -> Unit = { _, _ -> },
     sessionLifetimeMillis: Long = 30L * 60 * 1000,
-    private val headerTimeoutMillis: Long = 12_000L
+    private val headerTimeoutMillis: Long = 12_000L,
+    private val uploadCacheRoot: File? = null
 ) : AutoCloseable {
     init { require(headerTimeoutMillis in 1L..120_000L) { "Invalid HTTP header timeout" } }
     companion object { private const val MAX_UPLOAD = 16L * 1024 * 1024 * 1024 } // 16 GiB hard guard
@@ -79,6 +84,10 @@ class TransferHttpEngine(
     val token: String = Base64.getUrlEncoder().withoutPadding().encodeToString(secret)
     private val prefix = "/s/$token"
     private val lease = SessionLease(sessionLifetimeMillis)
+    private val resumable = uploadCacheRoot?.let { root ->
+        ResumableBrowserUpload(File(root, "netkit-browser-" + UUID.randomUUID()),
+            storage, { storage.uploadGrantEpoch() }, { storage.canUpload() && lease.isValid() })
+    }
     val sessionRemainingMillis: Long get() = lease.remainingMillis()
     private val pool = ThreadPoolExecutor(
         4, 4, 0, TimeUnit.SECONDS, ArrayBlockingQueue(12),
@@ -133,6 +142,7 @@ class TransferHttpEngine(
         activeClients.forEach { runCatching { it.close() } }
         activeClients.clear()
         pool.shutdownNow()
+        resumable?.close()
     }
 
     // Observable in portable regression tests; should return to zero after every response.
@@ -176,6 +186,8 @@ class TransferHttpEngine(
                         method == "GET" && path.startsWith("$prefix/browse-archive/") -> downloadArchive(out, path.removePrefix("$prefix/browse-archive/"))
                         method == "GET" && path.startsWith("$prefix/file/") -> download(out, path.removePrefix("$prefix/file/"), headers["range"])
                         method == "GET" && path.startsWith("$prefix/checksum/") -> checksum(out, path.removePrefix("$prefix/checksum/"))
+                        method == "GET" && path.startsWith("$prefix/upload-status/") -> uploadStatus(out, path.removePrefix("$prefix/upload-status/"))
+                        method == "POST" && path == "$prefix/upload-chunk" -> uploadChunk(input, out, headers)
                         method == "POST" && path == "$prefix/upload" -> upload(input, out, headers)
                         else -> fail(out, 405, "Unsupported route")
                     }
@@ -479,6 +491,65 @@ class TransferHttpEngine(
             if (n > 0) remaining -= n
         }
         return true
+    }
+
+
+    /** Query authoritative persisted offset after a lost chunk response. */
+    private fun uploadStatus(out: OutputStream, id: String) {
+        if (!storage.canUpload()) return fail(out, 403, "Browser uploads disabled")
+        val staged = resumable ?: return fail(out, 501, "Resumable uploads unavailable")
+        if (!id.matches(Regex("[0-9a-f]{32}"))) return fail(out, 400, "Invalid upload ID")
+        val state = staged.status(id) ?: return fail(out, 404, "Upload session not found")
+        response(out, 200,
+            "{\\"received\\":${state.received},\\"total\\":${state.total},\\"complete\\":${state.complete}}",
+            "application/json; charset=utf-8")
+    }
+
+    /** At most 1 MiB per request; a full verified SAF commit occurs only after all bytes arrive. */
+    private fun uploadChunk(input: InputStream, out: OutputStream, h: Map<String, String>) {
+        if (!storage.canUpload()) return fail(out, 403, "Browser uploads disabled")
+        val staged = resumable ?: return fail(out, 501, "Resumable uploads unavailable")
+        val length = h["content-length"]?.toLongOrNull() ?: return fail(out, 400, "Chunk Content-Length required")
+        val total = h["x-upload-total"]?.toLongOrNull() ?: return fail(out, 400, "Upload total required")
+        val offset = h["x-upload-offset"]?.toLongOrNull() ?: return fail(out, 400, "Upload offset required")
+        val id = h["x-upload-id"] ?: return fail(out, 400, "Upload ID required")
+        val raw = h["x-file-name"] ?: return fail(out, 400, "Missing file name")
+        val name = try { URLDecoder.decode(raw, "UTF-8") }
+            catch (_: Exception) { return fail(out, 400, "Invalid file name") }
+        if (!validName(name)) return fail(out, 400, "Invalid file name")
+        val folders = try {
+            h["x-relative-path"]?.let {
+                UploadPathPolicy.folders(URLDecoder.decode(it, "UTF-8"), name)
+            } ?: emptyList()
+        } catch (_: Exception) { return fail(out, 400, "Invalid folder path") }
+        val digest = h["x-content-sha256"]
+        if (digest != null && !digest.matches(Regex("[0-9a-fA-F]{64}")))
+            return fail(out, 400, "Invalid SHA-256")
+        if (length < 0 || length > ResumableBrowserUpload.MAX_CHUNK ||
+            total < 0 || total > minOf(MAX_UPLOAD, storage.maxUploadSize()) ||
+            offset < 0 || offset > total || length > total - offset)
+            return fail(out, 413, "Invalid upload chunk bounds")
+        try {
+            val state = staged.append(id, name, folders, total, offset, length, digest, input)
+            progress(state.received, state.total)
+            response(out, if (state.complete) 201 else 200,
+                "{\\"received\\":${state.received},\\"total\\":${state.total},\\"complete\\":${state.complete}}",
+                "application/json; charset=utf-8")
+        } catch (conflict: ResumableBrowserUpload.OffsetConflict) {
+            response(out, 409, "{\\"expectedOffset\\":${conflict.expected}}", "application/json; charset=utf-8")
+        } catch (_: UploadHashMismatchException) {
+            fail(out, 422, "Staged upload SHA-256 mismatch")
+        } catch (_: UploadPermissionRevokedException) {
+            fail(out, 403, "Upload consent revoked")
+        } catch (_: ResumableBrowserUpload.InvalidSession) {
+            fail(out, 409, "Upload session expired or metadata changed")
+        } catch (_: UnsupportedOperationException) {
+            fail(out, 501, "Folder upload unsupported")
+        } catch (_: IllegalArgumentException) {
+            fail(out, 400, "Invalid upload request")
+        } catch (_: Exception) {
+            fail(out, 500, "Resumable upload failed; query status before retrying")
+        }
     }
 
     private fun upload(input: InputStream, out: OutputStream, h: Map<String,String>) {
