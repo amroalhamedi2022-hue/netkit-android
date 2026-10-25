@@ -116,7 +116,41 @@ fun main() {
         "Continuously progressing transfer must remain live across the TTL window"
     }
     check(store.saved.last().second.contentEquals(slowData))
+
+    // Polling a stalled upload must NOT keep its private staging bytes forever.
+    val polled = id()
+    stage.append(polled, "idle.bin", emptyList(), 2, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(42)))
+    check(File(root, "$polled.part").exists())
+    now += 10L * 60 * 1000
+    check(stage.status(polled)?.received == 1L)
+    now += 6L * 60 * 1000
+    check(stage.status(polled) == null) { "Status-only polling must not renew idle TTL" }
+    check(!File(root, "$polled.part").exists()) { "Expired partial bytes must be removed" }
+
+    // Real resumed progress does renew the inactivity deadline.
+    val progressing = id()
+    stage.append(progressing, "progress.bin", emptyList(), 3, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(1)))
+    now += 10L * 60 * 1000
+    stage.append(progressing, "progress.bin", emptyList(), 3, 1, 1, null,
+        ByteArrayInputStream(byteArrayOf(2)))
+    now += 10L * 60 * 1000
+    check(stage.status(progressing)?.received == 2L) {
+        "Actual resumed bytes should refresh idle TTL"
+    }
+    now += 6L * 60 * 1000
+    check(stage.status(progressing) == null)
+
+    // Repeated polls must also release completed-session slots after the TTL.
+    val completed = id()
+    check(stage.append(completed, "done.bin", emptyList(), 1, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(99))).complete)
+    now += 10L * 60 * 1000
+    check(stage.status(completed)?.complete == true)
+    now += 6L * 60 * 1000
+    check(stage.status(completed) == null) { "Completed status must eventually expire" }
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
-    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, active slow transfer, empty, duplicate commit")
+    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, resumed progress, active slow transfer, empty, duplicate commit")
 }
