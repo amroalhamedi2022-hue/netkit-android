@@ -88,12 +88,19 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
             check(ftp.setFileType(FTP.BINARY_FILE_TYPE)) { "FTP binary mode rejected" }
         } catch (failure: Exception) { runCatching { ftp.disconnect() }; throw failure }
     }
+    /** RFC 3659 MLST is optional on FTP servers; SIZE is the standard fallback.
+     * No LIST-derived guesses for verified transfers. All paths were validated.
+     */
+    private fun remoteSize(path: String): Long? {
+        val mlst = runCatching { ftp.mlistFile(path)?.size }.getOrNull()
+        return FtpSizePolicy.preferMlst(mlst) { ftp.getSize(path) }
+    }
     override fun entries(path: String): List<RemoteEntry> = ftp.listFiles(RemotePathPolicy.path(path)).map {
         RemoteEntry(it.name, it.isDirectory, it.size)
     }.filter { RemotePathPolicy.safeEntryName(it.name) }
     override fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit): Boolean {
         val safePath = RemotePathPolicy.path(remotePath)
-        val expected = runCatching { ftp.mlistFile(safePath)?.size }.getOrNull()
+        val expected = runCatching { remoteSize(safePath) }.getOrNull()
         val output = context.contentResolver.openOutputStream(destination, "w") ?: error("No permission to write")
         ProgressOutputStream(output, progress).use {
             val ok = ftp.retrieveFile(safePath, it)
@@ -104,8 +111,8 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
     override fun verifiedDownload(remotePath: String, destination: Uri, context: Context,
         progress: (Long) -> Unit): Boolean {
         val safePath = RemotePathPolicy.path(remotePath)
-        val expected = ftp.mlistFile(safePath)?.size
-            ?: error("FTP MLST/SIZE required for verified download")
+        val expected = remoteSize(safePath)
+            ?: error("FTP MLST or SIZE required for verified download")
         return verifiedDownloadToSaf(context, destination,
             endpointIdentity,
             safePath, expected, progress,
@@ -125,7 +132,7 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
                     ftp.setRestartOffset(0L)
                 }
             },
-            { ftp.mlistFile(safePath)?.size ?: error("FTP remote size became unavailable") })
+            { remoteSize(safePath) ?: error("FTP remote size became unavailable") })
     }
     override fun upload(source: Uri, remotePath: String, context: Context,
         progress: (Long) -> Unit, verifySha256: Boolean): Boolean {
@@ -135,7 +142,7 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
         ProgressInputStream(DigestInputStream(input, localDigest), progress).use {
             val ok = ftp.storeFile(safePath, it)
             if (ok) {
-                val remoteBytes = runCatching { ftp.mlistFile(safePath)?.size }.getOrNull()
+                val remoteBytes = runCatching { remoteSize(safePath) }.getOrNull()
                 TransferLengthVerifier.requireMatch(remoteBytes, it.transferred)
                 if (verifySha256) {
                     // A readback is explicit: some FTP accounts are upload-only.
@@ -154,8 +161,8 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
     override fun resumeUpload(source: Uri, remotePath: String, context: Context,
         progress: (Long) -> Unit): Boolean {
         val safePath = RemotePathPolicy.path(remotePath)
-        val existing = ftp.mlistFile(safePath)?.size
-            ?: error("FTP server must support MLST/SIZE to confirm the resume offset")
+        val existing = remoteSize(safePath)
+            ?: error("FTP server must support MLST or SIZE to confirm the resume offset")
         require(existing > 0) { "No nonempty remote prefix; use normal upload instead" }
         val local = context.contentResolver.openInputStream(source) ?: error("No SAF read permission")
         DigestInputStream(local, MessageDigest.getInstance("SHA-256")).use { selected ->
@@ -167,7 +174,7 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
                 // retrieveFileStream leaves a pending control reply after data socket close.
                 check(ftp.completePendingCommand()) { "FTP prefix read did not complete" }
             }
-            check(ftp.mlistFile(safePath)?.size == existing) {
+            check(remoteSize(safePath) == existing) {
                 "Remote size changed during resume verification"
             }
             progress(existing)
@@ -178,7 +185,7 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
             val appended = ftp.appendFile(safePath, suffix)
             if (!appended) return false
             val total = Math.addExact(existing, suffix.transferred)
-            TransferLengthVerifier.requireMatch(total, ftp.mlistFile(safePath)?.size
+            TransferLengthVerifier.requireMatch(total, remoteSize(safePath)
                 ?: error("FTP server stopped reporting remote length"))
             // Mandatory full-file readback: partial remote prefixes must never be
             // trusted from SIZE alone, even after bytewise prefix verification.

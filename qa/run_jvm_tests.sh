@@ -76,6 +76,10 @@ java -jar "$TEMP_DIR/remote-digest.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/VerifiedResumePrefix.kt" \
   "$ROOT/qa/VerifiedResumePrefixTest.kt" -include-runtime -d "$TEMP_DIR/verified-resume.jar"
 java -jar "$TEMP_DIR/verified-resume.jar"
+# FTP servers without MLST may expose SIZE; never trust malformed/overflow replies.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/FtpSizePolicy.kt" \
+  "$ROOT/qa/FtpSizePolicyTest.kt" -include-runtime -d "$TEMP_DIR/ftp-size.jar"
+java -jar "$TEMP_DIR/ftp-size.jar"
 # Download resume must not publish partial SAF data and must verify both remote and local hashes.
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/VerifiedDownloadStaging.kt" \
   "$ROOT/qa/VerifiedDownloadStagingTest.kt" -include-runtime -d "$TEMP_DIR/verified-download.jar"
