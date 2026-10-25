@@ -289,5 +289,36 @@ fun main() {
             failure.message == "Folder ZIP export cancelled")
         check(reads == 1)
     }
+    run {
+        // M27: HTTPS lease expiry must interrupt a ZIP while a SAF provider
+        // is readable; no extra file bytes or successful checksum manifest.
+        var active = true
+        var reads = 0
+        val source = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("leased", "leased.bin", false)), null)
+            override fun open(fileId: String): InputStream = object : InputStream() {
+                override fun read(): Int = error("Unexpected single-byte read")
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    reads++
+                    check(reads == 1) { "ZIP continued reading after lease expiry" }
+                    b[off] = 42
+                    active = false // Lease expires while the provider is reading.
+                    return 1
+                }
+            }
+        }
+        val error = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", source, it, includeChecksums = true,
+                    checkActive = {
+                        if (!active) throw java.io.InterruptedIOException("HTTPS sharing session ended")
+                    })
+            }
+        }.exceptionOrNull()
+        check(error is java.io.InterruptedIOException &&
+            error.message == "HTTPS sharing session ended")
+        check(reads == 1) { "Archive did not stop at the revoked lease boundary" }
+    }
     println("PASS: paged ZIP, nested folders, path/quotas, transient zero-read recovery and stalled-provider rejection, Windows-safe names/collisions, cancelled-worker interruption")
 }
