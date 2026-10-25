@@ -194,7 +194,76 @@ fun main() {
         "Lost final response after slow commit must not duplicate SAF publication"
     }
 
+
+    // M25: cleanup must measure TTL after waiting for an in-flight append lock.
+    // A stalled/failed chunk can hold the session lock while the monotonic
+    // clock advances; sampling before the lock would preserve expired bytes.
+    val raceRoot = File(System.getProperty("java.io.tmpdir"),
+        "netkit-resume-race-" + UUID.randomUUID())
+    check(raceRoot.mkdirs())
+    val raceNow = java.util.concurrent.atomic.AtomicLong(1000L)
+    val raceStore = FakeBrowserStorage()
+    val raceStage = ResumableBrowserUpload(raceRoot, raceStore,
+        { raceStore.epoch }, { raceStore.enabled }, { raceNow.get() })
+    val raceId = id()
+    raceStage.append(raceId, "stalled.bin", emptyList(), 3, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(1)))
+    val readEntered = java.util.concurrent.CountDownLatch(1)
+    val releaseRead = java.util.concurrent.CountDownLatch(1)
+    val stalledBody = object : java.io.InputStream() {
+        override fun read(): Int = -1
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            readEntered.countDown()
+            check(releaseRead.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                "Timed out waiting to release stalled chunk"
+            }
+            return -1 // Simulate a broken network chunk without byte progress.
+        }
+    }
+    val appendRejected = java.util.concurrent.atomic.AtomicBoolean(false)
+    val appendWorker = Thread {
+        appendRejected.set(runCatching {
+            raceStage.append(raceId, "stalled.bin", emptyList(), 3, 1, 2, null,
+                stalledBody)
+        }.isFailure)
+    }
+    appendWorker.start()
+    check(readEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+        "Append never acquired its session lock"
+    }
+    val expiredAfterWait = java.util.concurrent.atomic.AtomicBoolean(false)
+    val statusWorker = Thread {
+        expiredAfterWait.set(raceStage.status(raceId) == null)
+    }
+    statusWorker.start()
+    try {
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (statusWorker.state != Thread.State.BLOCKED &&
+            System.nanoTime() < deadline) Thread.sleep(5)
+        check(statusWorker.state == Thread.State.BLOCKED) {
+            "Status did not wait for the in-flight session lock"
+        }
+        // TTL expires while cleanup is blocked, not before it enters.
+        raceNow.addAndGet(16L * 60 * 1000)
+    } finally {
+        releaseRead.countDown()
+    }
+    appendWorker.join(5000)
+    statusWorker.join(5000)
+    check(!appendWorker.isAlive && !statusWorker.isAlive) {
+        "Race regression workers failed to terminate"
+    }
+    check(appendRejected.get()) { "Truncated stalled chunk must fail" }
+    check(expiredAfterWait.get()) {
+        "Cleanup must expire an idle partial upload after its lock wait"
+    }
+    check(!File(raceRoot, "$raceId.part").exists()) {
+        "Expired staging file must be removed after the lock wait"
+    }
+    raceStage.close()
+    check(!raceRoot.exists())
+
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
-    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, empty, duplicate commit")
+    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, empty, duplicate commit")
 }
