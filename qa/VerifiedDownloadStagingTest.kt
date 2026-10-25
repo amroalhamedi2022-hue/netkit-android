@@ -47,6 +47,39 @@ fun main() {
         fail { VerifiedDownloadStaging.verifyReadback(ByteArrayInputStream(bytes.copyOf(8)), 10, digest) }
         fail { VerifiedDownloadStaging.verifyReadback(ByteArrayInputStream(modified), bytes.size.toLong(), digest) }
         fail { VerifiedDownloadStaging.verifyReadback(ByteArrayInputStream(bytes + byteArrayOf(1)), bytes.size.toLong(), digest) }
+        // True network-offset retry downloads only missing bytes on the first pass.
+        val offsetPart = File(dir, "offset.part").apply { writeBytes(bytes.copyOf(73_000)) }
+        val offsets = mutableListOf<Long>()
+        var resumedProgress = -1L
+        val offsetDigest = VerifiedDownloadStaging.stageFromOffset({ offset ->
+            offsets += offset
+            ByteArrayInputStream(bytes.copyOfRange(offset.toInt(), bytes.size))
+        }, offsetPart, bytes.size.toLong()) { resumedProgress = it }
+        check(offsets == listOf(73_000L))
+        check(resumedProgress == bytes.size.toLong())
+        check(offsetPart.readBytes().contentEquals(bytes))
+        VerifiedDownloadStaging.verifyReadback(ByteArrayInputStream(bytes), bytes.size.toLong(), offsetDigest)
+        // Complete staging must not reopen the network, but still needs readback.
+        VerifiedDownloadStaging.stageFromOffset({ error("should not reopen completed stage") },
+            offsetPart, bytes.size.toLong())
+        // Server ignoring REST/offset must fail rather than silently duplicating.
+        val ignored = File(dir, "ignored.part").apply { writeBytes(bytes.copyOf(100)) }
+        fail { VerifiedDownloadStaging.stageFromOffset({ ByteArrayInputStream(bytes) },
+            ignored, bytes.size.toLong()) }
+        // Same-length remote mutation is caught by independent full SHA readback.
+        val altered = bytes.clone().apply { this[3] = (this[3].toInt() xor 0x55).toByte() }
+        val stale = File(dir, "stale.part").apply { writeBytes(bytes.copyOf(73_000)) }
+        val staleDigest = VerifiedDownloadStaging.stageFromOffset({ offset ->
+            ByteArrayInputStream(altered.copyOfRange(offset.toInt(), altered.size))
+        }, stale, altered.size.toLong())
+        check(runCatching { VerifiedDownloadStaging.verifyReadback(
+            ByteArrayInputStream(altered), altered.size.toLong(), staleDigest)
+        }.exceptionOrNull() is com.netkit.local.remote.RemoteContentChangedException)
+        val emptyOffset = File(dir, "empty-offset.part")
+        val emptyOffsetDigest = VerifiedDownloadStaging.stageFromOffset(
+            { error("empty should not open network") }, emptyOffset, 0)
+        check(emptyOffset.isFile && emptyOffset.length() == 0L)
+        VerifiedDownloadStaging.verifyReadback(ByteArrayInputStream(byteArrayOf()), 0, emptyOffsetDigest)
         val empty = File(dir, "empty.part")
         val emptyDigest = VerifiedDownloadStaging.stage(ByteArrayInputStream(byteArrayOf()), empty, 0)
         VerifiedDownloadStaging.verifyReadback(ByteArrayInputStream(byteArrayOf()), 0, emptyDigest)
@@ -55,10 +88,12 @@ fun main() {
             override fun read(b: ByteArray, off: Int, len: Int) = 0
         }
         fail { VerifiedDownloadStaging.stage(zero, File(dir, "stall.part"), 1) }
+        val offsetStall = File(dir, "offset-stall.part").apply { writeBytes(bytes.copyOf(1)) }
+        fail { VerifiedDownloadStaging.stageFromOffset({ zero }, offsetStall, 10) }
         // SAF write/readback failure must preserve the stage for a later retry.
         val hold = File(dir, "hold.part").apply { writeBytes(bytes) }
         fail { VerifiedDownloadStaging.publish(hold, digest, { ByteArrayOutputStream() }, { ByteArrayInputStream(byteArrayOf()) }) }
         check(hold.isFile && hold.length() == bytes.size.toLong())
-        println("PASS: verified staged FTP/SFTP download, interrupted retry, changed prefix, full SHA readback and SAF publish")
+        println("PASS: verified FTP/SFTP download, true offset retry, mutation and ignored-offset detection, SHA readback and SAF publish")
     } finally { dir.deleteRecursively() }
 }

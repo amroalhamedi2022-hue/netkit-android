@@ -14,6 +14,8 @@ import java.security.MessageDigest
  * Remote SHA-256 is independently read back before publish; remote changes during
  * transfer fail closed. This needs free app-cache space and extra network bandwidth.
  */
+class RemoteContentChangedException(message: String) : IOException(message)
+
 object VerifiedDownloadStaging {
     private const val BLOCK = 64 * 1024
 
@@ -68,6 +70,70 @@ object VerifiedDownloadStaging {
         return digest.digest()
     }
 
+    /**
+     * True network-offset retry: hash the durable local prefix, then fetch only
+     * the missing suffix. Caller MUST perform an independent full remote SHA-256
+     * readback before SAF publication; offset and length do not prove integrity.
+     */
+    fun stageFromOffset(
+        openAt: (Long) -> InputStream,
+        part: File,
+        expectedBytes: Long,
+        progress: (Long) -> Unit = {}
+    ): ByteArray {
+        require(expectedBytes >= 0) { "Verified download requires a known remote length" }
+        require(part.isFile || !part.exists()) { "Staging path is not a regular file" }
+        val saved = if (part.exists()) part.length() else 0L
+        if (saved > expectedBytes) {
+            part.delete()
+            throw IOException("Saved download exceeds remote size; stale partial removed")
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(BLOCK)
+        if (saved > 0) {
+            FileInputStream(part).use { local ->
+                var hashed = 0L
+                while (hashed < saved) {
+                    val wanted = minOf(BLOCK.toLong(), saved - hashed).toInt()
+                    readExactly(local, buffer, wanted)
+                    digest.update(buffer, 0, wanted)
+                    hashed += wanted
+                }
+            }
+        }
+        progress(saved)
+        if (saved == expectedBytes) {
+            if (!part.exists()) FileOutputStream(part).use { it.fd.sync() }
+            return digest.digest()
+        }
+        openAt(saved).use { remote ->
+            FileOutputStream(part, true).use { output ->
+                var received = saved
+                var emptyReads = 0
+                while (received < expectedBytes) {
+                    val wanted = minOf(BLOCK.toLong(), expectedBytes - received).toInt()
+                    val n = remote.read(buffer, 0, wanted)
+                    if (n < 0) throw IOException("Remote offset stream ended early")
+                    if (n == 0) {
+                        if (++emptyReads >= 32) throw IOException("Remote offset stream stalled")
+                        continue
+                    }
+                    emptyReads = 0
+                    output.write(buffer, 0, n)
+                    digest.update(buffer, 0, n)
+                    received += n
+                    progress(received)
+                }
+                if (remote.read() != -1) {
+                    throw IOException("Remote ignored offset or grew during download")
+                }
+                output.fd.sync()
+            }
+        }
+        check(part.length() == expectedBytes) { "Staged offset file length mismatch" }
+        return digest.digest()
+    }
+
     /** Read a second, independent remote stream to reject changed same-length content. */
     fun verifyReadback(remote: InputStream, expectedBytes: Long, expectedDigest: ByteArray) {
         require(expectedBytes >= 0)
@@ -88,7 +154,7 @@ object VerifiedDownloadStaging {
         }
         if (remote.read() != -1) throw IOException("Remote readback length changed")
         if (!MessageDigest.isEqual(digest.digest(), expectedDigest)) {
-            throw IOException("Remote SHA-256 readback differs from staged download")
+            throw RemoteContentChangedException("Remote SHA-256 readback differs from staged download")
         }
     }
 

@@ -35,7 +35,7 @@ interface RemoteFileClient : Closeable {
 private fun verifiedDownloadToSaf(
     context: Context, destination: Uri, identity: String, remotePath: String,
     expected: Long, progress: (Long) -> Unit,
-    remoteStream: () -> InputStream, remoteSize: () -> Long
+    remoteStream: (Long) -> InputStream, remoteSize: () -> Long
 ): Boolean {
     require(expected >= 0) { "Remote server must report file size for verified download" }
     val key = MessageDigest.getInstance("SHA-256")
@@ -52,9 +52,15 @@ private fun verifiedDownloadToSaf(
             check(remaining <= directory.usableSpace - 16L * 1024 * 1024) {
                 "Not enough free app storage for verified staging; clear space or use regular download"
             }
-            val digest = remoteStream().use { VerifiedDownloadStaging.stage(it, part, expected, progress) }
+            val digest = VerifiedDownloadStaging.stageFromOffset(remoteStream, part, expected, progress)
             check(remoteSize() == expected) { "Remote length changed during staged download" }
-            remoteStream().use { VerifiedDownloadStaging.verifyReadback(it, expected, digest) }
+            try {
+                remoteStream(0L).use { VerifiedDownloadStaging.verifyReadback(it, expected, digest) }
+            } catch (changed: RemoteContentChangedException) {
+                // A same-size changed remote file must not poison future retries.
+                part.delete()
+                throw changed
+            }
             check(remoteSize() == expected) { "Remote length changed before SAF publication" }
             VerifiedDownloadStaging.publish(part, digest,
                 { context.contentResolver.openOutputStream(destination, "w")
@@ -103,14 +109,20 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
         return verifiedDownloadToSaf(context, destination,
             endpointIdentity,
             safePath, expected, progress,
-            {
-                val stream = ftp.retrieveFileStream(safePath)
-                    ?: error("FTP server refused verified readback")
-                object : FilterInputStream(stream) {
-                    override fun close() {
-                        super.close()
-                        check(ftp.completePendingCommand()) { "FTP RETR control reply failed" }
+            { offset ->
+                // REST is opt-in for a partial stage; reset before full readback.
+                ftp.setRestartOffset(offset)
+                try {
+                    val stream = ftp.retrieveFileStream(safePath)
+                        ?: error("FTP server refused RETR/REST offset $offset")
+                    object : FilterInputStream(stream) {
+                        override fun close() {
+                            super.close()
+                            check(ftp.completePendingCommand()) { "FTP RETR control reply failed" }
+                        }
                     }
+                } finally {
+                    ftp.setRestartOffset(0L)
                 }
             },
             { ftp.mlistFile(safePath)?.size ?: error("FTP remote size became unavailable") })
@@ -247,7 +259,7 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
         return verifiedDownloadToSaf(context, destination,
             endpointIdentity,
             safePath, expected, progress,
-            { sftp.get(safePath) },
+            { offset -> sftp.get(safePath, null, offset) },
             { sftp.stat(safePath).size })
     }
     override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit,
