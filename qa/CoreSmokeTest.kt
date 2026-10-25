@@ -419,6 +419,12 @@ fun main(args: Array<String>) {
             "Cancelled upload ID must reject delayed chunk replay"
         }
         check("cancel-me.bin" !in uploaded)
+        val earlyCancelId = "d".repeat(32)
+        check(String(request(root + "/upload-cancel/" + earlyCancelId, "POST").second)
+            .contains("\"cancelled\":false"))
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(1), "late.bin",
+            uploadId = earlyCancelId, uploadTotal = 2, uploadOffset = 0).first == 409)
+        check("late.bin" !in uploaded)
         check(String(request(root + "/upload-cancel/" + cancelId, "POST").second)
             .contains("\"cancelled\":false"))
         check(String(request(root + "/upload-cancel/" + resumeId, "POST").second)
