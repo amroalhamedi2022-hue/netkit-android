@@ -283,6 +283,15 @@ fun main() {
     check("cancelled.bin" !in store.saved.map { it.first }) {
         "Cancelled bytes must never reach the SAF destination"
     }
+    // A cancellation can arrive before its first network chunk: reject the
+    // delayed chunk instead of creating a new private staging file.
+    val earlyCancelled = id()
+    check(!stage.cancel(earlyCancelled)) { "No existing staging file to discard" }
+    expectFailure {
+        stage.append(earlyCancelled, "late-first-chunk.bin", emptyList(), 2, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(1)))
+    }
+    check(stage.status(earlyCancelled) == null)
     val committedId = id()
     check(stage.append(committedId, "already-saved.bin", emptyList(), 1, 0, 1, null,
         ByteArrayInputStream(byteArrayOf(9))).complete)
