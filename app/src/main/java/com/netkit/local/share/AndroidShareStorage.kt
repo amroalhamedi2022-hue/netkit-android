@@ -61,6 +61,8 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
         return SharedStream(input, value.second.length)
     }
     override fun canUpload(): Boolean = uploadTree != null && browserUploadsEnabled
+    /** Invalidate staged browser uploads after ANY grant/consent change, even disable→enable. */
+    override fun uploadGrantEpoch(): Long = uploadConsent.snapshot { Unit }.first
 
     private fun ensureUploadConsent(treeUri: Uri, ticket: Long) {
         // The generation also rejects disable/re-enable and A -> B -> A changes.
