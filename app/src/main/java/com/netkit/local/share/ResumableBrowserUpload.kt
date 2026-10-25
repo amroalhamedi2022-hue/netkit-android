@@ -83,6 +83,12 @@ internal class ResumableBrowserUpload(
         require(length in 0L..MAX_CHUNK.toLong()) { "Chunk exceeds 1 MiB limit" }
         require(offset >= 0 && offset <= total && length <= total - offset) { "Invalid chunk range" }
         require(expectedSha == null || SHA.matches(expectedSha)) { "Invalid SHA-256" }
+        // A zero-length request for an incomplete file cannot advance its offset.
+        // Reject it before allocating a session or refreshing the idle deadline.
+        // Zero-byte files and final-response replays (offset == total) remain valid.
+        if (length == 0L && offset < total) {
+            throw InvalidSession("Empty upload chunk cannot advance offset")
+        }
         if (closed || !allowed()) throw InvalidSession("Upload permission is disabled")
         val epoch = consentEpoch()
         val session = synchronized(lock) {
