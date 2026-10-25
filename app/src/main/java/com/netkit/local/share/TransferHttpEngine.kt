@@ -149,6 +149,12 @@ class TransferHttpEngine(
     // Observable in portable regression tests; should return to zero after every response.
     internal val activeClientCount: Int get() = activeClients.size
 
+    /** Expiry must revoke in-flight responses, not only reject new HTTP requests. */
+    private fun requireLiveShare() {
+        if (!alive || !lease.isValid() || Thread.currentThread().isInterrupted)
+            throw java.io.InterruptedIOException("HTTPS sharing session ended")
+    }
+
     private fun handle(client: Socket) {
         try {
             client.use { socket ->
@@ -330,10 +336,14 @@ class TransferHttpEngine(
         }
         val provider = object : ArchiveDirectorySource {
             override fun list(folderId: String, offset: Int, limit: Int): ArchivePage {
+                requireLiveShare()
                 val page = store.browseDirectory(folderId, offset, limit)
                 return ArchivePage(page.entries.map { ArchiveFile(it.id, it.name, it.directory) }, page.nextOffset)
             }
-            override fun open(fileId: String): InputStream? = store.openDirectoryItem(fileId)?.stream
+            override fun open(fileId: String): InputStream? {
+                requireLiveShare()
+                return store.openDirectoryItem(fileId)?.stream
+            }
         }
         val name = if (id == "root") "NetKit-shared-storage.zip" else "NetKit-folder.zip"
         val encoded = URLEncoder.encode(name, "UTF-8").replace("+", "%20")
@@ -345,6 +355,7 @@ class TransferHttpEngine(
             override fun write(bytes: ByteArray, offset: Int, count: Int) {
                 if (count <= 0) return
                 check(!finished)
+                requireLiveShare()
                 out.write((count.toString(16) + "\r\n").toByteArray(StandardCharsets.US_ASCII))
                 out.write(bytes, offset, count)
                 out.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
@@ -353,6 +364,7 @@ class TransferHttpEngine(
             // if exporting a file fails halfway through. Only finishResponse() does.
             override fun close() = Unit
             fun finishResponse() {
+                requireLiveShare()
                 if (!finished) {
                     finished = true
                     out.write("0\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
@@ -361,7 +373,8 @@ class TransferHttpEngine(
         }
         ZipOutputStream(framed).use { zip ->
             zip.setLevel(Deflater.BEST_SPEED)
-            DirectoryArchive.write(id, provider, zip, includeChecksums = true)
+            DirectoryArchive.write(id, provider, zip, includeChecksums = true,
+                checkActive = { requireLiveShare() })
         }
         framed.finishResponse()
     }
@@ -421,6 +434,7 @@ class TransferHttpEngine(
         val source = (if (folderMode) directory?.openDirectoryItem(id) else storage.open(id))
             ?: return fail(out, 404, "File unavailable")
         source.stream.use { input ->
+            requireLiveShare()
             val total = source.length?.takeIf { it >= 0L }
             val filename = URLEncoder.encode(item.name, "UTF-8").replace("+", "%20")
             val extra = mapOf("Content-Disposition" to "attachment; filename*=UTF-8''$filename")
@@ -443,7 +457,9 @@ class TransferHttpEngine(
                 var remaining = count
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
+                    requireLiveShare()
                     val n = StreamReadGuard.read(input, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                    requireLiveShare() // SAF reads may block until after lease expiry.
                     if (n < 0) break // Client detects a truncated Content-Length.
                     out.write(buffer, 0, n)
                     remaining -= n
@@ -452,11 +468,14 @@ class TransferHttpEngine(
                 head(out, 200, "application/octet-stream", null, extra)
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
+                    requireLiveShare()
                     val n = StreamReadGuard.read(input, buffer, 0, buffer.size)
+                    requireLiveShare()
                     if (n < 0) break
                     out.write("${n.toString(16)}\r\n".toByteArray(StandardCharsets.US_ASCII))
                     out.write(buffer, 0, n); out.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
                 }
+                requireLiveShare()
                 out.write("0\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
             }
         }
@@ -486,6 +505,7 @@ class TransferHttpEngine(
         var remaining = bytes
         val buffer = ByteArray(64 * 1024)
         while (remaining > 0L) {
+            requireLiveShare()
             val skipped = stream.skip(remaining)
             if (skipped > 0) { remaining -= skipped; continue }
             val n = StreamReadGuard.read(stream, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
