@@ -10,6 +10,7 @@ private class FakeBrowserStorage : ShareStorage {
     var enabled = true
     var epoch = 1L
     val saved = mutableListOf<Pair<String, ByteArray>>()
+    var beforeSave: (() -> Unit)? = null
     override fun items() = emptyList<ShareItem>()
     override fun open(id: String): SharedStream? = null
     override fun canUpload() = enabled
@@ -23,6 +24,7 @@ private class FakeBrowserStorage : ShareStorage {
         val actual = MessageDigest.getInstance("SHA-256").digest(data)
             .joinToString("") { "%02x".format(it) }
         if (actual != expectedSha256) throw UploadHashMismatchException()
+        beforeSave?.invoke()
         saved.add(fileName to data)
         return fileName
     }
@@ -176,7 +178,23 @@ fun main() {
     }
     check(!File(root, "$stalledByEmpty.part").exists())
 
+    // M21: a SAF provider that takes longer than the inactivity TTL must not
+    // immediately lose the committed result and risk duplicate publication.
+    val longCommit = id()
+    store.beforeSave = { now += 16L * 60 * 1000 }
+    check(stage.append(longCommit, "long-commit.bin", emptyList(), 1, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(55))).complete)
+    store.beforeSave = null
+    check(stage.status(longCommit)?.complete == true) {
+        "Successful slow SAF commit must start a fresh completion replay window"
+    }
+    check(stage.append(longCommit, "long-commit.bin", emptyList(), 1, 1, 0, null,
+        ByteArrayInputStream(byteArrayOf())).complete)
+    check(store.saved.count { it.first == "long-commit.bin" } == 1) {
+        "Lost final response after slow commit must not duplicate SAF publication"
+    }
+
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
-    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, resumed progress, active slow transfer, empty, duplicate commit")
+    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, empty, duplicate commit")
 }
