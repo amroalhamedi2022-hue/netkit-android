@@ -72,4 +72,8 @@ java -jar "$TEMP_DIR/remote-length.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/RemoteDigestVerifier.kt" \
   "$ROOT/qa/RemoteDigestVerifierTest.kt" -include-runtime -d "$TEMP_DIR/remote-digest.jar"
 java -jar "$TEMP_DIR/remote-digest.jar"
+# Explicit FTP/SFTP resume requires byte-identical remote prefix and full readback.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/VerifiedResumePrefix.kt" \
+  "$ROOT/qa/VerifiedResumePrefixTest.kt" -include-runtime -d "$TEMP_DIR/verified-resume.jar"
+java -jar "$TEMP_DIR/verified-resume.jar"
 echo 'NetKit JVM transport & reliability QA passed.'
