@@ -5,6 +5,13 @@ on:
     branches: [automation/netkit-zip-stall-guard-20261023]
     paths:
       - '.github/workflows/netkit-m15-compile.yml'
+      - 'app/src/main/AndroidManifest.xml'
+      - 'app/src/main/java/com/netkit/local/connectivity/PeerDiscovery.kt'
+      - 'app/src/main/java/com/netkit/local/connectivity/MulticastLockLease.kt'
+      - 'app/src/main/java/com/netkit/local/ui/NetKitProScreens.kt'
+      - 'qa/MulticastLockLeaseTest.kt'
+      - 'qa/run_jvm_tests.sh'
+      - 'qa/check_static.py'
   workflow_dispatch:
 
 permissions:
