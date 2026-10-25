@@ -118,7 +118,8 @@ class NetKitCore(context: Context) {
                                 }
                             }
                         }
-                    }, sessionLifetimeMillis = settings.shareExpirationMinutes.toLong() * 60_000L)
+                    }, sessionLifetimeMillis = settings.shareExpirationMinutes.toLong() * 60_000L,
+                        uploadCacheRoot = context.cacheDir)
                     synchronized(serverLock) {
                         if (disposed || generation != sessionGeneration) {
                             created.close()
