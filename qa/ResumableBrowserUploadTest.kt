@@ -99,7 +99,24 @@ fun main() {
     stage.append(g, "expire.txt", emptyList(), 2, 0, 1, null, ByteArrayInputStream(byteArrayOf(1)))
     now += 16L * 60 * 1000
     check(stage.status(g) == null) { "Expired parts must be deleted" }
+
+    // A long but continuously progressing upload must not expire after 15 minutes.
+    val slow = id()
+    val slowData = byteArrayOf(11, 12, 13, 14)
+    val tickingBody = object : ByteArrayInputStream(slowData) {
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val n = super.read(b, off, minOf(len, 1))
+            if (n > 0) now += 5L * 60 * 1000
+            return n
+        }
+    }
+    check(stage.append(slow, "slow.bin", emptyList(), slowData.size.toLong(), 0,
+        slowData.size.toLong(), null, tickingBody).complete)
+    check(stage.status(slow)?.complete == true) {
+        "Continuously progressing transfer must remain live across the TTL window"
+    }
+    check(store.saved.last().second.contentEquals(slowData))
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
-    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, empty, duplicate commit")
+    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, active slow transfer, empty, duplicate commit")
 }
