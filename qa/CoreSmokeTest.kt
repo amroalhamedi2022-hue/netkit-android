@@ -472,5 +472,66 @@ fun main(args: Array<String>) {
         con.disconnect()
         check(timed.sessionRemainingMillis == 0L)
     }
+    // M27: a lease that expires AFTER headers must also stop in-flight
+    // fixed-length and chunked downloads, even if SAF supplies more bytes.
+    for (knownLength in listOf(true, false)) {
+        val secondReadReturned = java.util.concurrent.atomic.AtomicBoolean(false)
+        val expiringStorage = object : ShareStorage {
+            override fun items() = listOf(ShareItem(itemId, "expiring.bin",
+                if (knownLength) 2L else null))
+            override fun open(id: String): SharedStream? {
+                if (id != itemId) return null
+                val stream = object : InputStream() {
+                    private var position = 0
+                    override fun read(): Int {
+                        val b = ByteArray(1)
+                        return if (read(b, 0, 1) < 0) -1 else b[0].toInt() and 255
+                    }
+                    override fun read(b: ByteArray, off: Int, len: Int): Int {
+                        if (position >= 2) return -1
+                        if (position == 1) {
+                            Thread.sleep(1600) // Lease expires during a blocked SAF read.
+                            secondReadReturned.set(true)
+                        }
+                        b[off] = if (position++ == 0) 11 else 22
+                        return 1
+                    }
+                }
+                return SharedStream(stream, if (knownLength) 2L else null)
+            }
+            override fun canUpload() = false
+            override fun upload(fileName: String, body: InputStream, length: Long,
+                expectedSha256: String?, progress: (Long) -> Unit): String =
+                throw UnsupportedOperationException()
+        }
+        TransferHttpEngine(serverSsl.serverSocketFactory, expiringStorage,
+            sessionLifetimeMillis = 1200L).use { expiring ->
+            expiring.start()
+            val con = URI("https://127.0.0.1:${expiring.port}/s/${expiring.token}/file/$itemId")
+                .toURL().openConnection() as HttpsURLConnection
+            con.sslSocketFactory = clientSsl.socketFactory
+            con.hostnameVerifier = HostnameVerifier { _, _ -> true } // Test-only fixture.
+            con.readTimeout = 6000
+            check(con.responseCode == 200) { "Initial share should be authorized" }
+            val bytes = java.io.ByteArrayOutputStream()
+            // A truncated Content-Length or chunked body can raise an IOException.
+            runCatching {
+                con.inputStream.use { input ->
+                    val buffer = ByteArray(16)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        bytes.write(buffer, 0, n)
+                    }
+                }
+            }
+            con.disconnect()
+            check(secondReadReturned.get()) { "Test did not cross the lease boundary" }
+            check(bytes.toByteArray().contentEquals(byteArrayOf(11))) {
+                "Expired share leaked the next byte (knownLength=$knownLength)"
+            }
+        }
+    }
+    println("PASS: expired HTTPS lease interrupts active fixed-length and chunked downloads")
     println("PASS: HTTPS session expiration rejects expired bearer token")
 }
