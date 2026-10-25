@@ -22,7 +22,7 @@ internal class ResumableBrowserUpload(
     private val storage: ShareStorage,
     private val consentEpoch: () -> Long,
     private val allowed: () -> Boolean,
-    private val clockMillis: () -> Long = System::currentTimeMillis
+    private val clockMillis: () -> Long = { System.nanoTime() / 1_000_000L }
 ) : AutoCloseable {
     companion object {
         const val MAX_CHUNK = 1024 * 1024
@@ -64,7 +64,8 @@ internal class ResumableBrowserUpload(
                     session.part.delete()
                     return null
                 }
-                session.touched = clockMillis()
+                // A status-only poll must not extend the private disk staging TTL.
+                // Only actual upload progress (or commit) refreshes activity.
                 return Status(session.received, session.total, session.committed)
             }
         }
