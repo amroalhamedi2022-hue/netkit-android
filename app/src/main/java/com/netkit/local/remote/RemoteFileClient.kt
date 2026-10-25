@@ -19,6 +19,9 @@ interface RemoteFileClient : Closeable {
     fun download(remotePath: String, destination: Uri, context: Context, progress: (Long) -> Unit = {}): Boolean
     fun upload(source: Uri, remotePath: String, context: Context,
         progress: (Long) -> Unit = {}, verifySha256: Boolean = false): Boolean
+    /** Opt-in only: remote prefix must be readable, byte-identical, then SHA-256 verified. */
+    fun resumeUpload(source: Uri, remotePath: String, context: Context,
+        progress: (Long) -> Unit = {}): Boolean
 }
 
 class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeoutMs: Int) : RemoteFileClient {
@@ -71,6 +74,48 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
             }
             return ok
         }
+    }
+    override fun resumeUpload(source: Uri, remotePath: String, context: Context,
+        progress: (Long) -> Unit): Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
+        val existing = ftp.mlistFile(safePath)?.size
+            ?: error("FTP server must support MLST/SIZE to confirm the resume offset")
+        require(existing > 0) { "No nonempty remote prefix; use normal upload instead" }
+        val local = context.contentResolver.openInputStream(source) ?: error("No SAF read permission")
+        DigestInputStream(local, MessageDigest.getInstance("SHA-256")).use { selected ->
+            val remote = ftp.retrieveFileStream(safePath)
+                ?: error("FTP server must permit reading the existing remote prefix")
+            try {
+                remote.use { VerifiedResumePrefix.verify(selected, it, existing) }
+            } finally {
+                // retrieveFileStream leaves a pending control reply after data socket close.
+                check(ftp.completePendingCommand()) { "FTP prefix read did not complete" }
+            }
+            check(ftp.mlistFile(safePath)?.size == existing) {
+                "Remote size changed during resume verification"
+            }
+            progress(existing)
+            val suffix = ProgressInputStream(selected) { bytes ->
+                progress(Math.addExact(existing, bytes))
+            }
+            // appendFile consumes the suffix but does not close the provided stream.
+            val appended = ftp.appendFile(safePath, suffix)
+            if (!appended) return false
+            val total = Math.addExact(existing, suffix.transferred)
+            TransferLengthVerifier.requireMatch(total, ftp.mlistFile(safePath)?.size
+                ?: error("FTP server stopped reporting remote length"))
+            // Mandatory full-file readback: partial remote prefixes must never be
+            // trusted from SIZE alone, even after bytewise prefix verification.
+            val readback = ftp.retrieveFileStream(safePath)
+                ?: error("FTP server refused post-resume SHA-256 readback")
+            val digest = try {
+                readback.use { RemoteDigestVerifier.digest(it) }
+            } finally {
+                check(ftp.completePendingCommand()) { "FTP SHA-256 readback did not complete" }
+            }
+            RemoteDigestVerifier.requireMatch(selected.messageDigest.digest(), digest)
+        }
+        return true
     }
     override fun close() { runCatching { ftp.logout() }; if (ftp.isConnected) ftp.disconnect() }
 }
@@ -145,6 +190,33 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
                 }
                 RemoteDigestVerifier.requireMatch(localDigest.digest(), remoteDigest)
             }
+        }
+        return true
+    }
+    override fun resumeUpload(source: Uri, remotePath: String, context: Context,
+        progress: (Long) -> Unit): Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
+        val existing = sftp.stat(safePath).size
+        require(existing > 0) { "No nonempty remote prefix; use normal upload instead" }
+        val local = context.contentResolver.openInputStream(source) ?: error("No SAF read permission")
+        DigestInputStream(local, MessageDigest.getInstance("SHA-256")).use { selected ->
+            sftp.get(safePath).use { remote ->
+                VerifiedResumePrefix.verify(selected, remote, existing)
+            }
+            check(sftp.stat(safePath).size == existing) {
+                "Remote size changed during resume verification"
+            }
+            progress(existing)
+            val suffix = ProgressInputStream(selected) { bytes ->
+                progress(Math.addExact(existing, bytes))
+            }
+            // APPEND is deliberate: JSch RESUME would skip the verified prefix
+            // a second time, since [selected] is already positioned at offset.
+            sftp.put(suffix, safePath, ChannelSftp.APPEND)
+            val total = Math.addExact(existing, suffix.transferred)
+            TransferLengthVerifier.requireMatch(total, sftp.stat(safePath).size)
+            val digest = sftp.get(safePath).use { RemoteDigestVerifier.digest(it) }
+            RemoteDigestVerifier.requireMatch(selected.messageDigest.digest(), digest)
         }
         return true
     }
