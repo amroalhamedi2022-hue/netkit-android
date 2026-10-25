@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 
 class NetKitCore(context: Context) {
+    private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     val hotspot = HotspotManager(context)
     val network = NetworkStatus(context)
@@ -107,7 +108,7 @@ class NetKitCore(context: Context) {
                     // Chunk IDs are scoped to one HTTPS session. After a process crash,
                     // old private parts cannot be resumed; reclaim only our own cache dirs.
                     val oldParts = Regex("netkit-browser-[0-9a-fA-F-]{36}")
-                    context.cacheDir.listFiles()?.filter {
+                    appContext.cacheDir.listFiles()?.filter {
                         it.isDirectory && oldParts.matches(it.name)
                     }?.forEach { runCatching { it.deleteRecursively() } }
                     val created = TransferHttpEngine(tls.factory, storage, progress = { done, total ->
@@ -125,7 +126,7 @@ class NetKitCore(context: Context) {
                             }
                         }
                     }, sessionLifetimeMillis = settings.shareExpirationMinutes.toLong() * 60_000L,
-                        uploadCacheRoot = context.cacheDir)
+                        uploadCacheRoot = appContext.cacheDir)
                     synchronized(serverLock) {
                         if (disposed || generation != sessionGeneration) {
                             created.close()
