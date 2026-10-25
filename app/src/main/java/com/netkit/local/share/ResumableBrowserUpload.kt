@@ -106,7 +106,7 @@ internal class ResumableBrowserUpload(
             if (session.committed) return Status(total, total, true)
             if (offset != session.received) throw OffsetConflict(session.received)
             if (length > 0) {
-                if (session.part.usableSpace < length + DISK_RESERVE) {
+                if (directory.usableSpace < length + DISK_RESERVE) {
                     throw IOException("Insufficient private cache space")
                 }
                 val buffer = ByteArray(64 * 1024)
