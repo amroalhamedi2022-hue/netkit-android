@@ -50,8 +50,10 @@ internal class ResumableBrowserUpload(
 
     private val lock = Any()
     private val sessions = LinkedHashMap<String, Session>()
-    // Bounded tombstones prevent delayed browser requests from resurrecting a cancelled ID.
+    // Retired IDs stay blocked for this share lifetime. If the bounded ledger fills,
+    // fail closed for NEW sessions instead of evicting an ID that a delayed request could replay.
     private val cancelledIds = LinkedHashMap<String, Long>()
+    private var newSessionAdmissionClosed = false
     @Volatile private var closed = false
 
     init { check(directory.isDirectory || directory.mkdirs()) { "Cannot create private upload cache" } }
@@ -63,6 +65,7 @@ internal class ResumableBrowserUpload(
             val session = sessions[id] ?: return null
             synchronized(session) {
                 if (!valid(session)) {
+                    retireIdLocked(id)
                     sessions.remove(id)
                     session.part.delete()
                     return null
@@ -83,13 +86,13 @@ internal class ResumableBrowserUpload(
             if (session == null) {
                 // The cancellation may overtake the first network chunk. Revoke
                 // its ID anyway, but never claim that an unknown file was deleted.
-                rememberCancelledLocked(id)
+                retireIdLocked(id)
                 return false
             }
             synchronized(session) {
                 if (session.committed) return false
                 session.invalid = true
-                rememberCancelledLocked(id)
+                retireIdLocked(id)
                 if (session.part.exists() && !session.part.delete()) {
                     throw IOException("Could not discard cancelled upload staging")
                 }
@@ -99,11 +102,16 @@ internal class ResumableBrowserUpload(
         }
     }
 
-    private fun rememberCancelledLocked(id: String) {
-        cancelledIds[id] = clockMillis()
-        while (cancelledIds.size > MAX_CANCELLED_IDS) {
-            cancelledIds.remove(cancelledIds.keys.first())
+    private fun retireIdLocked(id: String) {
+        if (cancelledIds.containsKey(id)) return
+        if (cancelledIds.size >= MAX_CANCELLED_IDS) {
+            // Never evict a live tombstone: doing so would allow a delayed first chunk
+            // to resurrect an expired/cancelled upload. Existing sessions may finish,
+            // but the share cannot admit new upload IDs until it is restarted.
+            newSessionAdmissionClosed = true
+            return
         }
+        cancelledIds[id] = clockMillis()
     }
 
     fun append(
@@ -129,10 +137,13 @@ internal class ResumableBrowserUpload(
         val session = synchronized(lock) {
             cleanupLocked()
             if (cancelledIds.containsKey(id)) {
-                throw InvalidSession("Cancelled upload ID cannot be resumed")
+                throw InvalidSession("Retired upload ID cannot be resumed")
             }
             val existing = sessions[id]
             if (existing != null) existing else {
+                if (newSessionAdmissionClosed) {
+                    throw InvalidSession("Upload ID safety limit reached; restart the share before starting another upload")
+                }
                 if (offset != 0L) throw OffsetConflict(0L)
                 if (sessions.size >= MAX_SESSIONS) throw InvalidSession("Too many pending uploads")
                 val created = Session(name, folders.toList(), total, expectedSha?.lowercase(),
@@ -212,17 +223,17 @@ internal class ResumableBrowserUpload(
         !closed && !session.invalid && allowed() && consentEpoch() == session.epoch
 
     private fun cleanupLocked() {
-        val cancelled = cancelledIds.entries.iterator()
-        while (cancelled.hasNext()) {
-            if (clockMillis() - cancelled.next().value > TTL_MILLIS) cancelled.remove()
-        }
         val iterator = sessions.entries.iterator()
         while (iterator.hasNext()) {
-            val session = iterator.next().value
+            val entry = iterator.next()
+            val session = entry.value
             synchronized(session) {
                 // Recheck under the session lock: an append may have advanced the
                 // activity timestamp while cleanup waited for that append to finish.
+                // Retire expired/invalid IDs for the rest of this share lifetime so
+                // delayed offset-zero requests cannot create a second publication.
                 if (clockMillis() - session.touched > TTL_MILLIS || !valid(session)) {
+                    retireIdLocked(entry.key)
                     session.part.delete()
                     iterator.remove()
                 }
