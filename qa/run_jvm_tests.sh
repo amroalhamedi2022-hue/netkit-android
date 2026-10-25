@@ -97,3 +97,7 @@ kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt" \
 java -jar "$TEMP_DIR/browser-resume.jar"
 
 echo 'NetKit JVM transport & reliability QA passed.'
+
+# Android NSD discovery owns a short-lived multicast lock; test its lease lifecycle without a device.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/MulticastLockLease.kt" "$ROOT/qa/MulticastLockLeaseTest.kt" -include-runtime -d "$TEMP_DIR/multicast-lock.jar"
+java -jar "$TEMP_DIR/multicast-lock.jar"
