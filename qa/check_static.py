@@ -13,7 +13,7 @@ assert any(n.attrib.get(ns+'name') == '.app.TransferService' and
            for n in application.findall('service'))
 perms = {p.attrib[ns + 'name'] for p in manifest.findall('uses-permission')}
 assert {'android.permission.FOREGROUND_SERVICE', 'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE',
-        'android.permission.CHANGE_WIFI_STATE', 'android.permission.NEARBY_WIFI_DEVICES',
+        'android.permission.CHANGE_WIFI_STATE', 'android.permission.CHANGE_WIFI_MULTICAST_STATE', 'android.permission.NEARBY_WIFI_DEVICES',
         'android.permission.ACCESS_FINE_LOCATION', 'android.permission.ACCESS_COARSE_LOCATION'} <= perms
 assert all(any(p.attrib.get(ns+'name') == name and p.attrib.get(ns+'maxSdkVersion') == '32'
                for p in manifest.findall('uses-permission'))
@@ -66,6 +66,9 @@ assert 'shareExpirationMinutes' in (root / 'app/src/main/java/com/netkit/local/a
 assert (root / 'app/src/main/java/com/netkit/local/share/DirectoryArchive.kt').is_file()
 assert 'MANAGE_EXTERNAL_STORAGE' in (root / 'app/src/main/AndroidManifest.xml').read_text()
 assert 'PeerDiscovery' in (root / 'app/src/main/java/com/netkit/local/app/NetKitCore.kt').read_text()
+peer_discovery = (root / 'app/src/main/java/com/netkit/local/connectivity/PeerDiscovery.kt').read_text()
+assert 'createMulticastLock("NetKitPeerDiscovery")' in peer_discovery
+assert 'multicastLease.acquire()' in peer_discovery and 'multicastLease.release()' in peer_discovery
 assert 'fun begin(' in (root / 'app/src/main/java/com/netkit/local/transfer/TransferQueue.kt').read_text()
 assert 'NetKitProApp' in main
 assert 'RemoteFileClient' in (root / 'app/src/main/java/com/netkit/local/ui/NetKitProScreens.kt').read_text()
