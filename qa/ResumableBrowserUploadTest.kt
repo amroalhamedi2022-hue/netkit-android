@@ -263,7 +263,36 @@ fun main() {
     raceStage.close()
     check(!raceRoot.exists())
 
+
+    // M25: explicit cancellation must reclaim private bytes immediately, and
+    // a delayed in-flight retry must not resurrect the cancelled upload ID.
+    val cancelledId = id()
+    stage.append(cancelledId, "cancelled.bin", emptyList(), 3, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(8)))
+    check(File(root, "$cancelledId.part").exists())
+    check(stage.cancel(cancelledId))
+    check(!File(root, "$cancelledId.part").exists()) {
+        "Explicit cancellation must discard staged bytes without waiting for TTL"
+    }
+    check(stage.status(cancelledId) == null)
+    check(!stage.cancel(cancelledId)) { "Cancelling twice must be idempotent" }
+    expectFailure {
+        stage.append(cancelledId, "cancelled.bin", emptyList(), 3, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(8)))
+    }
+    check("cancelled.bin" !in store.saved.map { it.first }) {
+        "Cancelled bytes must never reach the SAF destination"
+    }
+    val committedId = id()
+    check(stage.append(committedId, "already-saved.bin", emptyList(), 1, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(9))).complete)
+    check(!stage.cancel(committedId)) {
+        "Cancellation must not claim to roll back a committed SAF file"
+    }
+    check(stage.status(committedId)?.complete == true)
+    expectFailure { stage.cancel("invalid-id") }
+
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
-    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, empty, duplicate commit")
+    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, explicit cancellation and replay guard, empty, duplicate commit")
 }
