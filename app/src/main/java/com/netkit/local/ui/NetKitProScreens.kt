@@ -262,12 +262,14 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
     var uploadName by remember {mutableStateOf("")}
     var verifyUploadSha256 by remember {mutableStateOf(false)}
     var resumeExistingUpload by remember {mutableStateOf(false)}
+    var verifyDownloadSaf by remember {mutableStateOf(false)}
     val createDocument=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val selected=chosen
         val connected=client
         if(uri != null && selected != null && connected != null) {
             working=true
             val remotePath = folder.trimEnd('/') + "/" + selected.name
+            val verifiedThisDownload = verifyDownloadSaf
             val task = runCatching { core.transfers.add(remotePath, uri.toString(), selected.size.coerceAtLeast(-1L)) }.getOrNull()
             scope.launch {
                 var runningAttempt: Int? = null
@@ -278,12 +280,15 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                     val checkpoint = ProgressCheckpoint({ bytes -> core.transfers.progress(task.id, running.attempts, bytes) })
                     val completed = try {
                         withContext(Dispatchers.IO) {
-                            connected.download(remotePath, uri, ctx) { bytes -> checkpoint.onBytes(bytes) }
+                            if (verifiedThisDownload) connected.verifiedDownload(remotePath, uri, ctx) {
+                                bytes -> checkpoint.onBytes(bytes)
+                            } else connected.download(remotePath, uri, ctx) { bytes -> checkpoint.onBytes(bytes) }
                         }
                     } finally { checkpoint.flush() }
                     check(completed) { "FTP server rejected download" }
                     checkNotNull(core.transfers.finish(task.id, running.attempts)) { "Transfer length was not verified" }
-                    "تم تنزيل ${selected.name}"
+                    if (verifiedThisDownload) "تم تنزيل ${selected.name} بعد مطابقة SHA-256 مع الخادم والمستند"
+                    else "تم تنزيل ${selected.name}"
                 }.getOrElse { failure ->
                     if(task != null) runningAttempt?.let { core.transfers.fail(task.id, it, failure.localizedMessage.orEmpty()) }
                     "فشل التنزيل: ${failure.localizedMessage}"
@@ -393,6 +398,11 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
                     if(!entry.directory) RadioButton(selected=chosen==entry,onClick={chosen=entry})
                 }
             }
+            SwitchSetting(
+                title="تنزيل موثّق قابل للاستئناف",
+                desc="اختياري: يحفظ الملف في ذاكرة التطبيق المؤقتة، ويقارن الجزء السابق مع الخادم بعد الانقطاع، ويتحقق من SHA-256 كاملًا قبل نسخه إلى مستند SAF جديد. يحتاج مساحة فارغة وقراءة الملف مرتين من الخادم؛ لا يضمن النشر الذرّي لدى كل مزودي SAF. لا يدعم FTP دون MLST/SIZE.",
+                checked=verifyDownloadSaf,onChange={verifyDownloadSaf=it},p=p
+            )
             chosen?.let {selected -> OutlinedButton(enabled=!working,onClick={createDocument.launch(selected.name)}) {
                 Text("تنزيل ${selected.name}")
             }}

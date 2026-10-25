@@ -76,4 +76,8 @@ java -jar "$TEMP_DIR/remote-digest.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/VerifiedResumePrefix.kt" \
   "$ROOT/qa/VerifiedResumePrefixTest.kt" -include-runtime -d "$TEMP_DIR/verified-resume.jar"
 java -jar "$TEMP_DIR/verified-resume.jar"
+# Download resume must not publish partial SAF data and must verify both remote and local hashes.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/remote/VerifiedDownloadStaging.kt" \
+  "$ROOT/qa/VerifiedDownloadStagingTest.kt" -include-runtime -d "$TEMP_DIR/verified-download.jar"
+java -jar "$TEMP_DIR/verified-download.jar"
 echo 'NetKit JVM transport & reliability QA passed.'

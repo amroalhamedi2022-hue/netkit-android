@@ -8,6 +8,10 @@ import com.jcraft.jsch.Session
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import java.io.Closeable
+import java.io.File
+import java.io.FileOutputStream
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.security.MessageDigest
 import java.security.DigestInputStream
 import java.util.Base64
@@ -22,7 +26,46 @@ interface RemoteFileClient : Closeable {
     /** Opt-in only: remote prefix must be readable, byte-identical, then SHA-256 verified. */
     fun resumeUpload(source: Uri, remotePath: String, context: Context,
         progress: (Long) -> Unit = {}): Boolean
+    /** Opt-in app-private staging; validates complete remote SHA-256 before SAF publish. */
+    fun verifiedDownload(remotePath: String, destination: Uri, context: Context,
+        progress: (Long) -> Unit = {}): Boolean
 }
+
+/** Scoped cache key includes endpoint and remote path, never the password. */
+private fun verifiedDownloadToSaf(
+    context: Context, destination: Uri, identity: String, remotePath: String,
+    expected: Long, progress: (Long) -> Unit,
+    remoteStream: () -> InputStream, remoteSize: () -> Long
+): Boolean {
+    require(expected >= 0) { "Remote server must report file size for verified download" }
+    val key = MessageDigest.getInstance("SHA-256")
+        .digest((identity + "\n" + remotePath).toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+    val directory = File(context.cacheDir, "netkit-verified-downloads")
+    check(directory.isDirectory || directory.mkdirs()) { "Cannot create private download staging directory" }
+    val part = File(directory, "$key.part")
+    val lockFile = File(directory, "$key.lock")
+    FileOutputStream(lockFile, true).channel.use { channel ->
+        val lock = channel.tryLock() ?: error("Another verified download of this file is in progress")
+        lock.use {
+            val remaining = expected - (if (part.isFile) part.length() else 0L)
+            check(remaining <= directory.usableSpace - 16L * 1024 * 1024) {
+                "Not enough free app storage for verified staging; clear space or use regular download"
+            }
+            val digest = remoteStream().use { VerifiedDownloadStaging.stage(it, part, expected, progress) }
+            check(remoteSize() == expected) { "Remote length changed during staged download" }
+            remoteStream().use { VerifiedDownloadStaging.verifyReadback(it, expected, digest) }
+            check(remoteSize() == expected) { "Remote length changed before SAF publication" }
+            VerifiedDownloadStaging.publish(part, digest,
+                { context.contentResolver.openOutputStream(destination, "w")
+                    ?: error("Cannot write selected SAF document") },
+                { context.contentResolver.openInputStream(destination)
+                    ?: error("Cannot re-read selected SAF document for SHA-256 verification") })
+        }
+    }
+    return true
+}
+
 
 class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeoutMs: Int) : RemoteFileClient {
     private val ftp = FTPClient()
@@ -50,6 +93,26 @@ class FtpRemoteClient(host: String, port: Int, user: String, pass: String, timeo
             if (ok) TransferLengthVerifier.requireMatch(expected, it.transferred)
             return ok
         }
+    }
+    override fun verifiedDownload(remotePath: String, destination: Uri, context: Context,
+        progress: (Long) -> Unit): Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
+        val expected = ftp.mlistFile(safePath)?.size
+            ?: error("FTP MLST/SIZE required for verified download")
+        return verifiedDownloadToSaf(context, destination,
+            "ftp|" + ftp.remoteAddress.hostAddress + "|" + ftp.remotePort + "|" + ftp.user,
+            safePath, expected, progress,
+            {
+                val stream = ftp.retrieveFileStream(safePath)
+                    ?: error("FTP server refused verified readback")
+                object : FilterInputStream(stream) {
+                    override fun close() {
+                        super.close()
+                        check(ftp.completePendingCommand()) { "FTP RETR control reply failed" }
+                    }
+                }
+            },
+            { ftp.mlistFile(safePath)?.size ?: error("FTP remote size became unavailable") })
     }
     override fun upload(source: Uri, remotePath: String, context: Context,
         progress: (Long) -> Unit, verifySha256: Boolean): Boolean {
@@ -174,6 +237,16 @@ class SftpRemoteClient(host: String, port: Int, user: String, pass: String,
             TransferLengthVerifier.requireMatch(expected,it.transferred)
         }
         return true
+    }
+    override fun verifiedDownload(remotePath: String, destination: Uri, context: Context,
+        progress: (Long) -> Unit): Boolean {
+        val safePath = RemotePathPolicy.path(remotePath)
+        val expected = sftp.stat(safePath).size
+        return verifiedDownloadToSaf(context, destination,
+            "sftp|" + session.host + "|" + session.port + "|" + session.userName + "|" + session.hostKey.type,
+            safePath, expected, progress,
+            { sftp.get(safePath) },
+            { sftp.stat(safePath).size })
     }
     override fun upload(source:Uri,remotePath:String,context:Context,progress:(Long)->Unit,
         verifySha256:Boolean):Boolean {
