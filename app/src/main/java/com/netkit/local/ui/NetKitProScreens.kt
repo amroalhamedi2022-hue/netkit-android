@@ -121,6 +121,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
     }
     Text("الأجهزة القريبة",fontWeight=FontWeight.Bold,fontSize=26.sp,color=p.ink)
     MutedText("اكتشاف الأجهزة عبر DNS-SD داخل نفس الشبكة. الظهور لا يعني الاقتران أو منح إذن نقل.")
+    core.discovery.discoveryWarning.value?.let { MutedText(it) }
     Spacer(Modifier.height(15.dp))
     GlassCard {
         Text("◉ البحث المحلي",color=p.aqua,fontWeight=FontWeight.Bold)
