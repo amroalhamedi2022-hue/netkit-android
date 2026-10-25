@@ -407,7 +407,7 @@ class TransferHttpEngine(
     /** Single RFC 7233 byte ranges enable clients to resume DOWNLOADS.
      *  Android SAF streams can be non-seekable: we discard bytes to reach the requested offset.
      *  Unknown-length streams ignore Range and continue chunked, which HTTP allows.
-     *  Upload resumption is NOT implemented.
+     *  Browser upload resumption uses separate bounded /upload-chunk and /upload-status routes.
      */
     private fun download(out: OutputStream, id: String, rangeHeader: String?, folderMode: Boolean = false) {
         // IDs are server-generated UUIDs, not filesystem paths.
