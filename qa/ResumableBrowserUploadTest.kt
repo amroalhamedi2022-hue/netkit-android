@@ -81,6 +81,9 @@ fun main() {
     expectFailure {
         stage.append(c, "old.bin", emptyList(), 2, 1, 1, null, ByteArrayInputStream(byteArrayOf(8)))
     }
+    expectFailure {
+        stage.append(c, "old.bin", emptyList(), 2, 0, 1, null, ByteArrayInputStream(byteArrayOf(8)))
+    }
 
     val d = id()
     stage.append(d, "original.txt", emptyList(), 3, 0, 1, null, ByteArrayInputStream(byteArrayOf(1)))
@@ -101,6 +104,9 @@ fun main() {
     stage.append(g, "expire.txt", emptyList(), 2, 0, 1, null, ByteArrayInputStream(byteArrayOf(1)))
     now += 16L * 60 * 1000
     check(stage.status(g) == null) { "Expired parts must be deleted" }
+    expectFailure {
+        stage.append(g, "expire.txt", emptyList(), 2, 0, 1, null, ByteArrayInputStream(byteArrayOf(2)))
+    }
 
     // A long but continuously progressing upload must not expire after 15 minutes.
     val slow = id()
@@ -300,6 +306,34 @@ fun main() {
     }
     check(stage.status(committedId)?.complete == true)
     expectFailure { stage.cancel("invalid-id") }
+
+    // M30: never evict a live retired-ID tombstone. Once the bounded ledger fills,
+    // new sessions fail closed, but an already-admitted upload may finish.
+    val capRoot = File(System.getProperty("java.io.tmpdir"), "netkit-retired-cap-" + UUID.randomUUID())
+    check(capRoot.mkdirs())
+    val capStore = FakeBrowserStorage()
+    val capNow = java.util.concurrent.atomic.AtomicLong(1000L)
+    val capStage = ResumableBrowserUpload(capRoot, capStore,
+        { capStore.epoch }, { capStore.enabled }, { capNow.get() })
+    val admitted = id()
+    capStage.append(admitted, "admitted.bin", emptyList(), 2, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(1)))
+    repeat(4096) {
+        check(!capStage.cancel(id())) { "Unknown cancellation must not claim a deleted file" }
+    }
+    val overflow = id()
+    check(!capStage.cancel(overflow))
+    expectFailure {
+        capStage.append(overflow, "overflow.bin", emptyList(), 1, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(9)))
+    }
+    check(capStage.append(admitted, "admitted.bin", emptyList(), 2, 1, 1, null,
+        ByteArrayInputStream(byteArrayOf(2))).complete) {
+        "Admission limit must not interrupt an already active upload"
+    }
+    check(capStore.saved.single().second.contentEquals(byteArrayOf(1, 2)))
+    capStage.close()
+    check(!capRoot.exists())
 
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
