@@ -396,6 +396,37 @@ fun main(args: Array<String>) {
         check(request(root + "/upload-status/" + badId).first == 404)
         check(request(root + "/upload-chunk", "POST", byteArrayOf(1), "bad.bin",
             uploadId = "invalid", uploadTotal = 1, uploadOffset = 0).first == 400)
+        // M25: cancellation is an authenticated POST on the existing secret HTTPS
+        // session. It must remove partial staging and block late chunk replay.
+        val cancelId = "c".repeat(32)
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(8), "cancel-me.bin",
+            uploadId = cancelId, uploadTotal = 3, uploadOffset = 0).first == 200)
+        check(request(root + "/upload-status/" + cancelId).first == 200)
+        check(request(root + "/upload-cancel/" + cancelId).first == 405) {
+            "GET must not mutate upload state"
+        }
+        check(request(root + "/upload-cancel/invalid-id", "POST").first == 400)
+        check(request("https://127.0.0.1:${engine.port}/s/guess/upload-cancel/" + cancelId,
+            "POST").first == 404)
+        val cancelReply = request(root + "/upload-cancel/" + cancelId, "POST")
+        check(cancelReply.first == 200 &&
+            String(cancelReply.second).contains("\\"cancelled\\":true")) {
+            "HTTPS cancel did not confirm staged upload cleanup"
+        }
+        check(request(root + "/upload-status/" + cancelId).first == 404)
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(8), "cancel-me.bin",
+            uploadId = cancelId, uploadTotal = 3, uploadOffset = 0).first == 409) {
+            "Cancelled upload ID must reject delayed chunk replay"
+        }
+        check("cancel-me.bin" !in uploaded)
+        check(String(request(root + "/upload-cancel/" + cancelId, "POST").second)
+            .contains("\\"cancelled\\":false"))
+        check(String(request(root + "/upload-cancel/" + resumeId, "POST").second)
+            .contains("\\"cancelled\\":false")) {
+            "A completed SAF file must not be falsely reported as cancelled"
+        }
+        check(uploaded["resumed.txt"]!!.contentEquals(resumeData))
+        println("PASS: authenticated HTTPS cancellation, no GET mutation, staging cleanup, replay refusal, committed-file safety")
         println("PASS: real TLS resumable browser upload, offset conflict, final commit and hash refusal")
         check(request(root + "/missing").first == 405)
         uploadsAllowed = false
