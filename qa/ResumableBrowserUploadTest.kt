@@ -150,7 +150,33 @@ fun main() {
     check(stage.status(completed)?.complete == true)
     now += 6L * 60 * 1000
     check(stage.status(completed) == null) { "Completed status must eventually expire" }
+    // M21: empty requests must not create sessions or keep incomplete files alive.
+    val emptyAttempt = id()
+    expectFailure {
+        stage.append(emptyAttempt, "empty-keepalive.bin", emptyList(), 2, 0, 0, null,
+            ByteArrayInputStream(byteArrayOf()))
+    }
+    check(stage.status(emptyAttempt) == null) {
+        "Zero-progress request must not consume one of four upload slots"
+    }
+    check(!File(root, "$emptyAttempt.part").exists())
+
+    val stalledByEmpty = id()
+    stage.append(stalledByEmpty, "no-keepalive.bin", emptyList(), 2, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(7)))
+    now += 10L * 60 * 1000
+    expectFailure {
+        stage.append(stalledByEmpty, "no-keepalive.bin", emptyList(), 2, 1, 0, null,
+            ByteArrayInputStream(byteArrayOf()))
+    }
+    check(stage.status(stalledByEmpty)?.received == 1L)
+    now += 6L * 60 * 1000
+    check(stage.status(stalledByEmpty) == null) {
+        "Rejected zero-progress keepalive must not extend inactivity TTL"
+    }
+    check(!File(root, "$stalledByEmpty.part").exists())
+
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
-    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, resumed progress, active slow transfer, empty, duplicate commit")
+    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, resumed progress, active slow transfer, empty, duplicate commit")
 }
