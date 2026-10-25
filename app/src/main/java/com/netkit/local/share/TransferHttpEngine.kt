@@ -501,7 +501,7 @@ class TransferHttpEngine(
         if (!id.matches(Regex("[0-9a-f]{32}"))) return fail(out, 400, "Invalid upload ID")
         val state = staged.status(id) ?: return fail(out, 404, "Upload session not found")
         response(out, 200,
-            "{\\"received\\":${state.received},\\"total\\":${state.total},\\"complete\\":${state.complete}}",
+            "{\"received\":${state.received},\"total\":${state.total},\"complete\":${state.complete}}",
             "application/json; charset=utf-8")
     }
 
@@ -533,10 +533,10 @@ class TransferHttpEngine(
             val state = staged.append(id, name, folders, total, offset, length, digest, input)
             progress(state.received, state.total)
             response(out, if (state.complete) 201 else 200,
-                "{\\"received\\":${state.received},\\"total\\":${state.total},\\"complete\\":${state.complete}}",
+                "{\"received\":${state.received},\"total\":${state.total},\"complete\":${state.complete}}",
                 "application/json; charset=utf-8")
         } catch (conflict: ResumableBrowserUpload.OffsetConflict) {
-            response(out, 409, "{\\"expectedOffset\\":${conflict.expected}}", "application/json; charset=utf-8")
+            response(out, 409, "{\"expectedOffset\":${conflict.expected}}", "application/json; charset=utf-8")
         } catch (_: UploadHashMismatchException) {
             fail(out, 422, "Staged upload SHA-256 mismatch")
         } catch (_: UploadPermissionRevokedException) {
