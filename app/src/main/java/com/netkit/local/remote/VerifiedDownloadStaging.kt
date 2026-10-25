@@ -98,7 +98,8 @@ object VerifiedDownloadStaging {
         val length = part.length()
         output().use { destination -> FileInputStream(part).use { it.copyTo(destination, BLOCK) } }
         readback().use { verifyReadback(it, length, expectedDigest) }
-        check(part.delete()) { "Verified download published but could not clear private staging" }
+        // The SAF document is already verified: failed cache cleanup must not report a false transfer failure.
+        part.delete()
     }
 
     private fun readExactly(input: InputStream, buffer: ByteArray, size: Int) {
