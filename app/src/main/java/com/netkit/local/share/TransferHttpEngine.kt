@@ -187,6 +187,7 @@ class TransferHttpEngine(
                         method == "GET" && path.startsWith("$prefix/file/") -> download(out, path.removePrefix("$prefix/file/"), headers["range"])
                         method == "GET" && path.startsWith("$prefix/checksum/") -> checksum(out, path.removePrefix("$prefix/checksum/"))
                         method == "GET" && path.startsWith("$prefix/upload-status/") -> uploadStatus(out, path.removePrefix("$prefix/upload-status/"))
+                        method == "POST" && path.startsWith("$prefix/upload-cancel/") -> uploadCancel(out, path.removePrefix("$prefix/upload-cancel/"), headers)
                         method == "POST" && path == "$prefix/upload-chunk" -> uploadChunk(input, out, headers)
                         method == "POST" && path == "$prefix/upload" -> upload(input, out, headers)
                         else -> fail(out, 405, "Unsupported route")
@@ -505,6 +506,20 @@ class TransferHttpEngine(
             "application/json; charset=utf-8")
     }
 
+    /** Explicitly discard a resumable staging part; committed SAF files cannot be undone. */
+    private fun uploadCancel(out: OutputStream, id: String, headers: Map<String, String>) {
+        if (!id.matches(Regex("[0-9a-f]{32}"))) return fail(out, 400, "Invalid upload ID")
+        if (headers["content-length"] != null && headers["content-length"] != "0")
+            return fail(out, 400, "Cancellation must not contain a body")
+        val staged = resumable ?: return fail(out, 501, "Resumable uploads unavailable")
+        try {
+            val cancelled = staged.cancel(id)
+            response(out, 200, "{\"cancelled\":$cancelled}", "application/json; charset=utf-8")
+        } catch (_: IOException) {
+            fail(out, 500, "Could not discard staged upload")
+        }
+    }
+
     /** At most 1 MiB per request; a full verified SAF commit occurs only after all bytes arrive. */
     private fun uploadChunk(input: InputStream, out: OutputStream, h: Map<String, String>) {
         if (!storage.canUpload()) return fail(out, 403, "Browser uploads disabled")
@@ -664,6 +679,7 @@ class TransferHttpEngine(
         const el=id=>document.getElementById(id);
         const humanBytes=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':n>=1024?(n/1024).toFixed(1)+' KB':n+' B';
         let activeRequest=null, receivingAllowed=false;
+        let activeUploadId=null, activeUploadKey=null;
         const foldersState={dir:'root',offset:0,stack:[]};
         function folderLink(folderId) {
           foldersState.stack.push(foldersState.dir);
@@ -780,6 +796,7 @@ class TransferHttpEngine(
           el('status').textContent='تحضير نقل قابل للاستئناف: '+file.name;
           const hash=await sha256SmallFile(file);
           const key=resumeKey(file),id=getResumeId(key);
+          activeUploadKey=key;activeUploadId=id;
           let state=await uploadStatus(id);
           if(state&&state.total!==file.size)throw Error('Saved upload has different file length');
           let offset=state?.received??0,retries=0;
@@ -808,15 +825,30 @@ class TransferHttpEngine(
             const eta=speed>0?(file.size-offset)/speed:0;
             el('stats').textContent=pct+'% · '+humanBytes(offset)+' / '+humanBytes(file.size)+' · '+humanBytes(speed)+'/s · '+Math.ceil(eta)+'s remaining';
           }
-          forgetResumeId(key);
+          forgetResumeId(key);activeUploadId=null;activeUploadKey=null;
           return true; // Server verified SHA-256 again while publishing into SAF.
         }
-        el('cancel').onclick=()=>{cancelRequested=true;if(activeRequest)activeRequest.abort()};
+        el('cancel').onclick=()=>{
+          cancelRequested=true;
+          if(activeRequest)activeRequest.abort();
+          const id=activeUploadId,key=activeUploadKey;
+          if(key)forgetResumeId(key);
+          if(id)fetch(base+'/upload-cancel/'+id,{method:'POST',cache:'no-store'})
+            .then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json()})
+            .then(result=>{
+              el('status').textContent=result.cancelled
+                ?'تم إلغاء الرفع وحذف الأجزاء المؤقتة.'
+                :'تعذّر إلغاء الرفع: ربما اكتمل حفظ الملف بالفعل.';
+            }).catch(e=>{
+              el('status').textContent='تعذّر تأكيد حذف الأجزاء المؤقتة: '+e.message;
+            });
+        };
         el('upload').onclick=async()=>{
           const files=[...Array.from(el('choose').files),...Array.from(el('chooseFolder').files)];if(!files.length)return;
           cancelRequested=false;resetButtons(true);el('bar').style.width='0%';
           try {let verified=0;
           for(let i=0;i<files.length;i++) {
+            if(cancelRequested)throw Error('Transfer cancelled');
             el('status').textContent='إرسال '+files[i].name+' ('+(i+1)+'/'+files.length+')';
             if(await sendFile(files[i],i,files.length))verified++;
           }
@@ -824,7 +856,7 @@ class TransferHttpEngine(
           el('status').textContent='✅ الملفات وصلت بنجاح · '+verified+'/'+files.length+' تحقق SHA-256';el('choose').value='';el('chooseFolder').value='';
           await refresh();
           } catch(e) {el('status').textContent='⚠️ '+e.message}
-          finally {activeRequest=null;resetButtons(false)}
+          finally {activeRequest=null;activeUploadId=null;activeUploadKey=null;resetButtons(false)}
         };
         refresh().catch(e=>{el('files').textContent='تعذّر قراءة الملفات: '+e.message;resetButtons(false)});
         loadFolder(true).catch(e=>{el('folders').textContent='تعذّر قراءة المجلد: '+e.message});
