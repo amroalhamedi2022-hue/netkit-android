@@ -410,7 +410,7 @@ fun main(args: Array<String>) {
             "POST").first == 404)
         val cancelReply = request(root + "/upload-cancel/" + cancelId, "POST")
         check(cancelReply.first == 200 &&
-            String(cancelReply.second).contains("\\"cancelled\\":true")) {
+            String(cancelReply.second).contains("\"cancelled\":true")) {
             "HTTPS cancel did not confirm staged upload cleanup"
         }
         check(request(root + "/upload-status/" + cancelId).first == 404)
@@ -420,9 +420,9 @@ fun main(args: Array<String>) {
         }
         check("cancel-me.bin" !in uploaded)
         check(String(request(root + "/upload-cancel/" + cancelId, "POST").second)
-            .contains("\\"cancelled\\":false"))
+            .contains("\"cancelled\":false"))
         check(String(request(root + "/upload-cancel/" + resumeId, "POST").second)
-            .contains("\\"cancelled\\":false")) {
+            .contains("\"cancelled\":false")) {
             "A completed SAF file must not be falsely reported as cancelled"
         }
         check(uploaded["resumed.txt"]!!.contentEquals(resumeData))
