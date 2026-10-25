@@ -7,6 +7,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.LinkedHashMap
+import java.util.LinkedHashSet
 
 /**
  * Bounded, opt-in HTTPS browser upload resume within ONE active share session.
@@ -52,7 +53,7 @@ internal class ResumableBrowserUpload(
     private val sessions = LinkedHashMap<String, Session>()
     // Retired IDs stay blocked for this share lifetime. If the bounded ledger fills,
     // fail closed for NEW sessions instead of evicting an ID that a delayed request could replay.
-    private val cancelledIds = LinkedHashMap<String, Long>()
+    private val cancelledIds = LinkedHashSet<String>()
     private var newSessionAdmissionClosed = false
     @Volatile private var closed = false
 
@@ -103,7 +104,7 @@ internal class ResumableBrowserUpload(
     }
 
     private fun retireIdLocked(id: String) {
-        if (cancelledIds.containsKey(id)) return
+        if (cancelledIds.contains(id)) return
         if (cancelledIds.size >= MAX_CANCELLED_IDS) {
             // Never evict a live tombstone: doing so would allow a delayed first chunk
             // to resurrect an expired/cancelled upload. Existing sessions may finish,
@@ -111,7 +112,7 @@ internal class ResumableBrowserUpload(
             newSessionAdmissionClosed = true
             return
         }
-        cancelledIds[id] = clockMillis()
+        cancelledIds.add(id)
     }
 
     fun append(
@@ -136,7 +137,7 @@ internal class ResumableBrowserUpload(
         val epoch = consentEpoch()
         val session = synchronized(lock) {
             cleanupLocked()
-            if (cancelledIds.containsKey(id)) {
+            if (cancelledIds.contains(id)) {
                 throw InvalidSession("Retired upload ID cannot be resumed")
             }
             val existing = sessions[id]
