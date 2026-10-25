@@ -3,13 +3,24 @@ package com.netkit.local.connectivity
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import androidx.compose.runtime.mutableStateListOf
 
 /** LAN DNS-SD peer sightings. Discovery is NOT authentication or trusted pairing. */
 class PeerDiscovery(context: Context) {
     data class Peer(val name: String, val address: String, val port: Int)
-    private val manager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val appContext = context.applicationContext
+    private val manager = appContext.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    private val androidMulticastLock = wifi.createMulticastLock("NetKitPeerDiscovery").apply {
+        setReferenceCounted(false)
+    }
+    private val multicastLease = MulticastLockLease(
+        acquireAction = { if (!androidMulticastLock.isHeld) androidMulticastLock.acquire() },
+        releaseAction = { if (androidMulticastLock.isHeld) androidMulticastLock.release() }
+    )
+    val discoveryWarning = androidx.compose.runtime.mutableStateOf<String?>(null)
     val found = mutableStateListOf<Peer>()
     private var callback: NsdManager.DiscoveryListener? = null
     private var registration: NsdManager.RegistrationListener? = null
@@ -21,6 +32,11 @@ class PeerDiscovery(context: Context) {
         if (callback != null) return
         found.clear()
         pendingResolutions.clear()
+        discoveryWarning.value = null
+        runCatching { multicastLease.acquire() }.onFailure {
+            // Discovery can still work on some interfaces, but never hide the degraded receive path.
+            discoveryWarning.value = "تعذر تفعيل استقبال multicast؛ قد لا تظهر بعض الأجهزة."
+        }
         val epoch = ++discoveryEpoch
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) = Unit
@@ -70,7 +86,13 @@ class PeerDiscovery(context: Context) {
         }
         callback = listener
         runCatching { manager.discoverServices("_netkit._tcp.", NsdManager.PROTOCOL_DNS_SD, listener) }
-            .onFailure { callback = null; discoveryEpoch++; pendingResolutions.clear() }
+            .onFailure {
+                callback = null
+                discoveryEpoch++
+                pendingResolutions.clear()
+                runCatching { multicastLease.release() }
+                discoveryWarning.value = "تعذر بدء اكتشاف DNS-SD على هذه الشبكة."
+            }
     }
     fun advertise(port: Int) {
         stopAdvertising()
@@ -97,6 +119,9 @@ class PeerDiscovery(context: Context) {
         found.clear()
         callback?.let { runCatching { manager.stopServiceDiscovery(it) } }
         callback = null
+        runCatching { multicastLease.release() }.onFailure {
+            discoveryWarning.value = "تعذر تحرير قفل استقبال multicast؛ أعد فتح شاشة الأجهزة للتحقق."
+        }
     }
     fun close() { stop(); stopAdvertising() }
 }
