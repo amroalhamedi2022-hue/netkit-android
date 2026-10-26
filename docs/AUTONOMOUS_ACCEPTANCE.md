@@ -182,3 +182,17 @@ No merge, no main changes, no new dependency or paid API.
 
 No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 
+
+
+## M54 — Reject invisible Unicode spoofing in SAF ZIP names (2026-10-27)
+
+**Scope:** PR #7 only; its base remains `feature/netkit-reliability-20261023`. No rebase or cross-branch cherry-pick was performed.
+
+- **Production change:** `DirectoryArchive.safeSegment` now rejects additional default-ignorable filename controls (soft hyphen, combining grapheme joiner, Mongolian vowel separator, zero-width space, word-joiner/invisible operators) and Unicode Tag characters in supplementary planes. Arabic ZWNJ (U+200C) and emoji ZWJ (U+200D) remain allowed.
+- **Regression coverage:** rejects the added invisible/tag cases; round-trips an Arabic filename containing ZWNJ and a joined family-emoji filename.
+- **Source commit:** `aee98da82b15dd962456d898733b6c9cfdd6a029`
+- **Test commits:** `11f8ca5d14f26cf311caee95374bad67bfa9bf06`, `bfa4aed31381db0c0d50a4037cea0cbbcefda20b` (current source/test head before this documentation-only update).
+- **Exact-head CI:** **NOT VERIFIED in this run**. The PR branch workflow is push-enabled, but the available run lookup only returns pull-request-triggered runs; no run ID for the push run was exposed. Do not substitute the earlier green run on `ea6e1a6099a84e67988252f3d0e11e1c39efba8e`.
+- **Workflow evidence:** [NetKit development workflow filtered to this branch](https://github.com/amroalhamedi2022-hue/netkit-android/actions/workflows/netkit-import-build.yml?query=branch%3Aautomation%2Fnetkit-zip-stall-guard-20261023).
+- **Acceptance:** source diff reviewed **PASS**; exact-head Kotlin/JVM CI **NOT TESTED/NOT VERIFIED**; Android compile/APK **NOT TESTED**; SAF provider and Windows extraction on real devices **NOT TESTED**.
+- **Safety:** no merge, no `main` changes, no new dependency or APK. PR #7 remains non-mergeable and independent from PR #6.
