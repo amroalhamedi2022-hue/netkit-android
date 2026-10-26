@@ -50,7 +50,7 @@ private fun isSafeTransferReference(value: String): Boolean {
         if (code <= 0x1f || code in 0x7f..0x9f ||
             code == 0xfffd || code == 0x00ad || code == 0x034f ||
             code == 0x061c || code == 0x180e ||
-            code in 0x200b..0x200f || code in 0x2028..0x202e ||
+            (code == 0x200b || code in 0x200e..0x200f) || code in 0x2028..0x202e ||
             code in 0x2060..0x206f || code == 0xfeff ||
             code in 0xfff9..0xfffb) return false
         index++
