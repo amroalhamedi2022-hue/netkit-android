@@ -20,6 +20,19 @@ fun main() {
         check(cleanupFailure.message == "stale partial rejected")
         check(cleanupFailure.suppressed.any { it.message == "Could not remove stale partial download" })
         check(undeletedPart.isFile) // failed cleanup is visible; no false "removed" claim
+        val throwingPart = File(dir, "throwing.part").apply { writeBytes(byteArrayOf(4, 5, 6)) }
+        val throwingCleanup = stalePartialFailure(throwingPart, "stale partial rejected") {
+            throw SecurityException("simulated provider permission failure")
+        }
+        check(throwingCleanup.message == "stale partial rejected")
+        val suppressedCleanup = throwingCleanup.suppressed.single()
+        check(suppressedCleanup.message == "Could not remove stale partial download")
+        check(suppressedCleanup.cause is SecurityException)
+        check(throwingPart.isFile) // the primary integrity error remains visible
+        val lyingPart = File(dir, "lying-delete.part").apply { writeBytes(byteArrayOf(7)) }
+        val lyingCleanup = stalePartialFailure(lyingPart, "stale partial rejected") { true }
+        check(lyingCleanup.suppressed.any { it.message == "Could not remove stale partial download" })
+        check(lyingPart.isFile) // a reported success is not trusted without path verification
         val removedPart = File(dir, "removed.part").apply { writeBytes(byteArrayOf(1)) }
         val removalFailure = stalePartialFailure(removedPart, "stale partial rejected")
         check(!removedPart.exists())
