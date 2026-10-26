@@ -27,11 +27,18 @@ fun main() {
         val restored = TransferQueue(FileTransferJournal(file))
         check(restored.resume(first.id)?.state == TransferState.QUEUED)
         check(restored.next()?.id == first.id)
+        check(restored.progress(first.id, 70)?.completedBytes == 70L)
+        check(restored.confirmRemoteOffset(first.id, 40)?.completedBytes == 40L) // verified server offset may rewind
+        check(restored.confirmRemoteOffset(first.id, 101) == null) // beyond declared file size
+        check(restored.confirmRemoteOffset(first.id, -1) == null) // negative offsets fail closed
+        check(restored.snapshot().single { it.id == first.id }.completedBytes == 40L)
+        check(FileTransferJournal(file).load().single { it.id == first.id }.completedBytes == 40L) // durable reconciliation
         check(restored.fail(first.id, "timeout")?.state == TransferState.FAILED)
+        check(restored.confirmRemoteOffset(first.id, 20) == null) // only a running task can reconcile
         check(restored.resume(first.id)?.state == TransferState.QUEUED)
         check(restored.cancel(first.id)?.state == TransferState.CANCELLED)
         check(restored.resume(first.id) == null)
         check(TransferQueue(FileTransferJournal(file)).snapshot().single { it.id == second.id }.state == TransferState.COMPLETED)
-        println("PASS: exact task selection, durable journal, retry, recover, monotonic progress, cancel")
+        println("PASS: exact task selection, durable journal, confirmed remote-offset reconciliation, retry, recover, cancel")
     } finally { dir.deleteRecursively() }
 }
