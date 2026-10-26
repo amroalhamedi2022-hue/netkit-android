@@ -17,6 +17,8 @@ data class TransferTask(
     val destination: String,
     val size: Long,
     val completedBytes: Long = 0,
+    /** True after interruption/pause/failure until the peer's durable offset is confirmed. */
+    val offsetNeedsConfirmation: Boolean = false,
     val state: TransferState = TransferState.QUEUED,
     val attempts: Int = 0,
     val error: String = ""
@@ -36,9 +38,16 @@ private const val MAX_TRANSFER_JOURNAL_BYTES = 16L * 1024 * 1024
 class TransferQueue(private val journal: TransferJournal) {
     private val mutex = Any()
     private val tasks = journal.load().map {
-        if (it.state == TransferState.RUNNING) it.copy(
-            state = TransferState.PAUSED, error = "Interrupted; verify remote offset before retry"
-        ) else it
+        when (it.state) {
+            TransferState.RUNNING -> it.copy(
+                state = TransferState.PAUSED,
+                offsetNeedsConfirmation = true,
+                error = "Interrupted; verify remote offset before retry"
+            )
+            TransferState.PAUSED, TransferState.FAILED ->
+                it.copy(offsetNeedsConfirmation = true)
+            else -> it
+        }
     }.toMutableList()
 
     init { journal.save(tasks) }
@@ -67,7 +76,9 @@ class TransferQueue(private val journal: TransferJournal) {
     }
 
     fun progress(id: String, bytes: Long): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
+        val index = tasks.indexOfFirst {
+            it.id == id && it.state == TransferState.RUNNING && !it.offsetNeedsConfirmation
+        }
         if (index < 0) null else edit(index) {
             it.copy(completedBytes = bytes.coerceIn(it.completedBytes, it.size))
         }
@@ -83,20 +94,39 @@ class TransferQueue(private val journal: TransferJournal) {
             it.id == id && it.state == TransferState.RUNNING && confirmedBytes <= it.size
         }
         if (index < 0) null else edit(index) {
-            it.copy(completedBytes = confirmedBytes)
+            it.copy(completedBytes = confirmedBytes, offsetNeedsConfirmation = false)
         }
     }
 
     // API state changes don't magically pause an existing network stream. Execution controller must close it.
-    fun pause(id: String) = transition(id, setOf(TransferState.RUNNING, TransferState.QUEUED), TransferState.PAUSED)
-    fun resume(id: String) = transition(id, setOf(TransferState.PAUSED, TransferState.FAILED), TransferState.QUEUED)
+    fun pause(id: String): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst {
+            it.id == id && it.state in setOf(TransferState.RUNNING, TransferState.QUEUED)
+        }
+        if (index < 0) null else edit(index) {
+            it.copy(
+                state = TransferState.PAUSED,
+                offsetNeedsConfirmation = it.offsetNeedsConfirmation || it.state == TransferState.RUNNING
+            )
+        }
+    }
+
+    fun resume(id: String): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst {
+            it.id == id && it.state in setOf(TransferState.PAUSED, TransferState.FAILED)
+        }
+        if (index < 0) null else edit(index) {
+            it.copy(state = TransferState.QUEUED, offsetNeedsConfirmation = true)
+        }
+    }
     fun cancel(id: String) = transition(id,
         setOf(TransferState.QUEUED, TransferState.RUNNING, TransferState.PAUSED, TransferState.FAILED), TransferState.CANCELLED)
 
     /** Complete only when the transport has accounted for every declared byte. */
     fun finish(id: String): TransferTask? = synchronized(mutex) {
         val index = tasks.indexOfFirst {
-            it.id == id && it.state == TransferState.RUNNING && it.completedBytes == it.size
+            it.id == id && it.state == TransferState.RUNNING &&
+                !it.offsetNeedsConfirmation && it.completedBytes == it.size
         }
         if (index < 0) null else edit(index) {
             it.copy(state = TransferState.COMPLETED, error = "")
@@ -106,7 +136,11 @@ class TransferQueue(private val journal: TransferJournal) {
     fun fail(id: String, message: String): TransferTask? = synchronized(mutex) {
         val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
         if (index < 0) null else edit(index) {
-            it.copy(state = TransferState.FAILED, error = message.take(MAX_TRANSFER_ERROR_LENGTH))
+            it.copy(
+                state = TransferState.FAILED,
+                offsetNeedsConfirmation = true,
+                error = message.take(MAX_TRANSFER_ERROR_LENGTH)
+            )
         }
     }
 
@@ -150,6 +184,13 @@ class FileTransferJournal(private val file: File) : TransferJournal {
             val done = required("done").toLong()
             val attempts = required("attempts").toInt()
             val error = properties.getProperty(prefix + "error", "")
+            val offsetNeedsConfirmation = properties.getProperty(prefix + "verifyOffset")?.let {
+                when (it) {
+                    "true" -> true
+                    "false" -> false
+                    else -> throw IllegalArgumentException("Invalid saved offset verification flag")
+                }
+            } ?: false
             require(id.isNotBlank() && id.length <= 64 && ids.add(id)) {
                 "Invalid or duplicate saved transfer ID"
             }
@@ -161,7 +202,9 @@ class FileTransferJournal(private val file: File) : TransferJournal {
                 error.length <= MAX_TRANSFER_ERROR_LENGTH) { "Invalid saved transfer state" }
             TransferTask(
                 id = id, source = source, destination = destination,
-                size = size, completedBytes = done, state = TransferState.valueOf(required("state")),
+                size = size, completedBytes = done,
+                offsetNeedsConfirmation = offsetNeedsConfirmation,
+                state = TransferState.valueOf(required("state")),
                 attempts = attempts, error = error
             )
         }
@@ -192,6 +235,7 @@ class FileTransferJournal(private val file: File) : TransferJournal {
             properties.setProperty(prefix + "dest", task.destination)
             properties.setProperty(prefix + "size", task.size.toString())
             properties.setProperty(prefix + "done", task.completedBytes.toString())
+            properties.setProperty(prefix + "verifyOffset", task.offsetNeedsConfirmation.toString())
             properties.setProperty(prefix + "state", task.state.name)
             properties.setProperty(prefix + "attempts", task.attempts.toString())
             properties.setProperty(prefix + "error", task.error)
