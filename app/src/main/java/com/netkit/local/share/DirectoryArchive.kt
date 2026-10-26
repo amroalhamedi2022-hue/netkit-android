@@ -39,15 +39,18 @@ object DirectoryArchive {
         maximumEntries: Int = 20_000,
         maximumBytes: Long = 64L * 1024 * 1024 * 1024,
         includeChecksums: Boolean = false,
+        maximumChecksumManifestBytes: Int = 64 * 1024 * 1024,
         checkActive: () -> Unit = {}
     ): ArchiveResult {
         require(maximumEntries in 1..100_000)
         require(maximumBytes > 0)
+        require(maximumChecksumManifestBytes in 1..(64 * 1024 * 1024))
         val visited = HashSet<String>()
         val paths = HashSet<String>()
         // Optional checksum sidecar is reserved before visiting any untrusted SAF name.
         // It detects accidental transfer/extraction corruption, not server authenticity.
         val checksumLines = StringBuilder()
+        var checksumBytes = 0L
         val checksumName = "NetKit-SHA256SUMS.txt"
         if (includeChecksums) paths.add(checksumName.lowercase(Locale.ROOT))
         var entries = 0
@@ -165,7 +168,13 @@ object DirectoryArchive {
                         }
                         if (digest != null) {
                             val hex = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-                            checksumLines.append(hex).append("  ").append(path).append('\n')
+                            val line = "$hex  $path\n"
+                            val lineBytes = line.toByteArray(Charsets.UTF_8).size.toLong()
+                            check(lineBytes <= maximumChecksumManifestBytes.toLong() - checksumBytes) {
+                                "Archive checksum manifest too large"
+                            }
+                            checksumLines.append(line)
+                            checksumBytes += lineBytes
                         }
                     }
                 }
@@ -179,7 +188,8 @@ object DirectoryArchive {
         ensureActive()
         if (includeChecksums) {
             val manifest = checksumLines.toString().toByteArray(Charsets.UTF_8)
-            check(manifest.size <= 64 * 1024 * 1024) { "Archive checksum manifest too large" }
+            check(manifest.size.toLong() == checksumBytes) { "Archive checksum manifest size mismatch" }
+            check(manifest.size <= maximumChecksumManifestBytes) { "Archive checksum manifest too large" }
             check(manifest.size.toLong() <= maximumBytes - bytes) { "Archive byte budget exceeded" }
             ensureActive()
             zip.putNextEntry(ZipEntry(checksumName))
