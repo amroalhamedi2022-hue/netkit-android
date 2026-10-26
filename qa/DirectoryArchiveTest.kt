@@ -7,6 +7,10 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 fun main() {
+    check((1..6).map { archiveEmptyReadBackoffMillis(it) } ==
+        listOf(1L, 2L, 4L, 8L, 16L, 16L))
+    check(runCatching { archiveEmptyReadBackoffMillis(0) }.exceptionOrNull() is IllegalArgumentException)
+
     run {
         // The root document ID is provider-controlled input too; reject it before listing.
         var calls = 0

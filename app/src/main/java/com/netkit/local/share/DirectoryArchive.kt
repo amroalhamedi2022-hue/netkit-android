@@ -18,6 +18,12 @@ interface ArchiveDirectorySource {
 
 data class ArchiveResult(val entries: Int, val bytes: Long)
 
+/** Bounded exponential pause for non-conforming SAF streams that transiently return zero. */
+internal fun archiveEmptyReadBackoffMillis(attempt: Int): Long {
+    require(attempt > 0) { "Empty-read attempt must be positive" }
+    return minOf(16L, (1 shl (attempt - 1).coerceAtMost(4)).toLong())
+}
+
 /**
  * Streams an authorized folder tree as ZIP without making a temporary copy on Android.
  * The caller must enforce HTTPS authorization and scope ArchiveDirectorySource to its SAF root.
@@ -181,7 +187,14 @@ object DirectoryArchive {
                                     // Some SAF providers return a transient zero; a broken
                                     // provider must not spin forever and monopolize a server worker.
                                     check(++consecutiveEmptyReads <= 32) { "Shared file read stalled" }
-                                    Thread.yield()
+                                    try {
+                                        Thread.sleep(archiveEmptyReadBackoffMillis(consecutiveEmptyReads))
+                                    } catch (interrupted: InterruptedException) {
+                                        Thread.currentThread().interrupt()
+                                        throw InterruptedIOException("Folder ZIP export cancelled").also {
+                                            it.initCause(interrupted)
+                                        }
+                                    }
                                     continue
                                 }
                                 consecutiveEmptyReads = 0
