@@ -108,7 +108,10 @@ object DirectoryArchive {
                     it.code in 0x202a..0x202e || it.code in 0x2066..0x2069
             }) { "Unsafe archive filename controls" }
             require(!segment.endsWith('.') && !segment.endsWith(' ')) { "Unsafe Windows archive filename" }
-            val stem = segment.substringBefore('.').uppercase(Locale.ROOT)
+            // Win32 normalizes trailing ASCII spaces/dots in the device-name stem
+            // before the extension too (for example, "CON .txt"). Check the
+            // normalized stem, not just the literal substring before the first dot.
+            val stem = segment.substringBefore('.').trimEnd(' ', '.').uppercase(Locale.ROOT)
             val reserved = stem in setOf("CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$") ||
                 Regex("^(COM|LPT)[1-9¹²³]$").matches(stem)
             require(!reserved) { "Reserved Windows archive filename" }
