@@ -131,3 +131,28 @@ AUTOMATION_COMPLETE: BLOCKED
 6. Verified remote-offset resume, FTP/SFTP server, Pad 5↔Windows acceptance: **FAIL / not implemented**.
 
 **Boundary:** protocol completion is not a cryptographic proof. Unknown-size completion relies on FTP/SFTP success; optional SHA readback remains separate. This is a real upload/download queue correctness fix, **not** verified remote-offset resumption. No APK/EXE build was requested for this source-only gate.
+
+
+## M43 — Bounded recursive ZIP checksum manifest (2026-10-26)
+
+**Scope:** PR #7 only; branch `automation/netkit-zip-stall-guard-20261023`, based on PR #6's active feature branch. No branch mixing.
+
+- **Source commit:** `3dc5fd7dd75c64179285ef1af4030ed15c4f8852`
+- **Regression-test head:** `c636cd98c0f5525c46f0840d5d984bc380ce1f9c`
+- **Source QA:** [run 40324439310](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40324439310) — **PASS**.
+- **Targeted Android compile:** [run 40324439323](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40324439323) — **PASS**.
+
+### Functional change
+- Enforces the ZIP checksum sidecar's 64 MiB maximum incrementally, before appending each UTF-8 line to the in-memory manifest; a huge tree can no longer grow the manifest unchecked and only fail after allocation.
+- Verifies the accumulated UTF-8 byte count matches the final manifest bytes.
+- Added regressions for an undersized checksum budget and a non-advancing SAF pagination cursor (the latter must fail closed instead of repeating a page).
+
+### Acceptance gates
+- Kotlin/JVM transport and recursive SAF ZIP suite: **PASS**
+- Static source checks: **PASS**
+- Android compile on tested head: **PASS**
+- Full APK for real Pad 5 folder/ZIP acceptance: **PENDING** (targeted device-test build requested after this ledger update).
+- Physical SAF provider behavior and Windows extraction: **NOT TESTED**.
+- FTP/SFTP server roles and protocol-confirmed network resume: **NOT IMPLEMENTED / NOT TESTED**.
+
+No merge, no main changes, no new dependency or paid API.
