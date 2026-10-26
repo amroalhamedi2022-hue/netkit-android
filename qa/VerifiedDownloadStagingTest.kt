@@ -62,6 +62,35 @@ fun main() {
         // Complete staging must not reopen the network, but still needs readback.
         VerifiedDownloadStaging.stageFromOffset({ error("should not reopen completed stage") },
             offsetPart, bytes.size.toLong())
+        // An interrupted true-offset download must leave a resumable prefix.
+        val interruptedOffset = File(dir, "interrupted-offset.part").apply {
+            writeBytes(bytes.copyOf(73_000))
+        }
+        fail {
+            VerifiedDownloadStaging.stageFromOffset({ offset ->
+                check(offset == 73_000L)
+                object : ByteArrayInputStream(bytes.copyOfRange(offset.toInt(), bytes.size)) {
+                    var consumed = 0
+                    override fun read(b: ByteArray, off: Int, len: Int): Int {
+                        if (consumed >= 12_000) throw IOException("offset disconnected")
+                        val n = super.read(b, off, minOf(len, 12_000 - consumed))
+                        if (n > 0) consumed += n
+                        return n
+                    }
+                }
+            }, interruptedOffset, bytes.size.toLong())
+        }
+        check(interruptedOffset.length() == 85_000L)
+        val retryOffsets = mutableListOf<Long>()
+        val retryDigest = VerifiedDownloadStaging.stageFromOffset({ offset ->
+            retryOffsets += offset
+            ByteArrayInputStream(bytes.copyOfRange(offset.toInt(), bytes.size))
+        }, interruptedOffset, bytes.size.toLong())
+        check(retryOffsets == listOf(85_000L))
+        check(interruptedOffset.readBytes().contentEquals(bytes))
+        VerifiedDownloadStaging.verifyReadback(
+            ByteArrayInputStream(bytes), bytes.size.toLong(), retryDigest)
+
         // Server ignoring REST/offset must fail rather than silently duplicating.
         val ignored = File(dir, "ignored.part").apply { writeBytes(bytes.copyOf(100)) }
         fail { VerifiedDownloadStaging.stageFromOffset({ ByteArrayInputStream(bytes) },
