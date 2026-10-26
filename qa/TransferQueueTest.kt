@@ -173,6 +173,27 @@ fun main() {
         check(recoveredRetry.confirmRemoteOffset(uncertain.id, 4)?.offsetNeedsConfirmation == false)
         check(recoveredRetry.finish(uncertain.id)?.state == TransferState.COMPLETED)
 
+        // Remote exception text is untrusted UI/persistence data: strip bidi and controls,
+        // while preserving Arabic ZWNJ and emoji ZWJ sequences.
+        val unsafeErrorTask = queue.add("content://safe/error", "peer/error", 1)
+        check(queue.begin(unsafeErrorTask.id) != null)
+        val sanitizedError = queue.fail(unsafeErrorTask.id,
+            "peer\\u202Etxt\\nline\\u0085bad\\uD800")!!
+        check(sanitizedError.error == "peer txt line bad")
+        check(FileTransferJournal(file).load().single { it.id == unsafeErrorTask.id }.error ==
+            "peer txt line bad")
+        val localizedErrorTask = queue.add("content://safe/localized-error", "peer/localized-error", 1)
+        check(queue.begin(localizedErrorTask.id) != null)
+        val localizedError = "فشل\\u200cالنقل 👨‍👩‍👧‍👦"
+        check(queue.fail(localizedErrorTask.id, localizedError)?.error == localizedError)
+        val unsafeDirectSave = runCatching {
+            FileTransferJournal(File(dir, "unsafe-error-save.properties")).save(listOf(
+                TransferTask("unsafe-error", "content://safe/a", "peer/a", 1,
+                    error = "bad\\u202Etext")
+            ))
+        }.exceptionOrNull()
+        check(unsafeDirectSave is IllegalArgumentException)
+
         println("PASS: durable queue, confirmed offsets, corruption rejection, size bounds, retry and recovery")
     } finally { dir.deleteRecursively() }
 }

@@ -58,6 +58,31 @@ private fun isSafeTransferReference(value: String): Boolean {
     return true
 }
 
+/** Normalize untrusted transport exceptions before persisting or displaying them. */
+private fun sanitizeTransferError(value: String): String {
+    val output = StringBuilder()
+    var offset = 0
+    // Bound work even if a provider throws an enormous string made only of controls.
+    while (offset < value.length && output.length < MAX_TRANSFER_ERROR_LENGTH &&
+        offset < MAX_TRANSFER_ERROR_LENGTH * 4) {
+        val codePoint = Character.codePointAt(value, offset)
+        offset += Character.charCount(codePoint)
+        val unsafe = codePoint in 0xD800..0xDFFF || codePoint < 0x20 ||
+            codePoint in 0x7f..0x9f || codePoint == 0xfffd ||
+            codePoint == 0x00ad || codePoint == 0x034f || codePoint == 0x061c ||
+            codePoint == 0x180e || codePoint == 0x200b ||
+            codePoint in 0x200e..0x200f || codePoint in 0x2028..0x202e ||
+            codePoint in 0x2060..0x206f || codePoint == 0xfeff ||
+            codePoint in 0xfff9..0xfffb || codePoint in 0xe0000..0xe007f
+        if (unsafe) {
+            if (output.isNotEmpty() && output[output.length - 1] != ' ') output.append(' ')
+        } else {
+            output.appendCodePoint(codePoint)
+        }
+    }
+    return output.toString().trim().take(MAX_TRANSFER_ERROR_LENGTH)
+}
+
 /** Thread-safe state transitions; journal failures must never silently leave an in-memory change. */
 class TransferQueue(private val journal: TransferJournal) {
     private val mutex = Any()
@@ -166,7 +191,7 @@ class TransferQueue(private val journal: TransferJournal) {
             it.copy(
                 state = TransferState.FAILED,
                 offsetNeedsConfirmation = true,
-                error = message.take(MAX_TRANSFER_ERROR_LENGTH)
+                error = sanitizeTransferError(message).ifBlank { "Transfer failed" }
             )
         }
     }
@@ -210,7 +235,7 @@ class FileTransferJournal(private val file: File) : TransferJournal {
             val size = required("size").toLong()
             val done = required("done").toLong()
             val attempts = required("attempts").toInt()
-            val error = properties.getProperty(prefix + "error", "")
+            val error = sanitizeTransferError(properties.getProperty(prefix + "error", ""))
             val offsetNeedsConfirmation = properties.getProperty(prefix + "verifyOffset")?.let {
                 when (it) {
                     "true" -> true
@@ -253,7 +278,8 @@ class FileTransferJournal(private val file: File) : TransferJournal {
                 "Invalid transfer reference"
             }
             require(task.size >= 0 && task.completedBytes in 0..task.size &&
-                task.attempts >= 0 && task.error.length <= MAX_TRANSFER_ERROR_LENGTH) {
+                task.attempts >= 0 && task.error.length <= MAX_TRANSFER_ERROR_LENGTH &&
+                task.error == sanitizeTransferError(task.error)) {
                 "Invalid transfer task state"
             }
             require(task.state != TransferState.COMPLETED ||
