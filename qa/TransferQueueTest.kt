@@ -34,11 +34,13 @@ fun main() {
         check(queue.begin(second.id) == null)
         check(queue.snapshot().first().state == TransferState.QUEUED)
         check(queue.progress(second.id, 9)?.completedBytes == 9L)
-        check(queue.progress(second.id, 4)?.completedBytes == 9L) // monotonic
-        check(queue.progress(second.id, 99)?.completedBytes == 15L) // clamped
+        check(queue.progress(second.id, 4) == null) // reject regressions, do not mask them
+        check(queue.progress(second.id, 99) == null) // reject overrun instead of clamping
+        check(queue.progress(second.id, -1) == null) // reject negative transport reports
+        check(queue.snapshot().single { it.id == second.id }.completedBytes == 9L)
         check(queue.pause(second.id)?.state == TransferState.PAUSED)
         check(queue.begin(second.id) == null)
-        check(TransferQueue(FileTransferJournal(file)).snapshot()[1].completedBytes == 15L)
+        check(TransferQueue(FileTransferJournal(file)).snapshot()[1].completedBytes == 9L)
         check(queue.resume(second.id)?.state == TransferState.QUEUED)
         check(queue.begin(second.id)?.attempts == 2)
         check(queue.finish(second.id) == null) // resume cannot trust the saved local offset
