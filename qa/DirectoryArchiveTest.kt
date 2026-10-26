@@ -158,8 +158,8 @@ fun main() {
             check(failure is IllegalArgumentException) { "Unsafe ZIP entry accepted: $names ($failure)" }
         }
         reject(listOf("NUL.txt" to false))
-        reject(listOf("CONIN\\$.txt" to false))
-        reject(listOf("CONOUT\\$.txt" to false))
+        reject(listOf("CONIN\$.txt" to false))
+        reject(listOf("CONOUT\$.txt" to false))
         reject(listOf("COM¹.log" to false))
         reject(listOf("bad:name.txt" to false))
         reject(listOf("bad." to false))
