@@ -25,6 +25,9 @@ class TransferTelemetry(
     fun sample(bytes: Long, totalBytes: Long? = null): TransferSnapshot = synchronized(lock) {
         require(bytes >= 0L)
         require(totalBytes == null || totalBytes >= 0L)
+        require(totalBytes == null || bytes <= totalBytes) {
+            "Transferred bytes exceed the declared total"
+        }
         require(bytes >= lastBytes) { "Transfer byte count went backwards" }
         val now = nowNanos()
         val elapsed = now - lastNanos
