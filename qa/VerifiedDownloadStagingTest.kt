@@ -33,7 +33,7 @@ fun main() {
         check(MessageDigest.isEqual(result, digest))
         VerifiedDownloadStaging.verifyReadback(ByteArrayInputStream(bytes), bytes.size.toLong(), result)
         val published = ByteArrayOutputStream()
-        VerifiedDownloadStaging.publish(part, result, { published }, { ByteArrayInputStream(published.toByteArray()) })
+        VerifiedDownloadStaging.publish(part, result, { published }, { ByteArrayInputStream(published.toByteArray()) }, rollbackDestination = { error("rollback must not run after verified publish") })
         check(!part.exists() && published.toByteArray().contentEquals(bytes))
         // A tampered private stage must be rejected before the SAF destination is opened.
         val tamperedStage = File(dir, "tampered-before-publish.part").apply {
@@ -179,7 +179,13 @@ fun main() {
         fail { VerifiedDownloadStaging.stageFromOffset({ zero }, offsetStall, 10) }
         // SAF write/readback failure must preserve the stage for a later retry.
         val hold = File(dir, "hold.part").apply { writeBytes(bytes) }
-        fail { VerifiedDownloadStaging.publish(hold, digest, { ByteArrayOutputStream() }, { ByteArrayInputStream(byteArrayOf()) }) }
+        var holdRollbackCalled = false
+        fail {
+            VerifiedDownloadStaging.publish(hold, digest, { ByteArrayOutputStream() },
+                { ByteArrayInputStream(byteArrayOf()) },
+                rollbackDestination = { holdRollbackCalled = true })
+        }
+        check(holdRollbackCalled)
         check(hold.isFile && hold.length() == bytes.size.toLong())
         println("PASS: verified FTP/SFTP download, true offset retry, mutation and ignored-offset detection, SHA readback and SAF publish")
     } finally { dir.deleteRecursively() }

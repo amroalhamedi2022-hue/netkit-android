@@ -224,7 +224,7 @@ object VerifiedDownloadStaging {
      * Re-verify the app-private stage before opening the SAF destination so a stale
      * or externally modified .part is rejected without exposing corrupted bytes.
      */
-    fun publish(part: File, expectedDigest: ByteArray, output: () -> OutputStream, readback: () -> InputStream, rollbackDestination: () -> Unit = {}) {
+    fun publish(part: File, expectedDigest: ByteArray, output: () -> OutputStream, readback: () -> InputStream, rollbackDestination: () -> Unit) {
         require(part.isFile) { "Missing verified staged download" }
         require(expectedDigest.size == 32) { "Expected SHA-256 digest must be 32 bytes" }
         val length = part.length()
