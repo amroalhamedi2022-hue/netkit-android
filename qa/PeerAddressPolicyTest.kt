@@ -23,18 +23,20 @@ fun main() {
         check(PeerDisplayNamePolicy.isSafeServiceName(name)) { "Rejected safe service label: $name" }
     }
     val unsafeNames = listOf(
-        "", " ", " padded ", "line\\nbreak", "Host\\u202Etxt", "Host\\u200Bname",
-        "Host\\uFEFFname", "Host\\uFFFDname", "Cafe\\u0301", "x".repeat(64)
+        "", " ", " padded ", "line" + 0x0A.toChar() + "break",
+        "Host" + 0x202E.toChar() + "txt", "Host" + 0x200B.toChar() + "name",
+        "Host" + 0xFEFF.toChar() + "name", "Host" + 0xFFFD.toChar() + "name",
+        "Cafe" + 0x0301.toChar(), "x".repeat(64)
     )
     unsafeNames.forEach { name ->
         check(!PeerDisplayNamePolicy.isSafeServiceName(name)) {
             "Accepted deceptive or overlong service label: $name"
         }
     }
-    check(!PeerDisplayNamePolicy.isSafeServiceName("bad\\uD800")) {
+    check(!PeerDisplayNamePolicy.isSafeServiceName("bad" + 0xD800.toChar())) {
         "Accepted an isolated UTF-16 high surrogate"
     }
-    check(!PeerDisplayNamePolicy.isSafeServiceName("bad\\uDC00")) {
+    check(!PeerDisplayNamePolicy.isSafeServiceName("bad" + 0xDC00.toChar())) {
         "Accepted an isolated UTF-16 low surrogate"
     }
     println("PASS: NetKit NSD address and display-name policies")
