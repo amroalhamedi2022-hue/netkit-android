@@ -1,4 +1,5 @@
 import com.netkit.local.remote.VerifiedDownloadStaging
+import com.netkit.local.remote.stalePartialFailure
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
