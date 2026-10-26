@@ -399,4 +399,36 @@ fun main() {
         check(error is IllegalStateException &&
             error.message == "Non-contiguous archive pagination")
     }
+
+    run {
+        // A short page may still advertise another page; the next offset must be
+        // exactly contiguous, and every item must survive the ZIP round trip.
+        val paged = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int): ArchivePage = when (offset) {
+                0 -> ArchivePage(listOf(
+                    ArchiveFile("a", "a.txt", false),
+                    ArchiveFile("b", "b.txt", false)
+                ), 2)
+                2 -> ArchivePage(listOf(ArchiveFile("c", "c.txt", false)), null)
+                else -> error("Unexpected archive offset: $offset")
+            }
+            override fun open(fileId: String): InputStream =
+                ByteArrayInputStream(fileId.toByteArray(Charsets.UTF_8))
+        }
+        val zipBytes = ByteArrayOutputStream()
+        val result: ArchiveResult
+        ZipOutputStream(zipBytes).use { result = DirectoryArchive.write("root", paged, it) }
+        check(result.entries == 3)
+        val entries = linkedMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(zipBytes.toByteArray())).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                entries[entry.name] = zip.readBytes()
+                zip.closeEntry()
+            }
+        }
+        check(entries.keys == setOf("a.txt", "b.txt", "c.txt"))
+        check(entries["a.txt"]!!.contentEquals("a".toByteArray()))
+        check(entries["c.txt"]!!.contentEquals("c".toByteArray()))
+    }
 }
