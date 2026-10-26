@@ -168,3 +168,17 @@ No merge, no main changes, no new dependency or paid API.
 - **APK SHA-256:** `2696a97f10ae58c4cd0a3f56a6326f75cf2fe61dcc9a17cee49cd7ec521ecf9a`.
 - **Verification:** artifact ZIP integrity passed; downloaded APK SHA-256 matched `dist/SHA256SUMS.txt`; source ZIP SHA-256 also matched its manifest entry.
 - **Physical Xiaomi Pad 5 SAF recursive ZIP/checksum and Windows extraction:** **NOT TESTED**. This is a debug acceptance package, not a release.
+
+### M44 — Reject skipped SAF archive pagination offsets (2026-10-26)
+
+- **Functional source + regression commit:** `94b2dceb8ff99656c41e7a0dcd29f1cc6fa4c5ce`.
+- **Compatibility follow-up:** `f8ba0534d32cdd228d63ef9e5560622faeb56c04` preserves the existing non-advancing-offset error while rejecting gaps.
+- **Source QA:** [run 40330668748](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40330668748) — **PASS** (static checks, HTTPS/SAF ZIP/session JVM suite, persistent transfer queue tests).
+- **Android compile gate:** [run 40330668714](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40330668714) — **PASS**; Kotlin/resources compile succeeded. This run did not produce an APK.
+- **Functional change:** DirectoryArchive.write() now requires a non-null nextOffset to equal offset + page.files.size, with overflow protection. It rejects providers that skip items, which could otherwise create a valid-looking but incomplete ZIP. Added a regression proving the archive fails on a skipped offset; retained the existing regression for a non-advancing pagination loop.
+- **Targeted APK:** requested in the following commit only because recursive SAF ZIP export needs a real-device acceptance attempt; this is a Debug test package, not a release.
+- **Xiaomi Pad 5 recursive SAF ZIP + Windows extraction/hash equality:** **NOT TESTED** until physical-device evidence is supplied.
+- **FTP/SFTP server roles and protocol-confirmed network resume:** still **NOT IMPLEMENTED**. PR #7 remains isolated from PR #6 and Draft.
+
+No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
+
