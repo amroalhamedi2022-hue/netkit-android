@@ -95,14 +95,7 @@ fun NetKitProApp(
         }
     }
     val directoryPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            }
-            core.chooseFolder(uri)
-        }
+        if (uri != null) core.chooseFolder(uri)
     }
     val scheme = if (theme == 1) lightColorScheme(
         primary = palette.aqua, secondary = palette.violet, surface = palette.card,
