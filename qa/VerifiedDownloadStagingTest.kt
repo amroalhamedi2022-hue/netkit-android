@@ -35,6 +35,22 @@ fun main() {
         val published = ByteArrayOutputStream()
         VerifiedDownloadStaging.publish(part, result, { published }, { ByteArrayInputStream(published.toByteArray()) })
         check(!part.exists() && published.toByteArray().contentEquals(bytes))
+        // A tampered private stage must be rejected before the SAF destination is opened.
+        val tamperedStage = File(dir, "tampered-before-publish.part").apply {
+            writeBytes(bytes.clone().also { it[0] = (it[0].toInt() xor 1).toByte() })
+        }
+        val untouchedDestination = ByteArrayOutputStream()
+        var readbackOpened = false
+        val tamperFailure = runCatching {
+            VerifiedDownloadStaging.publish(tamperedStage, digest, { untouchedDestination }, {
+                readbackOpened = true
+                ByteArrayInputStream(untouchedDestination.toByteArray())
+            })
+        }.exceptionOrNull()
+        check(tamperFailure is com.netkit.local.remote.RemoteContentChangedException)
+        check(untouchedDestination.size() == 0)
+        check(!readbackOpened)
+        check(tamperedStage.isFile) // Keep evidence for retry/recovery.
         // A modified remote prefix is never appended to an old partial.
         part.writeBytes(bytes.copyOf(5))
         val modified = bytes.clone().apply { this[2] = 0 }
@@ -62,6 +78,16 @@ fun main() {
         // Complete staging must not reopen the network, but still needs readback.
         VerifiedDownloadStaging.stageFromOffset({ error("should not reopen completed stage") },
             offsetPart, bytes.size.toLong())
+        // A full-length stage that changes during progress notification must not be
+        // accepted merely because its original length matched the remote length.
+        val changedComplete = File(dir, "changed-complete.part").apply { writeBytes(byteArrayOf(1, 2, 3, 4)) }
+        fail {
+            VerifiedDownloadStaging.stageFromOffset({ error("completed stage must not reopen network") },
+                changedComplete, 4L) {
+                changedComplete.appendBytes(byteArrayOf(5))
+            }
+        }
+        check(changedComplete.length() == 5L)
         // An interrupted true-offset download must leave a resumable prefix.
         val interruptedOffset = File(dir, "interrupted-offset.part").apply {
             writeBytes(bytes.copyOf(73_000))
