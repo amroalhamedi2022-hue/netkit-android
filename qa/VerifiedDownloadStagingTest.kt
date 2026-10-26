@@ -175,6 +175,17 @@ fun main() {
             override fun read(b: ByteArray, off: Int, len: Int) = 0
         }
         fail { VerifiedDownloadStaging.stage(zero, File(dir, "stall.part"), 1) }
+        // A stalled stream while validating an existing resume prefix must also
+        // fail boundedly; the resumable local partial is retained for a later retry.
+        val prefixStallPart = File(dir, "prefix-stall.part").apply {
+            writeBytes(byteArrayOf(1, 2, 3))
+        }
+        val prefixStallFailure = runCatching {
+            VerifiedDownloadStaging.stage(zero, prefixStallPart, 4)
+        }.exceptionOrNull()
+        check(prefixStallFailure is IOException &&
+            prefixStallFailure.message!!.contains("Prefix comparison stalled"))
+        check(prefixStallPart.isFile && prefixStallPart.length() == 3L)
         val offsetStall = File(dir, "offset-stall.part").apply { writeBytes(bytes.copyOf(1)) }
         fail { VerifiedDownloadStaging.stageFromOffset({ zero }, offsetStall, 10) }
         // SAF write/readback failure must preserve the stage for a later retry.
