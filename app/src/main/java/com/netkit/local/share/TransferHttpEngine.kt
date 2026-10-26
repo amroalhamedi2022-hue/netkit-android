@@ -435,7 +435,7 @@ class TransferHttpEngine(
             v.endsWith(".") || v.endsWith(" ") ||
             v.contains('/') || v.contains('\\\\') ||
             v.startsWith(".netkit-", ignoreCase = true) ||
-            Regex("""^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\\..*)?$""",
+            Regex("""^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$""",
                 RegexOption.IGNORE_CASE).containsMatchIn(v)) return false
 
         // Reject terminal/control and invisible directional spoofing characters,
