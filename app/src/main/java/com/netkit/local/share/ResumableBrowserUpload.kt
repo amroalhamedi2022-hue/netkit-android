@@ -225,6 +225,7 @@ internal class ResumableBrowserUpload(
                 }
                 val buffer = ByteArray(64 * 1024)
                 FileOutputStream(session.part, true).use { output ->
+                    var primaryFailure: Throwable? = null
                     try {
                         var remaining = length
                         var emptyReads = 0
@@ -242,10 +243,32 @@ internal class ResumableBrowserUpload(
                             // Active slow transfers must not expire while bytes keep arriving.
                             session.touched = clockMillis()
                         }
-                        output.fd.sync()
+                    } catch (failure: Throwable) {
+                        primaryFailure = failure
+                        throw failure
                     } finally {
-                        // A truncated network chunk is resumable from its actual on-disk offset.
-                        session.received = session.part.length()
+                        // A failed network read may still leave a resumable prefix. Make that
+                        // prefix durable before advertising its offset to the next request.
+                        try {
+                            output.fd.sync()
+                            session.received = session.part.length()
+                        } catch (syncFailure: Throwable) {
+                            session.invalid = true
+                            session.received = 0L
+                            try {
+                                if (session.part.exists() && !session.part.delete()) {
+                                    throw IOException("Could not discard upload after staging sync failure")
+                                }
+                            } catch (cleanupFailure: Throwable) {
+                                if (cleanupFailure !== syncFailure) syncFailure.addSuppressed(cleanupFailure)
+                            }
+                            val original = primaryFailure
+                            if (original != null) {
+                                if (syncFailure !== original) original.addSuppressed(syncFailure)
+                            } else {
+                                throw syncFailure
+                            }
+                        }
                     }
                 }
             }
