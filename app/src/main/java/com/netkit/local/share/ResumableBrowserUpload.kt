@@ -50,6 +50,9 @@ internal class ResumableBrowserUpload(
     }
 
     private val lock = Any()
+    // Serializes final SAF publication against share shutdown without holding the
+    // session registry lock during a potentially slow provider commit.
+    private val commitLock = Any()
     private val sessions = LinkedHashMap<String, Session>()
     // Retired IDs stay blocked for this share lifetime. If the bounded ledger fills,
     // fail closed for NEW sessions instead of evicting an ID that a delayed request could replay.
@@ -65,6 +68,11 @@ internal class ResumableBrowserUpload(
             cleanupLocked()
             val session = sessions[id] ?: return null
             synchronized(session) {
+                if (session.committed) {
+                    // A committed result is safe to replay after upload consent changes;
+                    // this path never writes new bytes or republishes the destination.
+                    return Status(session.received, session.total, true)
+                }
                 if (!valid(session)) {
                     retireIdLocked(id)
                     sessions.remove(id)
@@ -73,7 +81,7 @@ internal class ResumableBrowserUpload(
                 }
                 // A status-only poll must not extend the private disk staging TTL.
                 // Only actual upload progress (or commit) refreshes activity.
-                return Status(session.received, session.total, session.committed)
+                return Status(session.received, session.total, false)
             }
         }
     }
@@ -133,15 +141,21 @@ internal class ResumableBrowserUpload(
         if (length == 0L && offset < total) {
             throw InvalidSession("Empty upload chunk cannot advance offset")
         }
-        if (closed || !allowed()) throw InvalidSession("Upload permission is disabled")
+        if (closed) throw InvalidSession("Share session is closed")
         val epoch = consentEpoch()
         val session = synchronized(lock) {
             cleanupLocked()
+            if (closed) throw InvalidSession("Share session is closed")
             if (cancelledIds.contains(id)) {
                 throw InvalidSession("Retired upload ID cannot be resumed")
             }
             val existing = sessions[id]
             if (existing != null) existing else {
+                // Completed transaction IDs may be queried/replayed after consent is
+                // revoked. A new ID, however, must still have current upload consent.
+                if (!allowed() || consentEpoch() != epoch) {
+                    throw InvalidSession("Upload permission is disabled")
+                }
                 if (newSessionAdmissionClosed) {
                     throw InvalidSession("Upload ID safety limit reached; restart the share before starting another upload")
                 }
@@ -155,12 +169,21 @@ internal class ResumableBrowserUpload(
             }
         }
         synchronized(session) {
+            if (session.committed) {
+                if (session.name != name || session.folders != folders ||
+                    session.total != total || session.expectedSha != expectedSha?.lowercase()) {
+                    throw InvalidSession("Upload ID metadata mismatch")
+                }
+                if (offset != total || length != 0L) {
+                    throw InvalidSession("Committed upload accepts only final-response replay")
+                }
+                return Status(total, total, true)
+            }
             if (!valid(session)) throw InvalidSession("Share session or upload consent changed")
             if (session.name != name || session.folders != folders || session.total != total ||
                 session.expectedSha != expectedSha?.lowercase() || session.epoch != epoch) {
                 throw InvalidSession("Upload ID metadata mismatch")
             }
-            if (session.committed) return Status(total, total, true)
             if (offset != session.received) throw OffsetConflict(session.received)
             if (length > 0) {
                 if (directory.usableSpace < length + DISK_RESERVE) {
@@ -195,7 +218,6 @@ internal class ResumableBrowserUpload(
             session.touched = clockMillis()
             if (session.received == total) {
                 if (!session.part.exists()) FileOutputStream(session.part).use { it.fd.sync() }
-                if (!valid(session)) throw InvalidSession("Share stopped before SAF commit")
                 if (session.part.length() != total) throw IOException("Staging length mismatch")
                 val digest = sha256(session.part)
                 if (session.expectedSha != null && session.expectedSha != digest) {
@@ -203,18 +225,26 @@ internal class ResumableBrowserUpload(
                     session.part.delete()
                     throw UploadHashMismatchException()
                 }
-                // Always require an independently verified digest at the SAF boundary,
-                // including large browser files for which WebCrypto is not used.
-                FileInputStream(session.part).use { source ->
-                    if (folders.isEmpty()) storage.upload(name, source, total, digest) { }
-                    else storage.uploadRelative(folders, name, source, total, digest) { }
+                synchronized(commitLock) {
+                    // Shutdown and final publication have one ordering point. If shutdown
+                    // wins, no destination is created; if publication wins, its result is
+                    // durably acknowledged before shutdown can invalidate the session.
+                    if (!valid(session)) throw InvalidSession("Share stopped before SAF commit")
+                    // ShareStorage returns only after its SAF commit boundary. Its consent
+                    // gate serializes the final rename with upload-disable/tree changes.
+                    FileInputStream(session.part).use { source ->
+                        if (folders.isEmpty()) storage.upload(name, source, total, digest) { }
+                        else storage.uploadRelative(folders, name, source, total, digest) { }
+                    }
+                    // Do NOT re-check consent after a successful commit: revocation may
+                    // happen immediately after the atomic rename. Reporting failure here
+                    // would leave a saved file while encouraging a duplicate retry.
+                    session.committed = true
+                    // A slow SAF provider can take longer than the idle TTL to publish.
+                    // Start the completed-result replay window only after commit succeeds.
+                    session.touched = clockMillis()
+                    session.part.delete()
                 }
-                if (!valid(session)) throw InvalidSession("Share revoked during SAF commit")
-                session.committed = true
-                // A slow SAF provider can take longer than the idle TTL to publish.
-                // Start the completed-result replay window only after commit succeeds.
-                session.touched = clockMillis()
-                session.part.delete()
             }
             return Status(session.received, total, session.committed)
         }
@@ -233,7 +263,8 @@ internal class ResumableBrowserUpload(
                 // activity timestamp while cleanup waited for that append to finish.
                 // Retire expired/invalid IDs for the rest of this share lifetime so
                 // delayed offset-zero requests cannot create a second publication.
-                if (clockMillis() - session.touched > TTL_MILLIS || !valid(session)) {
+                if (clockMillis() - session.touched > TTL_MILLIS ||
+                    (!session.committed && !valid(session))) {
                     retireIdLocked(entry.key)
                     session.part.delete()
                     iterator.remove()
@@ -243,7 +274,9 @@ internal class ResumableBrowserUpload(
     }
 
     override fun close() {
-        closed = true
+        // Do not let shutdown invalidate a publication after its SAF rename has
+        // succeeded but before the queue records the completed transaction.
+        synchronized(commitLock) { closed = true }
         synchronized(lock) {
             sessions.values.forEach { synchronized(it) { it.part.delete() } }
             sessions.clear()
