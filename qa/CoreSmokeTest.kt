@@ -203,7 +203,7 @@ fun main(args: Array<String>) {
         // and must not disguise extensions with invisible Unicode controls.
         val unsafeUploadNames = listOf(
             "CON.txt", "LPT1.doc", "COM¹.log", "report.", "report ",
-            "safe\\u202Egpj.exe", "bad\\u0085.txt", ".NETKIT-hidden.part"
+            "safe\u202Egpj.exe", "bad\u0085.txt", ".NETKIT-hidden.part"
         )
         for (unsafeName in unsafeUploadNames) {
             check(request(root + "/upload", "POST", byteArrayOf(1), unsafeName).first == 400) {
