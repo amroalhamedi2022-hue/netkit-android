@@ -23,6 +23,20 @@ fun main() {
         check(queue.resume(second.id)?.state == TransferState.QUEUED)
         check(queue.begin(second.id)?.attempts == 2)
         check(queue.finish(second.id)?.state == TransferState.COMPLETED)
+
+        // Never report a partial transfer as complete, even if the caller invokes finish early.
+        val incomplete = queue.add("content://safe/incomplete", "peer/incomplete", 10)
+        check(queue.begin(incomplete.id) != null)
+        check(queue.finish(incomplete.id) == null)
+        check(queue.progress(incomplete.id, 9)?.completedBytes == 9L)
+        check(queue.finish(incomplete.id) == null)
+        check(queue.progress(incomplete.id, 10)?.completedBytes == 10L)
+        check(queue.finish(incomplete.id)?.state == TransferState.COMPLETED)
+
+        // A zero-byte file is complete as soon as its transport is started.
+        val empty = queue.add("content://safe/empty", "peer/empty", 0)
+        check(queue.begin(empty.id) != null)
+        check(queue.finish(empty.id)?.state == TransferState.COMPLETED)
         check(queue.fail(second.id, "should be refused") == null)
         check(queue.next()?.id == first.id)
         check(TransferQueue(FileTransferJournal(file)).snapshot()[0].state == TransferState.PAUSED) // crashed RUNNING recovery
