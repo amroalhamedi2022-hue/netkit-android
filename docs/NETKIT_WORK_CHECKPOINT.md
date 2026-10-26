@@ -55,3 +55,27 @@
 8. If no real Pad 5 is available to an automation, label device gate clearly and advance another verifiable code task rather than claiming completion.
 
 **Important:** a successful CI APK is a build gate, not product completeness. Continue until every user requirement is implemented and independently rechecked.
+
+
+## M43 — Transfer journal corruption and size bounds (2026-10-26)
+
+**Scope:** PR #6 only; branch `feature/netkit-reliability-20261023`. PR #7 remains separate.
+
+- **Source commit:** `d73cd8893c249c95281a1fb091f5beb7f818aca8`
+- **Regression-test commit / tested head:** `ba05ca7e7b1a24fc9c517a9b36663d1d4da1609b`
+- **CI:** [run 40324295276](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40324295276) — **PASS** (static checks, Kotlin/JVM transport/SAF ZIP/session tests, persistent transfer queue tests).
+
+### Functional change
+- Bounds the persisted journal to 16 MiB and transfer source/destination references to 1,024 characters.
+- Rejects duplicate/invalid task IDs, blank/oversized references, negative retry counts, invalid byte ranges, oversized errors, and invalid task counts before accepting restored state.
+- Validates state again before persistence and removes abandoned staging files after journal write/move failures.
+- Added corruption regressions for duplicate IDs, negative attempts, and an oversized journal file.
+
+### Acceptance gates
+- Transfer queue/journal JVM regression: **PASS**
+- Static source checks: **PASS**
+- Android assembleDebug/lint on this exact tested head: **NOT TESTED** (no package needed for this journal-only gate).
+- Xiaomi Pad 5 SAF recovery and actual LAN resume: **NOT TESTED**.
+- Protocol-confirmed network resume remains **NOT IMPLEMENTED**; queue reconciliation is not itself a transport.
+
+No merge, no main changes, no new dependency or paid API.
