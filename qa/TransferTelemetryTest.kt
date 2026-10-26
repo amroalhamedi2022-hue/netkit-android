@@ -12,6 +12,10 @@ fun main() {
     nanos += 1_000_000_000L
     check(t.sample(2_000, 2_000).estimatedSecondsRemaining == 0L)
     check(runCatching { t.sample(100) }.isFailure)
+    val inconsistent = TransferTelemetry({ nanos })
+    val overrun = runCatching { inconsistent.sample(11, 10) }.exceptionOrNull()
+    check(overrun is IllegalArgumentException &&
+        overrun.message!!.contains("exceed the declared total"))
     val stopped = TransferTelemetry({ nanos }, minimumSampleMillis = 100)
     stopped.sample(0, 100)
     nanos += 1_000_000_000L
