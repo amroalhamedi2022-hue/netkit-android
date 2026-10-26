@@ -109,7 +109,7 @@ object DirectoryArchive {
             }) { "Unsafe archive filename controls" }
             require(!segment.endsWith('.') && !segment.endsWith(' ')) { "Unsafe Windows archive filename" }
             val stem = segment.substringBefore('.').uppercase(Locale.ROOT)
-            val reserved = stem in setOf("CON", "PRN", "AUX", "NUL") ||
+            val reserved = stem in setOf("CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$") ||
                 Regex("^(COM|LPT)[1-9¹²³]$").matches(stem)
             require(!reserved) { "Reserved Windows archive filename" }
             return segment
