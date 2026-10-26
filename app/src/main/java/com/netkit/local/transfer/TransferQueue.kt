@@ -103,9 +103,12 @@ class TransferQueue(private val journal: TransferJournal) {
         val index = tasks.indexOfFirst {
             it.id == id && it.state == TransferState.RUNNING && !it.offsetNeedsConfirmation
         }
-        if (index < 0) null else edit(index) {
-            it.copy(completedBytes = bytes.coerceIn(it.completedBytes, it.size))
-        }
+        if (index < 0) return@synchronized null
+        val current = tasks[index]
+        // Transport progress is evidence, not a UI hint: never silently clamp a
+        // regressing or overrun count into a plausible successful transfer.
+        if (bytes < current.completedBytes || bytes > current.size) return@synchronized null
+        edit(index) { it.copy(completedBytes = bytes) }
     }
 
     /**
