@@ -34,6 +34,30 @@ private const val MAX_TRANSFER_REFERENCE_LENGTH = 1024
 private const val MAX_TRANSFER_ERROR_LENGTH = 200
 private const val MAX_TRANSFER_JOURNAL_BYTES = 16L * 1024 * 1024
 
+/** Reject display-spoofing controls in persisted source/destination references. */
+private fun isSafeTransferReference(value: String): Boolean {
+    if (value.isBlank() || value.length > MAX_TRANSFER_REFERENCE_LENGTH) return false
+    var index = 0
+    while (index < value.length) {
+        val c = value[index]
+        if (Character.isHighSurrogate(c)) {
+            if (index + 1 >= value.length || !Character.isLowSurrogate(value[index + 1])) return false
+            index += 2
+            continue
+        }
+        if (Character.isLowSurrogate(c)) return false
+        val code = c.code
+        if (code <= 0x1f || code in 0x7f..0x9f ||
+            code == 0xfffd || code == 0x00ad || code == 0x034f ||
+            code == 0x061c || code == 0x180e ||
+            code in 0x200b..0x200f || code in 0x2028..0x202e ||
+            code in 0x2060..0x206f || code == 0xfeff ||
+            code in 0xfff9..0xfffb) return false
+        index++
+    }
+    return true
+}
+
 /** Thread-safe state transitions; journal failures must never silently leave an in-memory change. */
 class TransferQueue(private val journal: TransferJournal) {
     private val mutex = Any()
@@ -55,9 +79,9 @@ class TransferQueue(private val journal: TransferJournal) {
     fun snapshot(): List<TransferTask> = synchronized(mutex) { tasks.toList() }
 
     fun add(source: String, destination: String, size: Long): TransferTask = synchronized(mutex) {
-        require(source.isNotBlank() && destination.isNotBlank())
-        require(source.length <= MAX_TRANSFER_REFERENCE_LENGTH &&
-            destination.length <= MAX_TRANSFER_REFERENCE_LENGTH) { "Transfer reference is too long" }
+        require(isSafeTransferReference(source) && isSafeTransferReference(destination)) {
+            "Invalid transfer reference"
+        }
         require(size >= 0 && tasks.size < MAX_TRANSFER_TASKS)
         val task = TransferTask(UUID.randomUUID().toString(), source, destination, size)
         persistChange { add(task) }
@@ -194,8 +218,7 @@ class FileTransferJournal(private val file: File) : TransferJournal {
             require(id.isNotBlank() && id.length <= 64 && ids.add(id)) {
                 "Invalid or duplicate saved transfer ID"
             }
-            require(source.isNotBlank() && source.length <= MAX_TRANSFER_REFERENCE_LENGTH &&
-                destination.isNotBlank() && destination.length <= MAX_TRANSFER_REFERENCE_LENGTH) {
+            require(isSafeTransferReference(source) && isSafeTransferReference(destination)) {
                 "Invalid saved transfer reference"
             }
             require(size >= 0 && done in 0..size && attempts >= 0 &&
@@ -223,8 +246,7 @@ class FileTransferJournal(private val file: File) : TransferJournal {
             require(task.id.isNotBlank() && task.id.length <= 64 && ids.add(task.id)) {
                 "Invalid or duplicate transfer ID"
             }
-            require(task.source.isNotBlank() && task.source.length <= MAX_TRANSFER_REFERENCE_LENGTH &&
-                task.destination.isNotBlank() && task.destination.length <= MAX_TRANSFER_REFERENCE_LENGTH) {
+            require(isSafeTransferReference(task.source) && isSafeTransferReference(task.destination)) {
                 "Invalid transfer reference"
             }
             require(task.size >= 0 && task.completedBytes in 0..task.size &&
