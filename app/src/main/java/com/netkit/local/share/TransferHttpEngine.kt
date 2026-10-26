@@ -65,8 +65,14 @@ class TransferHttpEngine(
     private val sslFactory: SSLServerSocketFactory,
     private val storage: ShareStorage,
     private val progress: (Long, Long) -> Unit = { _, _ -> },
-    sessionLifetimeMillis: Long = 30L * 60 * 1000
+    sessionLifetimeMillis: Long = 30L * 60 * 1000,
+    private val headerTimeoutMillis: Int = 10_000,
+    private val bodyTimeoutMillis: Int = 90_000
 ) : AutoCloseable {
+    init {
+        require(headerTimeoutMillis in 1..120_000) { "Header timeout must be between 1 ms and 120 s" }
+        require(bodyTimeoutMillis in 1..600_000) { "Body timeout must be between 1 ms and 10 min" }
+    }
     companion object { private const val MAX_UPLOAD = 16L * 1024 * 1024 * 1024 } // 16 GiB hard guard
     private val rng = SecureRandom()
     private val secret = ByteArray(24).also(rng::nextBytes)
@@ -135,17 +141,22 @@ class TransferHttpEngine(
     private fun handle(client: Socket) {
         try {
             client.use { socket ->
-                socket.soTimeout = 90_000
                 val out = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
                 try {
                     val input = BufferedInputStream(socket.getInputStream(), 64 * 1024)
-                    val line = readLine(input, 4096) ?: return
+                    // One absolute deadline covers the request line AND every header.
+                    // SO_TIMEOUT alone is per read and can be defeated by a slowloris
+                    // sending one byte just before each timeout.
+                    val headerDeadlineNanos = System.nanoTime() +
+                        TimeUnit.MILLISECONDS.toNanos(headerTimeoutMillis.toLong())
+                    val line = readLine(input, 4096, socket, headerDeadlineNanos) ?: return
                     val parts = line.split(' ')
                     if (parts.size != 3 || parts[2] != "HTTP/1.1") return fail(out, 400, "Invalid request")
                     val method = parts[0]
                     val path = parts[1].substringBefore('?')
                     val query = parts[1].substringAfter('?', "")
-                    val headers = readHeaders(input)
+                    val headers = readHeaders(input, socket, headerDeadlineNanos)
+                    socket.soTimeout = bodyTimeoutMillis
                     if (path != prefix && !path.startsWith("$prefix/")) return fail(out, 404, "Not found")
                     if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
                     when {
@@ -170,9 +181,22 @@ class TransferHttpEngine(
         }
     }
 
-    private fun readLine(input: InputStream, max: Int): String? {
+    private fun readLine(
+        input: InputStream,
+        max: Int,
+        socket: Socket? = null,
+        deadlineNanos: Long? = null
+    ): String? {
         val bytes = java.io.ByteArrayOutputStream()
         while (true) {
+            if (socket != null && deadlineNanos != null) {
+                val remainingNanos = deadlineNanos - System.nanoTime()
+                if (remainingNanos <= 0L) {
+                    throw java.net.SocketTimeoutException("Request header deadline exceeded")
+                }
+                val remainingMillis = maxOf(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos))
+                socket.soTimeout = minOf(remainingMillis, Int.MAX_VALUE.toLong()).toInt()
+            }
             val c = input.read()
             if (c < 0) return if (bytes.size() == 0) null else throw IllegalArgumentException("Truncated headers")
             if (c == 10) {
@@ -183,11 +207,12 @@ class TransferHttpEngine(
             bytes.write(c)
         }
     }
-    private fun readHeaders(input: InputStream): Map<String, String> {
+    private fun readHeaders(input: InputStream, socket: Socket, deadlineNanos: Long): Map<String, String> {
         val headers = mutableMapOf<String, String>()
         var used = 0
         while (true) {
-            val line = readLine(input, 4096) ?: throw IllegalArgumentException("Missing header terminator")
+            val line = readLine(input, 4096, socket, deadlineNanos)
+                ?: throw IllegalArgumentException("Missing header terminator")
             used += line.length
             require(used < 32_768) { "Headers too long" }
             if (line.isEmpty()) return headers
