@@ -28,6 +28,8 @@ internal class ResumableBrowserUpload(
     companion object {
         const val MAX_CHUNK = 1024 * 1024
         private const val MAX_SESSIONS = 4
+        // Completed IDs stay replayable for the TTL, but cannot grow without bound.
+        private const val MAX_COMPLETED_SESSIONS = 64
         private const val MAX_CANCELLED_IDS = 4096
         private const val TTL_MILLIS = 15L * 60 * 1000
         private const val DISK_RESERVE = 16L * 1024 * 1024
@@ -111,6 +113,29 @@ internal class ResumableBrowserUpload(
         }
     }
 
+    /** Evict only the oldest completed replay record when the bounded cache is full. */
+    private fun pruneCompletedLocked() {
+        while (true) {
+            val completed = sessions.entries.mapNotNull { entry ->
+                val touched = synchronized(entry.value) {
+                    if (entry.value.committed) entry.value.touched else null
+                }
+                touched?.let { entry.key to it }
+            }
+            if (completed.size < MAX_COMPLETED_SESSIONS) return
+            val oldestId = completed.minByOrNull { it.second }?.first ?: return
+            val oldest = sessions[oldestId] ?: continue
+            synchronized(oldest) {
+                if (oldest.committed && sessions[oldestId] === oldest) {
+                    // Keep a tombstone so a delayed final response cannot resurrect the ID.
+                    retireIdLocked(oldestId)
+                    sessions.remove(oldestId)
+                }
+            }
+            if (newSessionAdmissionClosed) return
+        }
+    }
+
     private fun retireIdLocked(id: String) {
         if (cancelledIds.contains(id)) return
         if (cancelledIds.size >= MAX_CANCELLED_IDS) {
@@ -160,7 +185,16 @@ internal class ResumableBrowserUpload(
                     throw InvalidSession("Upload ID safety limit reached; restart the share before starting another upload")
                 }
                 if (offset != 0L) throw OffsetConflict(0L)
-                if (sessions.size >= MAX_SESSIONS) throw InvalidSession("Too many pending uploads")
+                val activeCount = sessions.values.count { saved ->
+                    synchronized(saved) { !saved.committed }
+                }
+                if (activeCount >= MAX_SESSIONS) {
+                    throw InvalidSession("Too many pending uploads")
+                }
+                pruneCompletedLocked()
+                if (newSessionAdmissionClosed) {
+                    throw InvalidSession("Upload ID safety limit reached; restart the share before starting another upload")
+                }
                 val created = Session(name, folders.toList(), total, expectedSha?.lowercase(),
                     epoch, File(directory, "$id.part"), clockMillis())
                 check(!created.part.exists()) { "Stale upload part collision" }
