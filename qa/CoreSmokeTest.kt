@@ -259,7 +259,7 @@ fun main(args: Array<String>) {
             Thread.sleep(180)
             val closed = runCatching { it.inputStream.read() }.fold(
                 onSuccess = { value -> value == -1 },
-                onFailure = { true }
+                onFailure = { error -> error !is java.net.SocketTimeoutException }
             )
             check(closed) { "Slow request header was not closed at the absolute deadline" }
         }
