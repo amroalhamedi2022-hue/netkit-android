@@ -120,7 +120,7 @@ fun main(args: Array<String>) {
             if (bytes != null) {
                 con.doOutput = true
                 con.setFixedLengthStreamingMode(bytes.size)
-                con.setRequestProperty("X-File-Name", filename!!)
+                con.setRequestProperty("X-File-Name", java.net.URLEncoder.encode(filename!!, "UTF-8"))
                 if (sha256 != null) con.setRequestProperty("X-Content-SHA256", sha256)
                 con.setRequestProperty("Content-Type", "application/octet-stream")
                 con.outputStream.use { it.write(bytes) }
@@ -197,7 +197,7 @@ fun main(args: Array<String>) {
         check("wrong-hash.bin" !in uploaded) { "Mismatched hash must not be committed" }
         check(request(root + "/upload", "POST", byteArrayOf(1), "malformed-hash.bin", sha256 = "not-a-hash").first == 400)
         check("malformed-hash.bin" !in uploaded)
-        check(request(root + "/upload", "POST", byteArrayOf(1), "..%2Fsecrets.txt").first == 400)
+        check(request(root + "/upload", "POST", byteArrayOf(1), "../secrets.txt").first == 400)
         check(request(root + "/upload", "POST", byteArrayOf(1), ".netkit-backdoor.part").first == 400)
         // Browser upload names must be safe on Windows as well as on Android,
         // and must not disguise extensions with invisible Unicode controls.
