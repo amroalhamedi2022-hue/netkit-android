@@ -23,6 +23,16 @@ data class ArchiveResult(val entries: Int, val bytes: Long)
  * The caller must enforce HTTPS authorization and scope ArchiveDirectorySource to its SAF root.
  */
 object DirectoryArchive {
+    // SAF document IDs are opaque provider keys, not paths. Bound their size so a
+    // broken provider cannot retain arbitrarily large identifiers in traversal sets.
+    private const val MAX_DOCUMENT_ID_CHARS = 4096
+
+    private fun validateDocumentId(id: String) {
+        require(id.isNotBlank() && id.length <= MAX_DOCUMENT_ID_CHARS) {
+            "Invalid archive document ID"
+        }
+    }
+
     private fun ensureNotCancelled() {
         // shutdownNow() interrupts a worker when the HTTPS share is stopped.
         // SAF streams may still be readable: do not continue exporting a ZIP
@@ -42,6 +52,7 @@ object DirectoryArchive {
         maximumChecksumManifestBytes: Int = 64 * 1024 * 1024,
         checkActive: () -> Unit = {}
     ): ArchiveResult {
+        validateDocumentId(rootId)
         require(maximumEntries in 1..100_000)
         require(maximumBytes > 0)
         require(maximumChecksumManifestBytes in 1..(64 * 1024 * 1024))
@@ -109,6 +120,7 @@ object DirectoryArchive {
 
         fun walk(folderId: String, prefix: String, depth: Int) {
             ensureActive()
+            validateDocumentId(folderId)
             require(depth <= 32) { "Directory nesting exceeds safe depth" }
             check(visited.add(folderId)) { "Recursive directory provider cycle" }
             var offset = 0
@@ -123,6 +135,7 @@ object DirectoryArchive {
                 }
                 for (child in page.files) {
                     ensureActive()
+                    validateDocumentId(child.id)
                     entries++
                     check(entries <= maximumEntries) { "Too many archive entries" }
                     val segment = safeSegment(child.name)
