@@ -2,6 +2,7 @@ package com.netkit.local.share
 
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.ZipOutputStream
@@ -32,6 +33,25 @@ interface DirectoryShareStorage {
     fun hasSharedDirectory(): Boolean
 }
 class UploadHashMismatchException : IllegalStateException("Upload SHA-256 does not match")
+
+/** Bounds repeated zero-byte reads from a malformed provider/socket stream. */
+internal object StreamReadGuard {
+    private const val MAX_CONSECUTIVE_ZERO_READS = 32
+
+    fun read(input: InputStream, buffer: ByteArray, offset: Int, length: Int): Int {
+        require(length > 0) { "StreamReadGuard requires a positive read length" }
+        var zeroReads = 0
+        while (true) {
+            val count = input.read(buffer, offset, length)
+            if (count != 0) return count
+            zeroReads++
+            if (zeroReads > MAX_CONSECUTIVE_ZERO_READS) {
+                throw IOException("Input stream stalled after $zeroReads consecutive zero-byte reads")
+            }
+            Thread.yield()
+        }
+    }
+}
 
 interface ShareStorage {
     fun items(): List<ShareItem>
@@ -311,7 +331,7 @@ class TransferHttpEngine(
                 var remaining = count
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
-                    val n = input.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                    val n = StreamReadGuard.read(input, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) break // Client detects a truncated Content-Length.
                     if (n == 0) continue
                     out.write(buffer, 0, n)
@@ -321,7 +341,7 @@ class TransferHttpEngine(
                 head(out, 200, "application/octet-stream", null, extra)
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
-                    val n = input.read(buffer)
+                    val n = StreamReadGuard.read(input, buffer, 0, buffer.size)
                     if (n < 0) break
                     if (n == 0) continue
                     out.write("${n.toString(16)}\r\n".toByteArray(StandardCharsets.US_ASCII))
@@ -358,7 +378,7 @@ class TransferHttpEngine(
         while (remaining > 0L) {
             val skipped = stream.skip(remaining)
             if (skipped > 0) { remaining -= skipped; continue }
-            val n = stream.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+            val n = StreamReadGuard.read(stream, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
             if (n < 0) return false
             if (n > 0) remaining -= n
         }
