@@ -1,6 +1,7 @@
 package com.netkit.local.share
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
@@ -34,7 +35,8 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
     override fun directoryItem(id: String): ShareItem? = directoryBrowser.item(id)
     override fun openDirectoryItem(id: String): SharedStream? = directoryBrowser.file(id)?.second
     private val documents = LinkedHashMap<String, Pair<Uri, ShareItem>>()
-    @Volatile private var uploadTree: Uri? = null
+    private val uploadDestinationSettings = context.getSharedPreferences("netkit_upload_destination", Context.MODE_PRIVATE)
+    @Volatile private var uploadTree: Uri? = restoreUploadTree()
     // Serialize only destination name reservation/commit. A slow multi-GB upload must
     // NOT block the synchronized items()/open() methods used by other download clients.
     private val uploadLock = ReentrantLock(true)
@@ -51,19 +53,90 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
             documents[id] = Pair(uri, ShareItem(id, name, size))
         }
     }
-    fun setUploadTree(uri: Uri) { uploadTree = uri }
-    fun uploadFolderLabel(): String = uploadTree?.let { DocumentFile.fromTreeUri(context, it)?.name } ?: "لم يتم تحديد مجلد"
+    @Synchronized fun setUploadTree(uri: Uri) {
+        val folder = DocumentFile.fromTreeUri(context, uri)
+            ?: error("لا يمكن فتح مجلد الاستقبال المحدد")
+        require(folder.isDirectory && folder.canWrite()) {
+            "مجلد الاستقبال لا يسمح بكتابة الملفات"
+        }
+        context.contentResolver.takePersistableUriPermission(
+            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        val grant = context.contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }
+        check(UploadDestinationPolicy.canRestore(
+            uri.toString(), grant?.uri?.toString(),
+            grant?.isReadPermission == true, grant?.isWritePermission == true,
+            folder.isDirectory, folder.canWrite()
+        )) { "تعذّر الاحتفاظ بصلاحية مجلد الاستقبال بعد إغلاق التطبيق" }
+        check(uploadDestinationSettings.edit().putString("tree_uri", uri.toString()).commit()) {
+            "تعذّر حفظ مجلد الاستقبال"
+        }
+        uploadTree = uri
+    }
+
+    private fun restoreUploadTree(): Uri? {
+        val saved = uploadDestinationSettings.getString("tree_uri", null) ?: return null
+        val uri = runCatching { Uri.parse(saved) }.getOrNull() ?: run {
+            uploadDestinationSettings.edit().remove("tree_uri").commit()
+            return null
+        }
+        if (usableUploadFolder(uri, saved) == null) {
+            uploadDestinationSettings.edit().remove("tree_uri").commit()
+            return null
+        }
+        return uri
+    }
+
+    private fun usableUploadFolder(uri: Uri, savedUri: String?): DocumentFile? {
+        val folder = runCatching { DocumentFile.fromTreeUri(context, uri) }.getOrNull() ?: return null
+        val grant = runCatching {
+            context.contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }
+        }.getOrNull()
+        val valid = UploadDestinationPolicy.canRestore(
+            savedUri, grant?.uri?.toString(),
+            grant?.isReadPermission == true, grant?.isWritePermission == true,
+            folder.isDirectory, folder.canWrite()
+        )
+        return folder.takeIf { valid }
+    }
+
+    @Synchronized private fun clearUploadDestinationIfCurrent(uri: Uri) {
+        if (uploadTree == uri) {
+            uploadTree = null
+            uploadDestinationSettings.edit().remove("tree_uri").commit()
+        }
+    }
+
+    fun uploadFolderLabel(): String {
+        val uri = uploadTree ?: return "لم يتم تحديد مجلد استقبال"
+        val folder = usableUploadFolder(uri, uploadDestinationSettings.getString("tree_uri", null))
+        if (folder == null) {
+            clearUploadDestinationIfCurrent(uri)
+            return "انتهت صلاحية مجلد الاستقبال؛ اختر المجلد مجددًا"
+        }
+        return folder.name ?: "مجلد استقبال محدد"
+    }
     @Synchronized override fun items(): List<ShareItem> = documents.values.map { it.second }
     @Synchronized override fun open(id: String): SharedStream? {
         val value = documents[id] ?: return null
         val input = context.contentResolver.openInputStream(value.first) ?: return null
         return SharedStream(input, value.second.length)
     }
-    override fun canUpload(): Boolean = uploadTree != null && browserUploadsEnabled
+    override fun canUpload(): Boolean {
+        if (!browserUploadsEnabled) return false
+        val uri = uploadTree ?: return false
+        if (usableUploadFolder(uri, uploadDestinationSettings.getString("tree_uri", null)) != null) return true
+        clearUploadDestinationIfCurrent(uri)
+        return false
+    }
 
     override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String = uploadLock.withLock {
         val treeUri = uploadTree ?: error("No destination folder")
-        val folder = DocumentFile.fromTreeUri(context, treeUri) ?: error("Folder grant unavailable")
+        val folder = usableUploadFolder(treeUri, uploadDestinationSettings.getString("tree_uri", null))
+            ?: run {
+                clearUploadDestinationIfCurrent(treeUri)
+                error("Upload destination permission expired; choose the folder again")
+            }
         val chosen = uniqueName(folder, fileName)
         // Write into a private-looking temporary document and rename only after full receipt.
         val temp = folder.createFile("application/octet-stream", ".netkit-${UUID.randomUUID()}.part")
