@@ -156,3 +156,15 @@ AUTOMATION_COMPLETE: BLOCKED
 - FTP/SFTP server roles and protocol-confirmed network resume: **NOT IMPLEMENTED / NOT TESTED**.
 
 No merge, no main changes, no new dependency or paid API.
+
+
+### M43 device-test build result — 2026-10-26
+
+- **Build head:** `d45bd36f9b80f0905991118f30f45f6049063b4b`
+- **Build/QA:** [run 40325362841](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40325362841) — **SUCCESS**; source QA, Android Debug APK build, lint and APK identity/signature verification passed.
+- **Artifact:** ID `12649774965`, [download from GitHub Actions](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40325362841/artifacts/12649774965), expires **2026-11-02**.
+- **Artifact ZIP SHA-256:** `b5a5db12acb8150e68f8f8c283f9855620649854ed53c88a8317fde9179e2e64`.
+- **APK:** `NetKit_v0.6.0-alpha-debug.apk`, 11,825,708 bytes, package `com.netkit.local`, version `0.6.0-alpha`.
+- **APK SHA-256:** `2696a97f10ae58c4cd0a3f56a6326f75cf2fe61dcc9a17cee49cd7ec521ecf9a`.
+- **Verification:** artifact ZIP integrity passed; downloaded APK SHA-256 matched `dist/SHA256SUMS.txt`; source ZIP SHA-256 also matched its manifest entry.
+- **Physical Xiaomi Pad 5 SAF recursive ZIP/checksum and Windows extraction:** **NOT TESTED**. This is a debug acceptance package, not a release.
