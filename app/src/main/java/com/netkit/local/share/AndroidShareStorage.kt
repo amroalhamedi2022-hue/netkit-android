@@ -150,7 +150,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 var received = 0L
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
-                    val n = body.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                    val n = StreamReadGuard.read(body, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) error("Connection closed before complete upload")
                     out.write(buffer, 0, n)
                     digest?.update(buffer, 0, n)
