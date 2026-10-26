@@ -25,13 +25,12 @@ class PeerDiscovery(context: Context) {
     private var callback: NsdManager.DiscoveryListener? = null
     private var registration: NsdManager.RegistrationListener? = null
     private var discoveryEpoch = 0L
-    private var resolveTicket = 0L
-    private val pendingResolutions = mutableMapOf<String, Long>()
+    private val resolutionLedger = NsdResolveLedger(maxPending = 128)
 
     fun start() {
         if (callback != null) return
         found.clear()
-        pendingResolutions.clear()
+        resolutionLedger.clear()
         discoveryWarning.value = null
         runCatching { multicastLease.acquire() }.onFailure {
             // Discovery can still work on some interfaces, but never hide the degraded receive path.
@@ -50,30 +49,26 @@ class PeerDiscovery(context: Context) {
             override fun onServiceLost(service: NsdServiceInfo) {
                 if (epoch != discoveryEpoch) return
                 // Invalidate an in-flight resolve: its late callback must not resurrect a lost peer.
-                pendingResolutions.remove(service.serviceName)
+                resolutionLedger.invalidate(service.serviceName)
                 found.removeAll { it.name == service.serviceName }
             }
             @Suppress("DEPRECATION")
             override fun onServiceFound(service: NsdServiceInfo) {
-                if (epoch != discoveryEpoch || !service.serviceType.startsWith("_netkit._tcp")) return
+                if (epoch != discoveryEpoch || !NsdDiscoveryPolicy.isNetKitServiceType(service.serviceType)) return
                 val name = service.serviceName
                 // Service names are unauthenticated network input. Reject spoofing controls,
                 // malformed Unicode and overlong labels before allocating an async resolve.
                 if (!PeerDisplayNamePolicy.isSafeServiceName(name)) return
-                // NSD advertisements are untrusted. Bound outstanding resolutions as well as UI peers.
-                if (name !in pendingResolutions && pendingResolutions.size >= 128) return
-                val ticket = ++resolveTicket
-                pendingResolutions[name] = ticket
+                // NSD advertisements are untrusted. Deduplicate in-flight resolves and cap
+                // outstanding work so repeated announcements cannot flood the resolver.
+                val ticket = resolutionLedger.begin(name) ?: return
                 runCatching {
                     manager.resolveService(service, object : NsdManager.ResolveListener {
                         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                            if (epoch == discoveryEpoch && pendingResolutions[name] == ticket) {
-                                pendingResolutions.remove(name)
-                            }
+                            if (epoch == discoveryEpoch) resolutionLedger.finish(name, ticket)
                         }
                         override fun onServiceResolved(info: NsdServiceInfo) {
-                            if (epoch != discoveryEpoch || pendingResolutions[name] != ticket) return
-                            pendingResolutions.remove(name)
+                            if (epoch != discoveryEpoch || !resolutionLedger.finish(name, ticket)) return
                             val host = info.host ?: return
                             if (!PeerAddressPolicy.isLocalPeer(host) || info.port !in 1..65535) return
                             val peer = Peer(name, host.hostAddress ?: return, info.port)
@@ -83,7 +78,7 @@ class PeerDiscovery(context: Context) {
                         }
                     })
                 }.onFailure {
-                    if (pendingResolutions[name] == ticket) pendingResolutions.remove(name)
+                    resolutionLedger.finish(name, ticket)
                 }
             }
         }
@@ -92,7 +87,7 @@ class PeerDiscovery(context: Context) {
             .onFailure {
                 callback = null
                 discoveryEpoch++
-                pendingResolutions.clear()
+                resolutionLedger.clear()
                 runCatching { multicastLease.release() }
                 discoveryWarning.value = "تعذر بدء اكتشاف DNS-SD على هذه الشبكة."
             }
@@ -118,7 +113,7 @@ class PeerDiscovery(context: Context) {
     }
     fun stop() {
         discoveryEpoch++
-        pendingResolutions.clear()
+        resolutionLedger.clear()
         found.clear()
         callback?.let { runCatching { manager.stopServiceDiscovery(it) } }
         callback = null
