@@ -369,6 +369,56 @@ fun main() {
             ByteArrayInputStream(byteArrayOf(1)))
     }
 
+    // Pending-upload admission counts only in-flight sessions, not completed replay records.
+    val activeRoot = File(System.getProperty("java.io.tmpdir"), "netkit-pending-cap-" + UUID.randomUUID())
+    check(activeRoot.mkdirs())
+    val activeStore = FakeBrowserStorage()
+    val activeStage = ResumableBrowserUpload(activeRoot, activeStore,
+        { activeStore.epoch }, { activeStore.enabled }, { 1000L })
+    val activeIds = mutableListOf<String>()
+    repeat(4) { index ->
+        val taskId = id()
+        activeIds += taskId
+        check(!activeStage.append(taskId, "pending-$index.bin", emptyList(), 2, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(index.toByte()))).complete)
+    }
+    expectFailure {
+        activeStage.append(id(), "fifth-pending.bin", emptyList(), 2, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(5)))
+    }
+    check(activeStage.append(activeIds.first(), "pending-0.bin", emptyList(), 2, 1, 1, null,
+        ByteArrayInputStream(byteArrayOf(9))).complete)
+    check(!activeStage.append(id(), "fifth-pending.bin", emptyList(), 2, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(5))).complete) {
+        "Completing one transfer must free a pending slot"
+    }
+    activeStage.close()
+    check(!activeRoot.exists())
+
+    // Completed response records are bounded too. Eviction retires the old ID,
+    // preventing a delayed retry from re-publishing a file after its replay record is gone.
+    val cacheRoot = File(System.getProperty("java.io.tmpdir"), "netkit-completed-cache-" + UUID.randomUUID())
+    check(cacheRoot.mkdirs())
+    val cacheStore = FakeBrowserStorage()
+    val cacheStage = ResumableBrowserUpload(cacheRoot, cacheStore,
+        { cacheStore.epoch }, { cacheStore.enabled }, { 1000L })
+    val cacheIds = mutableListOf<String>()
+    repeat(65) { index ->
+        val taskId = id()
+        cacheIds += taskId
+        check(cacheStage.append(taskId, "cache-$index.bin", emptyList(), 0, 0, 0, null,
+            ByteArrayInputStream(byteArrayOf())).complete)
+    }
+    check(cacheStage.status(cacheIds.last())?.complete == true)
+    check(cacheStage.status(cacheIds.first()) == null)
+    expectFailure {
+        cacheStage.append(cacheIds.first(), "cache-0.bin", emptyList(), 0, 0, 0, null,
+            ByteArrayInputStream(byteArrayOf()))
+    }
+    check(cacheStore.saved.size == 65) { "Completed cache eviction must not duplicate or lose committed outputs" }
+    cacheStage.close()
+    check(!cacheRoot.exists())
+
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
     println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, explicit cancellation and replay guard, empty, duplicate commit")
