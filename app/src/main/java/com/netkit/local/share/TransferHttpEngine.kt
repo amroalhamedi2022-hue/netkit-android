@@ -433,7 +433,7 @@ class TransferHttpEngine(
     private fun validName(v: String): Boolean {
         if (v.isBlank() || v.length > 180 || v == "." || v == ".." ||
             v.endsWith(".") || v.endsWith(" ") ||
-            v.contains('/') || v.contains('\\\\') ||
+            v.contains('/') || v.contains('\\') ||
             v.startsWith(".netkit-", ignoreCase = true) ||
             Regex("""^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$""",
                 RegexOption.IGNORE_CASE).containsMatchIn(v)) return false
