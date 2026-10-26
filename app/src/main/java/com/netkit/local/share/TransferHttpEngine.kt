@@ -430,9 +430,28 @@ class TransferHttpEngine(
             fail(out, 422, "Upload SHA-256 mismatch. File was not committed")
         } catch (_: Exception) { fail(out, 500, "Could not save upload") }
     }
-    private fun validName(v: String): Boolean = v.isNotBlank() && v.length <= 180 &&
-        v != "." && v != ".." && !v.contains('/') && !v.contains('\\') &&
-        v.none { it.code < 32 || it.code == 127 } && !v.startsWith(".netkit-")
+    private fun validName(v: String): Boolean {
+        if (v.isBlank() || v.length > 180 || v == "." || v == ".." ||
+            v.endsWith(".") || v.endsWith(" ") ||
+            v.contains('/') || v.contains('\\\\') ||
+            v.startsWith(".netkit-", ignoreCase = true) ||
+            Regex("""^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\\..*)?$""",
+                RegexOption.IGNORE_CASE).containsMatchIn(v)) return false
+
+        // Reject terminal/control and invisible directional spoofing characters,
+        // while retaining ordinary Arabic, emoji, and other valid Unicode names.
+        var offset = 0
+        while (offset < v.length) {
+            val cp = Character.codePointAt(v, offset)
+            if (cp < 0x20 || cp in 0x7f..0x9f || cp == 0xfffd ||
+                cp == 0x00ad || cp == 0x034f || cp == 0x061c || cp == 0x180e ||
+                cp in 0x200b..0x200f || cp in 0x2028..0x202e ||
+                cp in 0x2060..0x206f || cp == 0xfeff ||
+                cp in 0xfff9..0xfffb || cp in 0xe0000..0xe007f) return false
+            offset += Character.charCount(cp)
+        }
+        return true
+    }
 
     private fun html(out: OutputStream) = response(out, 200, """
         <!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8" />
