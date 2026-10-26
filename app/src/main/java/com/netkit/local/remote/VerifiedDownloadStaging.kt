@@ -127,7 +127,16 @@ object VerifiedDownloadStaging {
         }
         progress(saved)
         if (saved == expectedBytes) {
-            if (!part.exists()) FileOutputStream(part).use { it.fd.sync() }
+            // A complete-sized .part may survive a process interruption before its
+            // final metadata/data flush. Re-sync it before treating it as resumable.
+            if (part.exists()) {
+                FileOutputStream(part, true).use { it.fd.sync() }
+            } else {
+                FileOutputStream(part).use { it.fd.sync() }
+            }
+            if (part.length() != expectedBytes) {
+                throw IOException("Staged offset file changed while finalizing completed download")
+            }
             return digest.digest()
         }
         openAt(saved).use { remote ->
@@ -183,11 +192,77 @@ object VerifiedDownloadStaging {
         }
     }
 
-    /** SAF publishing is not atomic; caller must use a newly created destination URI. */
+    private fun hashStagedFile(part: File, expectedLength: Long): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(BLOCK)
+        var count = 0L
+        var emptyReads = 0
+        FileInputStream(part).use { input ->
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                if (n == 0) {
+                    if (++emptyReads >= 32) throw IOException("Staged file read stalled")
+                    continue
+                }
+                emptyReads = 0
+                if (n.toLong() > expectedLength - count) {
+                    throw IOException("Staged file grew during verification")
+                }
+                count += n
+                digest.update(buffer, 0, n)
+            }
+        }
+        if (count != expectedLength || part.length() != expectedLength) {
+            throw IOException("Staged file length changed during verification")
+        }
+        return digest.digest()
+    }
+
+    /**
+     * SAF publishing is not atomic; caller must use a newly created destination URI.
+     * Re-verify the app-private stage before opening the SAF destination so a stale
+     * or externally modified .part is rejected without exposing corrupted bytes.
+     */
     fun publish(part: File, expectedDigest: ByteArray, output: () -> OutputStream, readback: () -> InputStream) {
         require(part.isFile) { "Missing verified staged download" }
+        require(expectedDigest.size == 32) { "Expected SHA-256 digest must be 32 bytes" }
         val length = part.length()
-        output().use { destination -> FileInputStream(part).use { it.copyTo(destination, BLOCK) } }
+        val stagedDigest = hashStagedFile(part, length)
+        if (!MessageDigest.isEqual(stagedDigest, expectedDigest)) {
+            throw RemoteContentChangedException("Local staged file SHA-256 differs before SAF publish")
+        }
+
+        // Hash again while copying to detect a stage changed after the preflight read.
+        val copyDigest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(BLOCK)
+        var copied = 0L
+        var emptyReads = 0
+        output().use { destination ->
+            FileInputStream(part).use { input ->
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    if (n == 0) {
+                        if (++emptyReads >= 32) throw IOException("Staged file read stalled during publish")
+                        continue
+                    }
+                    emptyReads = 0
+                    if (n.toLong() > length - copied) {
+                        throw IOException("Staged file grew during publish")
+                    }
+                    destination.write(buffer, 0, n)
+                    copyDigest.update(buffer, 0, n)
+                    copied += n
+                }
+            }
+            if (copied != length || part.length() != length) {
+                throw IOException("Staged file length changed during publish")
+            }
+            if (!MessageDigest.isEqual(copyDigest.digest(), expectedDigest)) {
+                throw RemoteContentChangedException("Local staged file SHA-256 changed during SAF publish")
+            }
+        }
         readback().use { verifyReadback(it, length, expectedDigest) }
         // The SAF document is already verified: failed cache cleanup must not report a false transfer failure.
         part.delete()
