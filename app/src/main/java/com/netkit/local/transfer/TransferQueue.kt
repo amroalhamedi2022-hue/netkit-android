@@ -66,6 +66,20 @@ class TransferQueue(private val journal: TransferJournal) {
         }
     }
 
+    /**
+     * Reconcile progress only after the authenticated peer confirms its durable offset.
+     * Unlike progress(), this may move backwards; callers must never pass a guessed local offset.
+     */
+    fun confirmRemoteOffset(id: String, confirmedBytes: Long): TransferTask? = synchronized(mutex) {
+        if (confirmedBytes < 0L) return@synchronized null
+        val index = tasks.indexOfFirst {
+            it.id == id && it.state == TransferState.RUNNING && confirmedBytes <= it.size
+        }
+        if (index < 0) null else edit(index) {
+            it.copy(completedBytes = confirmedBytes)
+        }
+    }
+
     // API state changes don't magically pause an existing network stream. Execution controller must close it.
     fun pause(id: String) = transition(id, setOf(TransferState.RUNNING, TransferState.QUEUED), TransferState.PAUSED)
     fun resume(id: String) = transition(id, setOf(TransferState.PAUSED, TransferState.FAILED), TransferState.QUEUED)
