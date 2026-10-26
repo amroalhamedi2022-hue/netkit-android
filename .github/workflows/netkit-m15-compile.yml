@@ -12,6 +12,8 @@ on:
       - 'qa/MulticastLockLeaseTest.kt'
       - 'qa/run_jvm_tests.sh'
       - 'qa/check_static.py'
+      - 'app/src/main/java/com/netkit/local/share/DirectoryArchive.kt'
+      - 'qa/DirectoryArchiveTest.kt'
   pull_request:
     branches: [feature/netkit-reliability-20261023]
     paths:
@@ -23,6 +25,8 @@ on:
       - 'qa/MulticastLockLeaseTest.kt'
       - 'qa/run_jvm_tests.sh'
       - 'qa/check_static.py'
+      - 'app/src/main/java/com/netkit/local/share/DirectoryArchive.kt'
+      - 'qa/DirectoryArchiveTest.kt'
   workflow_dispatch:
 
 permissions:
@@ -52,5 +56,16 @@ jobs:
           fi
           echo "81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
           chmod +x gradlew
+      - name: Run ZIP archive lease-boundary JVM regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v kotlinc >/dev/null 2>&1; then
+            curl -fL --retry 3 "https://github.com/JetBrains/kotlin/releases/download/v2.2.21/kotlin-compiler-2.2.21.zip" -o "$RUNNER_TEMP/kotlinc.zip"
+            unzip -q "$RUNNER_TEMP/kotlinc.zip" -d "$RUNNER_TEMP"
+            export PATH="$RUNNER_TEMP/kotlinc/bin:$PATH"
+          fi
+          kotlinc app/src/main/java/com/netkit/local/share/DirectoryArchive.kt qa/DirectoryArchiveTest.kt -include-runtime -d "$RUNNER_TEMP/netkit-directory-archive.jar"
+          java -jar "$RUNNER_TEMP/netkit-directory-archive.jar"
       - name: Compile Android Kotlin and resources without APK
         run: ./gradlew --no-daemon :app:compileDebugKotlin :app:processDebugResources --stacktrace
