@@ -178,7 +178,7 @@ fun main() {
         val unsafeErrorTask = queue.add("content://safe/error", "peer/error", 1)
         check(queue.begin(unsafeErrorTask.id) != null)
         val sanitizedError = queue.fail(unsafeErrorTask.id,
-            "peer\u202Etxt\\nline\u0085bad\uD800")!!
+            "peer\u202Etxt\nline\u0085bad\uD800")!!
         check(sanitizedError.error == "peer txt line bad")
         check(FileTransferJournal(file).load().single { it.id == unsafeErrorTask.id }.error ==
             "peer txt line bad")
