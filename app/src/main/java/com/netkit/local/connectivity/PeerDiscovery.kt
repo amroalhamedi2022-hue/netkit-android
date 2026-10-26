@@ -57,6 +57,9 @@ class PeerDiscovery(context: Context) {
             override fun onServiceFound(service: NsdServiceInfo) {
                 if (epoch != discoveryEpoch || !service.serviceType.startsWith("_netkit._tcp")) return
                 val name = service.serviceName
+                // Service names are unauthenticated network input. Reject spoofing controls,
+                // malformed Unicode and overlong labels before allocating an async resolve.
+                if (!PeerDisplayNamePolicy.isSafeServiceName(name)) return
                 // NSD advertisements are untrusted. Bound outstanding resolutions as well as UI peers.
                 if (name !in pendingResolutions && pendingResolutions.size >= 128) return
                 val ticket = ++resolveTicket

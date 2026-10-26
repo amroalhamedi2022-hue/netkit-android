@@ -18,5 +18,24 @@ fun main() {
     denied.forEach { ip ->
         check(!PeerAddressPolicy.isLocalPeer(InetAddress.getByName(ip))) { "Accepted nonlocal address: $ip" }
     }
-    println("PASS: NetKit NSD address policy (${allowed.size} allowed, ${denied.size} denied)")
+    val safeNames = listOf("NetKit-Xiaomi Pad 5", "جهاز أندرويد", "NetKit 🫧")
+    safeNames.forEach { name ->
+        check(PeerDisplayNamePolicy.isSafeServiceName(name)) { "Rejected safe service label: $name" }
+    }
+    val unsafeNames = listOf(
+        "", " ", " padded ", "line\\nbreak", "Host\\u202Etxt", "Host\\u200Bname",
+        "Host\\uFEFFname", "Host\\uFFFDname", "Cafe\\u0301", "x".repeat(64)
+    )
+    unsafeNames.forEach { name ->
+        check(!PeerDisplayNamePolicy.isSafeServiceName(name)) {
+            "Accepted deceptive or overlong service label: $name"
+        }
+    }
+    check(!PeerDisplayNamePolicy.isSafeServiceName("bad\\uD800")) {
+        "Accepted an isolated UTF-16 high surrogate"
+    }
+    check(!PeerDisplayNamePolicy.isSafeServiceName("bad\\uDC00")) {
+        "Accepted an isolated UTF-16 low surrogate"
+    }
+    println("PASS: NetKit NSD address and display-name policies")
 }
