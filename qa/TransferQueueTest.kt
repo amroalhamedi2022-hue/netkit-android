@@ -22,6 +22,8 @@ fun main() {
         check(TransferQueue(FileTransferJournal(file)).snapshot()[1].completedBytes == 15L)
         check(queue.resume(second.id)?.state == TransferState.QUEUED)
         check(queue.begin(second.id)?.attempts == 2)
+        check(queue.finish(second.id) == null) // resume cannot trust the saved local offset
+        check(queue.confirmRemoteOffset(second.id, 15)?.completedBytes == 15L)
         check(queue.finish(second.id)?.state == TransferState.COMPLETED)
 
         // Never report a partial transfer as complete, even if the caller invokes finish early.
