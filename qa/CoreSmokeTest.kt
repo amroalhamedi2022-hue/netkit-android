@@ -4,6 +4,7 @@ import com.netkit.local.share.*
 import java.io.ByteArrayInputStream
 import java.util.zip.ZipInputStream
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.net.URI
 import java.security.KeyStore
@@ -13,7 +14,38 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.*
 
 /** TEST ONLY. The trust-all verifier MUST NEVER be imported into the Android app. */
+private fun testStreamReadGuard() {
+    val payload = byteArrayOf(3, 1, 4, 1, 5)
+    var transientZeros = 2
+    var offset = 0
+    val recovering = object : InputStream() {
+        override fun read(): Int = if (offset >= payload.size) -1 else payload[offset++].toInt() and 0xff
+        override fun read(buffer: ByteArray, start: Int, length: Int): Int {
+            if (transientZeros > 0) { transientZeros--; return 0 }
+            if (offset >= payload.size) return -1
+            val count = minOf(length, payload.size - offset)
+            System.arraycopy(payload, offset, buffer, start, count)
+            offset += count
+            return count
+        }
+    }
+    val buffer = ByteArray(16)
+    val count = StreamReadGuard.read(recovering, buffer, 0, buffer.size)
+    check(count == payload.size && buffer.copyOf(count).contentEquals(payload))
+    check(StreamReadGuard.read(recovering, buffer, 0, buffer.size) == -1)
+
+    var attempts = 0
+    val stalled = object : InputStream() {
+        override fun read(): Int = -1
+        override fun read(buffer: ByteArray, start: Int, length: Int): Int { attempts++; return 0 }
+    }
+    val failure = runCatching { StreamReadGuard.read(stalled, buffer, 0, buffer.size) }.exceptionOrNull()
+    check(failure is IOException) { "A permanently stalled stream must fail with IOException" }
+    check(attempts == 33) { "Expected 33 bounded attempts, got $attempts" }
+}
+
 fun main(args: Array<String>) {
+    testStreamReadGuard()
     val ks = KeyStore.getInstance("PKCS12")
     val password = "temporary-test-only".toCharArray()
     File(args[0]).inputStream().use { ks.load(it, password) }
