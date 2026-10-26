@@ -2,7 +2,7 @@ name: NetKit Android - development build and verification
 
 on:
   push:
-    branches: [main, feature/netkit-pro-delivery-m1-m5, feature/netkit-reliability-20261023]
+    branches: [main, feature/netkit-pro-delivery-m1-m5, feature/netkit-reliability-20261023, automation/netkit-zip-stall-guard-20261023]
     paths:
       - 'app/**'
       - 'qa/**'
@@ -67,6 +67,63 @@ jobs:
           set -euo pipefail
           kotlinc app/src/main/java/com/netkit/local/transfer/TransferQueue.kt qa/TransferQueueTest.kt -include-runtime -d "$RUNNER_TEMP/transfer-queue.jar"
           java -jar "$RUNNER_TEMP/transfer-queue.jar" "$RUNNER_TEMP"
+
+  # Explicit one-off package for a real hardware acceptance test; not a release build.
+  # Commit marker is required, and source-qa must pass first.
+  device-test-build:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[device-test-build]')
+    needs: source-qa
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Confirm Android SDK
+        run: test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+      - name: Install Android SDK platform
+        run: "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Create and verify official Gradle wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f gradle/wrapper/gradle-wrapper.jar ]]; then
+            gradle --no-daemon wrapper --gradle-version 8.13 --distribution-type bin
+          fi
+          echo "81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          chmod +x gradlew
+      - name: Build Android debug APK for device acceptance
+        run: ./gradlew --no-daemon :app:assembleDebug --stacktrace
+      - name: Android lint
+        run: ./gradlew --no-daemon :app:lintDebug --stacktrace
+      - name: Verify APK signing and identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
+          grep -F "package: name='com.netkit.local'" apk-badging.txt
+      - name: Package APK and checksum evidence
+        run: python3 tools/package_verified_build.py
+      - name: Upload targeted device-test artifact (not a release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetKit-device-test-${{ github.sha }}
+          path: |
+            dist/NetKit_v0.6.0-alpha-debug.apk
+            dist/NetKit_Android_Source_v0.6-build1.zip
+            dist/SHA256SUMS.txt
+            apk-badging.txt
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: error
+          retention-days: 7
 
   verified-build:
     if: github.event_name == 'workflow_dispatch' && inputs.release_approved == true
