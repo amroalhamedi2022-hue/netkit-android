@@ -27,6 +27,11 @@ interface TransferJournal {
     fun save(tasks: List<TransferTask>)
 }
 
+private const val MAX_TRANSFER_TASKS = 1000
+private const val MAX_TRANSFER_REFERENCE_LENGTH = 1024
+private const val MAX_TRANSFER_ERROR_LENGTH = 200
+private const val MAX_TRANSFER_JOURNAL_BYTES = 16L * 1024 * 1024
+
 /** Thread-safe state transitions; journal failures must never silently leave an in-memory change. */
 class TransferQueue(private val journal: TransferJournal) {
     private val mutex = Any()
@@ -42,7 +47,9 @@ class TransferQueue(private val journal: TransferJournal) {
 
     fun add(source: String, destination: String, size: Long): TransferTask = synchronized(mutex) {
         require(source.isNotBlank() && destination.isNotBlank())
-        require(size >= 0 && tasks.size < 1000)
+        require(source.length <= MAX_TRANSFER_REFERENCE_LENGTH &&
+            destination.length <= MAX_TRANSFER_REFERENCE_LENGTH) { "Transfer reference is too long" }
+        require(size >= 0 && tasks.size < MAX_TRANSFER_TASKS)
         val task = TransferTask(UUID.randomUUID().toString(), source, destination, size)
         persistChange { add(task) }
         task
@@ -96,7 +103,7 @@ class TransferQueue(private val journal: TransferJournal) {
     fun fail(id: String, message: String): TransferTask? = synchronized(mutex) {
         val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
         if (index < 0) null else edit(index) {
-            it.copy(state = TransferState.FAILED, error = message.take(200))
+            it.copy(state = TransferState.FAILED, error = message.take(MAX_TRANSFER_ERROR_LENGTH))
         }
     }
 
@@ -123,27 +130,56 @@ class TransferQueue(private val journal: TransferJournal) {
 class FileTransferJournal(private val file: File) : TransferJournal {
     override fun load(): List<TransferTask> {
         if (!file.exists()) return emptyList()
+        require(file.length() <= MAX_TRANSFER_JOURNAL_BYTES) { "Transfer journal exceeds safe size" }
         val properties = Properties().also { props -> FileInputStream(file).use(props::load) }
         val count = properties.getProperty("count")?.toIntOrNull()
             ?: throw IllegalStateException("Invalid transfer journal count")
-        require(count in 0..1000) { "Too many saved transfer tasks" }
+        require(count in 0..MAX_TRANSFER_TASKS) { "Too many saved transfer tasks" }
+        val ids = HashSet<String>()
         return (0 until count).map { n ->
             val prefix = "$n."
             fun required(key: String) = properties.getProperty(prefix + key)
                 ?: throw IllegalStateException("Missing saved task field $n.$key")
+            val id = required("id")
+            val source = required("source")
+            val destination = required("dest")
             val size = required("size").toLong()
             val done = required("done").toLong()
-            require(size >= 0 && done in 0..size) { "Invalid saved task byte count" }
+            val attempts = required("attempts").toInt()
+            val error = properties.getProperty(prefix + "error", "")
+            require(id.isNotBlank() && id.length <= 64 && ids.add(id)) {
+                "Invalid or duplicate saved transfer ID"
+            }
+            require(source.isNotBlank() && source.length <= MAX_TRANSFER_REFERENCE_LENGTH &&
+                destination.isNotBlank() && destination.length <= MAX_TRANSFER_REFERENCE_LENGTH) {
+                "Invalid saved transfer reference"
+            }
+            require(size >= 0 && done in 0..size && attempts >= 0 &&
+                error.length <= MAX_TRANSFER_ERROR_LENGTH) { "Invalid saved transfer state" }
             TransferTask(
-                id = required("id"), source = required("source"), destination = required("dest"),
+                id = id, source = source, destination = destination,
                 size = size, completedBytes = done, state = TransferState.valueOf(required("state")),
-                attempts = required("attempts").toInt(), error = properties.getProperty(prefix + "error", "")
+                attempts = attempts, error = error
             )
         }
     }
 
     override fun save(tasks: List<TransferTask>) {
-        require(tasks.size <= 1000)
+        require(tasks.size <= MAX_TRANSFER_TASKS)
+        val ids = HashSet<String>()
+        tasks.forEach { task ->
+            require(task.id.isNotBlank() && task.id.length <= 64 && ids.add(task.id)) {
+                "Invalid or duplicate transfer ID"
+            }
+            require(task.source.isNotBlank() && task.source.length <= MAX_TRANSFER_REFERENCE_LENGTH &&
+                task.destination.isNotBlank() && task.destination.length <= MAX_TRANSFER_REFERENCE_LENGTH) {
+                "Invalid transfer reference"
+            }
+            require(task.size >= 0 && task.completedBytes in 0..task.size &&
+                task.attempts >= 0 && task.error.length <= MAX_TRANSFER_ERROR_LENGTH) {
+                "Invalid transfer task state"
+            }
+        }
         val properties = Properties()
         properties.setProperty("count", tasks.size.toString())
         tasks.forEachIndexed { index, task ->
@@ -159,15 +195,22 @@ class FileTransferJournal(private val file: File) : TransferJournal {
         }
         file.parentFile?.mkdirs()
         val staging = File(file.parentFile, file.name + ".new")
-        FileOutputStream(staging).use { stream ->
-            properties.store(stream, "NetKit Transfer Journal")
-            stream.fd.sync()
-        }
         try {
-            Files.move(staging.toPath(), file.toPath(),
-                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
-            Files.move(staging.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            FileOutputStream(staging).use { stream ->
+                properties.store(stream, "NetKit Transfer Journal")
+                stream.fd.sync()
+            }
+            if (staging.length() > MAX_TRANSFER_JOURNAL_BYTES) {
+                throw java.io.IOException("Transfer journal exceeds safe size")
+            }
+            try {
+                Files.move(staging.toPath(), file.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(staging.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            if (staging.exists()) staging.delete()
         }
     }
 }
