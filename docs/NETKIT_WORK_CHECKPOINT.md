@@ -79,3 +79,16 @@
 - Protocol-confirmed network resume remains **NOT IMPLEMENTED**; queue reconciliation is not itself a transport.
 
 No merge, no main changes, no new dependency or paid API.
+
+
+## M54 — Reject invalid transfer progress instead of silently clamping (2026-10-27)
+
+**Scope:** PR #6 only. PR #7 remains on its separate branch.
+
+- **Production change:** `TransferQueue.progress()` now rejects negative, regressing, and over-size byte reports by returning no update. It no longer turns invalid transport evidence into a plausible in-range count through `coerceIn`.
+- **Regression coverage:** `qa/TransferQueueTest.kt` verifies that invalid reports do not change the durable count, valid progress still persists, and a resumed task still requires a peer-confirmed offset before completion.
+- **Source commit:** `bf050559c40a626c6a46e0b451cadcdd2015d711`
+- **Tested source head:** `d83aeaf38c101bf5a33dd8a2101f15665fe1c0d5`
+- **CI:** [run 40412794098](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40412794098) — **PASS**. The source-qa job completed successfully; logs explicitly report the persistent queue state-machine regression passing. Android APK/lint jobs were skipped by design.
+- **Acceptance:** strict progress-bound JVM regression **PASS**; static/JVM source QA **PASS**; Android compile on this source SHA **NOT TESTED**; Xiaomi Pad 5/Windows end-to-end transfer **NOT TESTED**.
+- **Safety:** no merge, no `main` changes, no new dependencies, no APK created. This queue is still a persisted intent/journal, not a completed network-resume protocol.
