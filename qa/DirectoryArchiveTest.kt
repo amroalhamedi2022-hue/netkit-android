@@ -346,5 +346,34 @@ fun main() {
             error.message == "HTTPS sharing session ended")
         check(reads == 1) { "Archive did not stop at the revoked lease boundary" }
     }
-    println("PASS: paged ZIP, nested folders, path/quotas, transient zero-read recovery and stalled-provider rejection, Windows-safe names/collisions, cancelled-worker interruption")
+    run {
+        // Checksum lines are budgeted incrementally, before a huge manifest can accumulate in RAM.
+        val source = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("f", "long-name.txt", false)), null)
+            override fun open(fileId: String): InputStream = ByteArrayInputStream(byteArrayOf(1))
+        }
+        val error = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", source, it, includeChecksums = true,
+                    maximumChecksumManifestBytes = 64)
+            }
+        }.exceptionOrNull()
+        check(error is IllegalStateException && error.message == "Archive checksum manifest too large")
+    }
+    run {
+        // A faulty SAF provider must not repeat the same page forever.
+        val source = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("f", "one.txt", false)), offset)
+            override fun open(fileId: String): InputStream = ByteArrayInputStream(byteArrayOf(1))
+        }
+        val error = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", source, it)
+            }
+        }.exceptionOrNull()
+        check(error is IllegalStateException && error.message == "Invalid archive pagination loop")
+    }
+    println("PASS: paged ZIP, nested folders, path/quotas, incremental checksum budget, invalid pagination, transient zero-read recovery, Windows-safe names/collisions and cancellation")
 }
