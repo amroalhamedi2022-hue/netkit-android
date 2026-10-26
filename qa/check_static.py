@@ -54,7 +54,7 @@ assert 'netkit_upload_destination' in storage
 assert 'takePersistableUriPermission' in storage
 assert 'UploadDestinationPolicy.canRestore' in storage
 assert 'restoreUploadTree()' in storage
-assert 'UploadDestinationPolicy.kt' in (root / 'app/src/main/java/com/netkit/local/share/UploadDestinationPolicy.kt').read_text()
+assert 'object UploadDestinationPolicy' in (root / 'app/src/main/java/com/netkit/local/share/UploadDestinationPolicy.kt').read_text()
 engine = (root / 'app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt').read_text()
 assert 'activeClients.remove(client)' in engine
 assert 'x-content-sha256' in engine
