@@ -93,10 +93,13 @@ class TransferQueue(private val journal: TransferJournal) {
     fun cancel(id: String) = transition(id,
         setOf(TransferState.QUEUED, TransferState.RUNNING, TransferState.PAUSED, TransferState.FAILED), TransferState.CANCELLED)
 
+    /** Complete only when the transport has accounted for every declared byte. */
     fun finish(id: String): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
+        val index = tasks.indexOfFirst {
+            it.id == id && it.state == TransferState.RUNNING && it.completedBytes == it.size
+        }
         if (index < 0) null else edit(index) {
-            it.copy(state = TransferState.COMPLETED, completedBytes = it.size, error = "")
+            it.copy(state = TransferState.COMPLETED, error = "")
         }
     }
 
