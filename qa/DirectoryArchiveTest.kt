@@ -158,6 +158,32 @@ fun main() {
         }
     }
     run {
+        // SAF open() may return only after the share lease has expired. Do not
+        // emit a ZIP entry header or any file bytes after that boundary.
+        var active = true
+        val expiredOnOpen = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("late", "late.bin", false)), null)
+            override fun open(fileId: String): InputStream {
+                active = false
+                return ByteArrayInputStream(byteArrayOf(9, 8, 7))
+            }
+        }
+        val bytes = ByteArrayOutputStream()
+        val failure = runCatching {
+            ZipOutputStream(bytes).use {
+                DirectoryArchive.write("root", expiredOnOpen, it, checkActive = {
+                    check(active) { "Share lease expired during SAF open" }
+                })
+            }
+        }.exceptionOrNull()
+        check(failure is IllegalStateException && failure.message == "Share lease expired during SAF open")
+        ZipInputStream(ByteArrayInputStream(bytes.toByteArray())).use { zip ->
+            check(zip.nextEntry == null) { "Expired SAF open emitted a ZIP entry" }
+        }
+    }
+
+    run {
         // A malicious/broken provider can report infinitely many empty pages
         // with increasing offsets; reject immediately instead of looping.
         var calls = 0
