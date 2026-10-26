@@ -11,6 +11,22 @@ fun main() {
         val queue = TransferQueue(FileTransferJournal(file))
         val first = queue.add("content://safe/a", "peer/a", 100)
         val second = queue.add("content://safe/b", "peer/b", 15)
+
+        run {
+            val invalidReferences = listOf(
+                "content://safe/line\nbreak",
+                "content://safe/\u0085name",
+                "content://safe/\u202Etxt",
+                "content://safe/\uD800"
+            )
+            invalidReferences.forEach { bad ->
+                check(runCatching { queue.add(bad, "peer/a", 1) }.exceptionOrNull() is IllegalArgumentException)
+                check(runCatching { queue.add("content://safe/a", bad, 1) }.exceptionOrNull() is IllegalArgumentException)
+            }
+            val arabic = queue.add("content://safe/ملف", "peer/ملف", 1)
+            check(arabic.source.endsWith("ملف") && arabic.destination.endsWith("ملف"))
+            check(queue.cancel(arabic.id)?.state == TransferState.CANCELLED)
+        }
         check(queue.begin(second.id)?.id == second.id)
         check(queue.begin(second.id) == null)
         check(queue.snapshot().first().state == TransferState.QUEUED)
