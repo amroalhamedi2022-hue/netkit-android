@@ -19,6 +19,29 @@ class RemoteContentChangedException(message: String) : IOException(message)
 object VerifiedDownloadStaging {
     private const val BLOCK = 64 * 1024
 
+    /**
+     * Persist the current prefix even when the network stream fails. A resumed
+     * transfer must never trust file length alone after a process interruption.
+     * Preserve the original transfer error if syncing the partial file also fails.
+     */
+    private inline fun <T> syncOnExit(output: FileOutputStream, block: () -> T): T {
+        var primary: Throwable? = null
+        try {
+            return block()
+        } catch (failure: Throwable) {
+            primary = failure
+            throw failure
+        } finally {
+            try {
+                }
+            } catch (syncFailure: Throwable) {
+                val original = primary
+                if (original != null) original.addSuppressed(syncFailure)
+                else throw syncFailure
+            }
+        }
+    }
+
     fun stage(remote: InputStream, part: File, expectedBytes: Long, progress: (Long) -> Unit = {}): ByteArray {
         require(expectedBytes >= 0) { "Verified download requires a known remote length" }
         require(part.isFile || !part.exists()) { "Staging path is not a regular file" }
@@ -48,6 +71,7 @@ object VerifiedDownloadStaging {
         }
         progress(received)
         FileOutputStream(part, true).use { output ->
+            syncOnExit(output) {
             var emptyReads = 0
             while (received < expectedBytes) {
                 val wanted = minOf(BLOCK.toLong(), expectedBytes - received).toInt()
@@ -64,7 +88,7 @@ object VerifiedDownloadStaging {
                 progress(received)
             }
             if (remote.read() != -1) throw IOException("Remote grew during download")
-            output.fd.sync()
+            }
         }
         check(part.length() == expectedBytes) { "Staged file length mismatch" }
         return digest.digest()
@@ -108,6 +132,7 @@ object VerifiedDownloadStaging {
         }
         openAt(saved).use { remote ->
             FileOutputStream(part, true).use { output ->
+                syncOnExit(output) {
                 var received = saved
                 var emptyReads = 0
                 while (received < expectedBytes) {
