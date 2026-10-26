@@ -92,8 +92,10 @@ class NetKitCore(context: Context) {
         }
     }
     fun chooseFolder(uri: Uri) {
-        storage.setUploadTree(uri)
-        folder = storage.uploadFolderLabel()
+        folder = runCatching {
+            storage.setUploadTree(uri)
+            storage.uploadFolderLabel()
+        }.getOrElse { "تعذّر حفظ مجلد الاستقبال: ${it.localizedMessage.orEmpty()}" }
     }
     fun startShare(onFailure: (() -> Unit)? = null) {
         if (disposed || share.active || share.starting) return
