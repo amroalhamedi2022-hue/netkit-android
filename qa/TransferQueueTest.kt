@@ -43,7 +43,8 @@ fun main() {
         val restored = TransferQueue(FileTransferJournal(file))
         check(restored.resume(first.id)?.state == TransferState.QUEUED)
         check(restored.next()?.id == first.id)
-        check(restored.progress(first.id, 70)?.completedBytes == 70L)
+        check(restored.progress(first.id, 70) == null) // interrupted offset must be verified first
+        check(restored.confirmRemoteOffset(first.id, 70)?.completedBytes == 70L)
         check(restored.confirmRemoteOffset(first.id, 40)?.completedBytes == 40L) // verified server offset may rewind
         check(restored.confirmRemoteOffset(first.id, 101) == null) // beyond declared file size
         check(restored.confirmRemoteOffset(first.id, -1) == null) // negative offsets fail closed
@@ -90,6 +91,22 @@ fun main() {
             check(oversizedError is IllegalArgumentException &&
                 oversizedError.message!!.contains("safe size"))
         }
+        // A failed attempt that sent all bytes is not complete until the peer confirms its durable offset.
+        val retryFile = File(dir, "retry-queue.properties")
+        val retryQueue = TransferQueue(FileTransferJournal(retryFile))
+        val uncertain = retryQueue.add("content://safe/uncertain", "peer/uncertain", 4)
+        check(retryQueue.begin(uncertain.id) != null)
+        check(retryQueue.progress(uncertain.id, 4)?.completedBytes == 4L)
+        check(retryQueue.fail(uncertain.id, "final acknowledgement lost")?.state == TransferState.FAILED)
+        val recoveredRetry = TransferQueue(FileTransferJournal(retryFile))
+        check(recoveredRetry.snapshot().single { it.id == uncertain.id }.offsetNeedsConfirmation)
+        check(recoveredRetry.resume(uncertain.id)?.state == TransferState.QUEUED)
+        check(recoveredRetry.begin(uncertain.id)?.state == TransferState.RUNNING)
+        check(recoveredRetry.progress(uncertain.id, 3) == null)
+        check(recoveredRetry.finish(uncertain.id) == null)
+        check(recoveredRetry.confirmRemoteOffset(uncertain.id, 4)?.offsetNeedsConfirmation == false)
+        check(recoveredRetry.finish(uncertain.id)?.state == TransferState.COMPLETED)
+
         println("PASS: durable queue, confirmed offsets, corruption rejection, size bounds, retry and recovery")
     } finally { dir.deleteRecursively() }
 }
