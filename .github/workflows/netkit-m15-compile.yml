@@ -1,0 +1,71 @@
+# Final M15 compile gate after fixing initial private-cache free-space check.
+name: NetKit M15 targeted Android compile
+on:
+  push:
+    branches: [automation/netkit-zip-stall-guard-20261023]
+    paths:
+      - '.github/workflows/netkit-m15-compile.yml'
+      - 'app/src/main/AndroidManifest.xml'
+      - 'app/src/main/java/com/netkit/local/connectivity/PeerDiscovery.kt'
+      - 'app/src/main/java/com/netkit/local/connectivity/MulticastLockLease.kt'
+      - 'app/src/main/java/com/netkit/local/ui/NetKitProScreens.kt'
+      - 'qa/MulticastLockLeaseTest.kt'
+      - 'qa/run_jvm_tests.sh'
+      - 'qa/check_static.py'
+      - 'app/src/main/java/com/netkit/local/share/DirectoryArchive.kt'
+      - 'qa/DirectoryArchiveTest.kt'
+  pull_request:
+    branches: [feature/netkit-reliability-20261023]
+    paths:
+      - '.github/workflows/netkit-m15-compile.yml'
+      - 'app/src/main/AndroidManifest.xml'
+      - 'app/src/main/java/com/netkit/local/connectivity/PeerDiscovery.kt'
+      - 'app/src/main/java/com/netkit/local/connectivity/MulticastLockLease.kt'
+      - 'app/src/main/java/com/netkit/local/ui/NetKitProScreens.kt'
+      - 'qa/MulticastLockLeaseTest.kt'
+      - 'qa/run_jvm_tests.sh'
+      - 'qa/check_static.py'
+      - 'app/src/main/java/com/netkit/local/share/DirectoryArchive.kt'
+      - 'qa/DirectoryArchiveTest.kt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Prepare Android SDK
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Verify official Gradle wrapper
+        run: |
+          set -euo pipefail
+          if [[ ! -f gradle/wrapper/gradle-wrapper.jar ]]; then
+            gradle --no-daemon wrapper --gradle-version 8.13 --distribution-type bin
+          fi
+          echo "81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          chmod +x gradlew
+      - name: Run ZIP archive lease-boundary JVM regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v kotlinc >/dev/null 2>&1; then
+            curl -fL --retry 3 "https://github.com/JetBrains/kotlin/releases/download/v2.2.21/kotlin-compiler-2.2.21.zip" -o "$RUNNER_TEMP/kotlinc.zip"
+            unzip -q "$RUNNER_TEMP/kotlinc.zip" -d "$RUNNER_TEMP"
+            export PATH="$RUNNER_TEMP/kotlinc/bin:$PATH"
+          fi
+          kotlinc app/src/main/java/com/netkit/local/share/DirectoryArchive.kt qa/DirectoryArchiveTest.kt -include-runtime -d "$RUNNER_TEMP/netkit-directory-archive.jar"
+          java -jar "$RUNNER_TEMP/netkit-directory-archive.jar"
+      - name: Compile Android Kotlin and resources without APK
+        run: ./gradlew --no-daemon :app:compileDebugKotlin :app:processDebugResources --stacktrace

@@ -434,6 +434,9 @@ private fun HotspotScreen(core: NetKitCore, p: Palette, start: () -> Unit, stop:
 internal fun DiagnosticsScreen(core: NetKitCore, p: Palette) {
     var host by remember { mutableStateOf("192.168.1.1") }
     var port by remember { mutableStateOf("443") }
+    var wolMac by remember { mutableStateOf("") }
+    var wolBroadcast by remember { mutableStateOf("192.168.1.255") }
+    var wolPort by remember { mutableStateOf("9") }
     Text("⌁ أدوات الشبكات", fontSize = 25.sp, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(14.dp))
     GlassCard {
@@ -452,6 +455,28 @@ internal fun DiagnosticsScreen(core: NetKitCore, p: Palette) {
         }
         Spacer(Modifier.height(10.dp))
         MutedText(core.result)
+    }
+    Spacer(Modifier.height(14.dp))
+    GlassCard {
+        Text("Wake-on-LAN · إيقاظ الكمبيوتر", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        MutedText("يرسل Magic Packet عبر UDP لجهاز تملكه داخل الشبكة فقط. يتطلب تفعيل Wake-on-LAN في BIOS وكرت الشبكة.")
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(value = wolMac, onValueChange = { wolMac = it.take(24) },
+            label = { Text("MAC Address (مثال 02:11:22:33:44:66)") },
+            singleLine = true, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(value = wolBroadcast, onValueChange = { wolBroadcast = it.take(15) },
+            label = { Text("LAN Broadcast IPv4") },
+            singleLine = true, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(value = wolPort, onValueChange = { wolPort = it.filter(Char::isDigit).take(5) },
+            label = { Text("UDP Port") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        MainButton("Send Wake Packet", p, enabled = !core.busy) {
+            core.runWakeOnLan(wolMac, wolBroadcast, wolPort.toIntOrNull() ?: 0)
+        }
+        Spacer(Modifier.height(8.dp))
+        MutedText("نجاح الإرسال لا يؤكد استيقاظ الكمبيوتر. عنوان البث يجب أن يكون ضمن LAN خاصة.")
     }
     Spacer(Modifier.height(14.dp))
     GlassCard {

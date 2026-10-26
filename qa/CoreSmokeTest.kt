@@ -14,6 +14,87 @@ import javax.net.ssl.*
 
 /** TEST ONLY. The trust-all verifier MUST NEVER be imported into the Android app. */
 fun main(args: Array<String>) {
+    // Read guard is shared by HTTPS full/Range downloads and SAF browser uploads.
+    // A transient zero read must preserve bytes; an endlessly stalled provider
+    // must not monopolize a TLS worker or leave a .part upload spinning.
+    run {
+        val flaky = object : InputStream() {
+            private val payload = byteArrayOf(4, 5, 6)
+            private var pos = 0
+            private var emptyReads = 2
+            override fun read(): Int = if (pos < payload.size) payload[pos++].toInt() else -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (emptyReads-- > 0) return 0
+                if (pos >= payload.size) return -1
+                val count = minOf(len, payload.size - pos)
+                payload.copyInto(b, off, pos, pos + count)
+                pos += count
+                return count
+            }
+        }
+        val bytes = ByteArray(3)
+        check(StreamReadGuard.read(flaky, bytes, 0, bytes.size) == 3)
+        check(bytes.contentEquals(byteArrayOf(4, 5, 6)))
+        check(StreamReadGuard.read(flaky, bytes, 0, bytes.size) == -1)
+    }
+    run {
+        var attempts = 0
+        val stalled = object : InputStream() {
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                attempts++
+                return 0
+            }
+        }
+        val error = runCatching { StreamReadGuard.read(stalled, ByteArray(8), 0, 8) }.exceptionOrNull()
+        check(error is IllegalStateException && error.message == "Shared stream read stalled")
+        check(attempts == 33) { "Unexpected zero-read retry budget: $attempts" }
+    }
+    // A Range prefix skip/read can block inside a SAF provider. Recheck the
+    // lease immediately after each provider call, even when that call consumes
+    // the entire prefix and no next loop iteration would otherwise run.
+    run {
+        var active = true
+        var skips = 0
+        val duringSkip = object : InputStream() {
+            override fun read(): Int = -1
+            override fun skip(n: Long): Long {
+                skips++
+                active = false
+                return n
+            }
+        }
+        val skipError = runCatching {
+            RangePrefixDiscarder.discardExactly(duringSkip, 128) {
+                if (!active) throw java.io.InterruptedIOException("HTTPS sharing session ended")
+            }
+        }.exceptionOrNull()
+        check(skipError is java.io.InterruptedIOException &&
+            skipError.message == "HTTPS sharing session ended")
+        check(skips == 1) { "Expired Range skip must not continue or succeed" }
+
+        var reads = 0
+        var readActive = true
+        val duringRead = object : InputStream() {
+            override fun read(): Int = -1
+            override fun skip(n: Long): Long = 0L
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                reads++
+                b[off] = 7
+                readActive = false
+                return 1
+            }
+        }
+        val readError = runCatching {
+            RangePrefixDiscarder.discardExactly(duringRead, 1) {
+                if (!readActive) throw java.io.InterruptedIOException("HTTPS sharing session ended")
+            }
+        }.exceptionOrNull()
+        check(readError is java.io.InterruptedIOException &&
+            readError.message == "HTTPS sharing session ended")
+        check(reads == 1) { "Expired Range read must not be accepted" }
+    }
+    println("PASS: HTTPS/SAF stream guard recovers transient zeros and rejects permanent stalls; Range prefix expiry checked after skip/read")
     val ks = KeyStore.getInstance("PKCS12")
     val password = "temporary-test-only".toCharArray()
     File(args[0]).inputStream().use { ks.load(it, password) }
@@ -34,6 +115,7 @@ fun main(args: Array<String>) {
     val folderId = "bd8819ba-cafb-45b4-ae70-3ec73580d78d"
     val nestedId = "72c9c931-e477-4a92-a1e7-78b79b85130d"
     var uploadsAllowed = true
+    var rejectUpload = false
     var uploadLimit = 16L * 1024 * 1024 * 1024
     val store = object : ShareStorage, DirectoryShareStorage {
         override fun maxUploadSize(): Long = uploadLimit
@@ -58,6 +140,7 @@ fun main(args: Array<String>) {
         }
         override fun canUpload() = uploadsAllowed
         override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String {
+            if (rejectUpload) throw UploadPermissionRevokedException()
             val result = ByteArray(length.toInt())
             var read = 0
             while (read < result.size) {
@@ -72,13 +155,25 @@ fun main(args: Array<String>) {
             uploaded[fileName] = result
             return fileName
         }
+        override fun uploadRelative(folders: List<String>, fileName: String, body: InputStream,
+                                    length: Long, expectedSha256: String?, progress: (Long) -> Unit): String =
+            upload(folders.joinToString("/") + "/" + fileName, body, length, expectedSha256, progress)
     }
-    TransferHttpEngine(serverSsl.serverSocketFactory, store).use { engine ->
+    TransferHttpEngine(serverSsl.serverSocketFactory, store,
+        uploadCacheRoot = File(System.getProperty("java.io.tmpdir"), "netkit-https-chunks-test")).use { engine ->
+        // The browser URL decoder can replace invalid UTF-8 with U+FFFD.
+        // Invalid UTF-16 surrogates can also alias valid names on SAF providers.
+        check(!engine.validName("bad\uFFFDname.txt"))
+        check(!engine.validName("broken" + '\uD800' + ".txt"))
+        check(!engine.validName("broken" + '\uDC00' + ".txt"))
+        check(engine.validName("صورة-😀.png"))
         engine.start()
         val root = "https://127.0.0.1:${engine.port}/s/${engine.token}"
         var lastContentRange: String? = null
         fun request(path: String, method: String = "GET", bytes: ByteArray? = null, filename: String? = null,
-                    range: String? = null, sha256: String? = null): Pair<Int, ByteArray> {
+                    range: String? = null, sha256: String? = null,
+                    relativePath: String? = null, uploadId: String? = null,
+                     uploadTotal: Long? = null, uploadOffset: Long? = null): Pair<Int, ByteArray> {
             val con = URI(path).toURL().openConnection() as HttpsURLConnection
             con.sslSocketFactory = clientSsl.socketFactory
             con.hostnameVerifier = HostnameVerifier { _, _ -> true }
@@ -89,6 +184,10 @@ fun main(args: Array<String>) {
                 con.setFixedLengthStreamingMode(bytes.size)
                 con.setRequestProperty("X-File-Name", filename!!)
                 if (sha256 != null) con.setRequestProperty("X-Content-SHA256", sha256)
+                if (relativePath != null) con.setRequestProperty("X-Relative-Path", relativePath)
+                if (uploadId != null) con.setRequestProperty("X-Upload-ID", uploadId)
+                if (uploadTotal != null) con.setRequestProperty("X-Upload-Total", uploadTotal.toString())
+                if (uploadOffset != null) con.setRequestProperty("X-Upload-Offset", uploadOffset.toString())
                 con.setRequestProperty("Content-Type", "application/octet-stream")
                 con.outputStream.use { it.write(bytes) }
             }
@@ -99,6 +198,80 @@ fun main(args: Array<String>) {
             return code to data
         }
         check(request(root + "/").first == 200)
+        // A client that sends a partial HTTP header must not keep a TLS
+        // worker occupied indefinitely by slowly dripping more bytes.
+        check(runCatching {
+            TransferHttpEngine(serverSsl.serverSocketFactory, store, headerTimeoutMillis = 0L)
+        }.isFailure)
+        TransferHttpEngine(serverSsl.serverSocketFactory, store, headerTimeoutMillis = 800L).use { guarded ->
+            guarded.start()
+            (clientSsl.socketFactory.createSocket("127.0.0.1", guarded.port) as SSLSocket).use { slow ->
+                slow.soTimeout = 3_000
+                slow.startHandshake()
+                slow.outputStream.write(
+                    "GET /s/${guarded.token}/list HTTP/1.1\r\nHost: localhost\r\nX-Slow:".toByteArray(Charsets.ISO_8859_1)
+                )
+                slow.outputStream.flush()
+                Thread.sleep(1_050)
+                // The worker must close this incomplete request without
+                // waiting for a missing CRLF or an eventual upload body.
+                val closed = runCatching { slow.inputStream.read() }.getOrElse { -1 } == -1
+                check(closed) { "Timed-out HTTPS header remained open" }
+            }
+            repeat(40) {
+                if (guarded.activeClientCount == 0) return@repeat
+                Thread.sleep(25)
+            }
+            check(guarded.activeClientCount == 0) { "Timed-out HTTPS client leaked" }
+        }
+        println("PASS: absolute TLS request-header deadline and worker cleanup")
+        // Exercise the real TLS request parser, not a mock. Invalid field-name
+        // whitespace, folded headers, controls, duplicate framing and chunked
+        // request bodies must be rejected before invoking ShareStorage.
+        fun rawHeaderStatus(fields: String, target: String = "/s/${engine.token}/list"): String {
+            (clientSsl.socketFactory.createSocket("127.0.0.1", engine.port) as SSLSocket).use { socket ->
+                socket.soTimeout = 5_000
+                val requestText = "GET $target HTTP/1.1\r\nHost: localhost\r\n" +
+                    fields + "\r\n"
+                socket.outputStream.write(requestText.toByteArray(Charsets.ISO_8859_1))
+                socket.outputStream.flush()
+                return socket.inputStream.bufferedReader().readLine().orEmpty()
+            }
+        }
+        check(rawHeaderStatus("X-Test: safe\r\n").contains("200"))
+        // Strict CRLF prevents ambiguous request framing across HTTP parsers.
+        check(rawHeaderStatus("X-Test: bare-LF\n").contains("400"))
+        // Bound unique-header count even when total bytes stay below 32 KiB.
+        val tooManyHeaders = (1..101).joinToString("") { "X-Guard-$it: v\r\n" }
+        check(rawHeaderStatus(tooManyHeaders).contains("400"))
+        val maxHeaders = (1..99).joinToString("") { "X-Guard-$it: v\r\n" }
+        check(rawHeaderStatus(maxHeaders).contains("200"))
+        for (badHeaders in listOf(
+            "Content-Length : 0\r\n", // whitespace in header name
+            "Bad Name: value\r\n",
+            "X-Test: okay\r\n folded\r\n", // obsolete line folding
+            "X-Test: bad\u0001value\r\n",
+            "Content-Length: 0\r\nTransfer-Encoding: chunked\r\n",
+            "Content-Length: 0\r\ncontent-length: 0\r\n"
+        )) {
+            check(rawHeaderStatus(badHeaders).contains("400")) {
+                "Unsafe HTTP headers accepted: ${badHeaders.toByteArray().contentToString()}"
+            }
+        }
+        // Browse parameters are security-sensitive SAF selectors. Malformed
+        // encodings, duplicates and bad offsets must return HTTP 400 instead
+        // of silently browsing root or dropping the TLS connection.
+        val browseTarget = "/s/${engine.token}/browse"
+        for (badQuery in listOf(
+            "dir=not-a-uuid", "dir=root&dir=$folderId", "offset=1&offset=2",
+            "offset=-1", "offset=1000001", "offset=abc", "offset=01",
+            "dir=%GG", "dir=%C3%28", "dir=root&", "unexpected=value"
+        )) {
+            val status = rawHeaderStatus("", "$browseTarget?$badQuery")
+            check(status.contains("400")) { "Invalid browse query accepted: $badQuery ($status)" }
+        }
+        check(rawHeaderStatus("", "$browseTarget?dir=root&offset=0").contains("200"))
+        check(rawHeaderStatus("", "$browseTarget?dir=$folderId&offset=0").contains("200"))
         val listing = request(root + "/list")
         check(listing.first == 200 && String(listing.second).contains("shared.txt"))
         val folderRoot = request(root + "/browse?dir=root")
@@ -106,6 +279,17 @@ fun main(args: Array<String>) {
         val folderFiles = request(root + "/browse?dir=$folderId")
         check(folderFiles.first == 200 && String(folderFiles.second).contains("image.png"))
         check(request(root + "/browse-file/$nestedId").second.contentEquals(initial))
+        // On-demand file integrity: SHA-256 is calculated from real HTTPS
+        // shared streams (including SAF folder children and unknown lengths).
+        fun expectedHash(data: ByteArray) = MessageDigest.getInstance("SHA-256")
+            .digest(data).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val folderChecksum = request(root + "/browse-checksum/$nestedId")
+        check(folderChecksum.first == 200)
+        check(String(folderChecksum.second) ==
+            """{"sha256":"${expectedHash(initial)}","bytes":${initial.size}}""")
+        check(request(root + "/browse-checksum/$folderId").first == 404)
+        check(request(root + "/browse-checksum/not-a-uuid").first == 404)
+
         check(request(root + "/browse-file/$nestedId", range = "bytes=3-8").first == 206)
         check(request(root + "/browse-file/$folderId").first == 404)
 
@@ -125,6 +309,18 @@ fun main(args: Array<String>) {
         check(request("https://127.0.0.1:${engine.port}/s/guess/browse").first == 404)
         val dl = request(root + "/file/$itemId")
         check(dl.first == 200 && dl.second.contentEquals(initial))
+        val knownChecksum = request(root + "/checksum/$itemId")
+        check(knownChecksum.first == 200)
+        check(String(knownChecksum.second) ==
+            """{"sha256":"${expectedHash(initial)}","bytes":${initial.size}}""")
+        val unknownChecksum = request(root + "/checksum/$unknownId")
+        check(unknownChecksum.first == 200)
+        check(String(unknownChecksum.second) ==
+            """{"sha256":"${expectedHash(unknown)}","bytes":${unknown.size}}""")
+        check(request(root + "/checksum/not-a-uuid").first == 404)
+        check(request(root + "/checksum/$folderId").first == 404)
+        check(request("https://127.0.0.1:${engine.port}/s/guess/checksum/$itemId").first == 404)
+
         // Resumable downloads: known-length SAF streams support single byte ranges.
         val part = request(root + "/file/$itemId", range = "bytes=4-9")
         check(part.first == 206 && part.second.contentEquals(initial.copyOfRange(4, 10)))
@@ -155,6 +351,36 @@ fun main(args: Array<String>) {
         check(engine.activeClientCount == 0) { "Leaked ${engine.activeClientCount} client sockets" }
 
         val upload = ByteArray(6 * 1024 * 1024) { (it % 251).toByte() }
+        // Folder uploads preserve relative structure under the explicitly chosen
+        // SAF destination. The transport rejects unsafe paths before storage access.
+        val folderName = java.net.URLEncoder.encode("صورة-😀.png", "UTF-8")
+        val relative = java.net.URLEncoder.encode("Photos/2026/صورة-😀.png", "UTF-8")
+        check(request(root + "/upload", "POST", byteArrayOf(1, 2, 3), folderName,
+            relativePath = relative).first == 201)
+        check(uploaded["Photos/2026/صورة-😀.png"]!!.contentEquals(byteArrayOf(1, 2, 3)))
+        val nestedHash = MessageDigest.getInstance("SHA-256").digest(byteArrayOf(9, 8))
+            .joinToString("") { "%02x".format(it) }
+        val nestedName = java.net.URLEncoder.encode("proof.bin", "UTF-8")
+        val nestedRelative = java.net.URLEncoder.encode("Evidence/proof.bin", "UTF-8")
+        check(request(root + "/upload", "POST", byteArrayOf(9, 8), nestedName,
+            sha256 = nestedHash, relativePath = nestedRelative).first == 201)
+        check(uploaded["Evidence/proof.bin"]!!.contentEquals(byteArrayOf(9, 8)))
+        check(request(root + "/upload", "POST", byteArrayOf(4, 5), nestedName,
+            sha256 = "0".repeat(64),
+            relativePath = java.net.URLEncoder.encode("Evidence/bad.bin", "UTF-8")).first == 400)
+        check("Evidence/bad.bin" !in uploaded)
+        check(request(root + "/upload", "POST", byteArrayOf(4, 5),
+            java.net.URLEncoder.encode("bad.bin", "UTF-8"), sha256 = "0".repeat(64),
+            relativePath = java.net.URLEncoder.encode("Evidence/bad.bin", "UTF-8")).first == 422)
+        check("Evidence/bad.bin" !in uploaded)
+        for (badPath in listOf(
+            "Photos%2F..%2Ffile.txt", "Photos%2Ffile.txt%2F", "Photos%2FCON.txt",
+            "Photos%2Fother.txt", "Photos%2F%2Ffile.txt", "Photos%2Fbad%EF%BF%BDfile.txt",
+            "Photos%2Ffile.txt%2Fextra", "Photos%2Ffile.txt%ZZ"
+        )) {
+            check(request(root + "/upload", "POST", byteArrayOf(7), "file.txt",
+                relativePath = badPath).first == 400) { "Unsafe folder upload accepted: $badPath" }
+        }
         check(request(root + "/upload", "POST", upload, "large-test.bin").first == 201)
         check(uploaded["large-test.bin"]!!.contentEquals(upload))
         val validHash = MessageDigest.getInstance("SHA-256").digest(upload).joinToString("") { "%02x".format(it) }
@@ -166,10 +392,100 @@ fun main(args: Array<String>) {
         check("malformed-hash.bin" !in uploaded)
         check(request(root + "/upload", "POST", byteArrayOf(1), "..%2Fsecrets.txt").first == 400)
         check(request(root + "/upload", "POST", byteArrayOf(1), ".netkit-backdoor.part").first == 400)
+        check(request(root + "/upload", "POST", byteArrayOf(1), "bad%EF%BF%BDname.txt").first == 400)
+        check("bad\uFFFDname.txt" !in uploaded)
+        // Authorized browser uploads still must not create spoofed Windows/SAF names.
+        for (unsafe in listOf(
+            "CON.txt", "LPT1.log", "COM%C2%B9.txt", "report.", "report%20",
+            "bad%3Aname.txt", "invoice%E2%80%AEgpj.exe",
+            "hidden%E2%81%A6name.txt", ".NETKIT-shadow.part",
+            "bad%E2%80%A8line.txt", "bad%EF%BB%BFmark.txt"
+        )) {
+            check(request(root + "/upload", "POST", byteArrayOf(7), unsafe).first == 400) {
+                "Unsafe browser upload accepted: $unsafe"
+            }
+        }
+        check(uploaded.keys.none { it.startsWith("CON") || it.startsWith("LPT") ||
+            it.startsWith("COM") || it.startsWith("bad") || it.startsWith("invoice") })
+        // Preserve valid non-ASCII names and actual upload bytes.
+        val arabicName = "ملف-آمن.txt"
+        val arabicEncoded = java.net.URLEncoder.encode(arabicName, "UTF-8")
+        check(request(root + "/upload", "POST", byteArrayOf(10, 20), arabicEncoded).first == 201)
+        check(uploaded[arabicName]!!.contentEquals(byteArrayOf(10, 20)))
+        // Actual HTTPS chunk endpoints: recover authoritative offset, reject
+        // duplicate requests, and publish to SAF only after the final chunk.
+        val resumeId = "a".repeat(32)
+        val resumeData = "resumable LAN browser payload".toByteArray()
+        val firstChunk = resumeData.copyOfRange(0, 9)
+        val finalChunk = resumeData.copyOfRange(9, resumeData.size)
+        val firstReply = request(root + "/upload-chunk", "POST", firstChunk, "resumed.txt",
+            uploadId = resumeId, uploadTotal = resumeData.size.toLong(), uploadOffset = 0)
+        check(firstReply.first == 200) { "First HTTPS chunk rejected: ${firstReply.first}" }
+        check(!uploaded.containsKey("resumed.txt")) { "Partial chunk was published" }
+        val statusReply = request(root + "/upload-status/" + resumeId)
+        check(statusReply.first == 200 && String(statusReply.second).contains("\"received\":9"))
+        check(request(root + "/upload-chunk", "POST", firstChunk, "resumed.txt",
+            uploadId = resumeId, uploadTotal = resumeData.size.toLong(), uploadOffset = 0).first == 409)
+        check(request(root + "/upload-chunk", "POST", finalChunk, "resumed.txt",
+            uploadId = resumeId, uploadTotal = resumeData.size.toLong(), uploadOffset = 9).first == 201)
+        check(uploaded["resumed.txt"]!!.contentEquals(resumeData))
+        check(String(request(root + "/upload-status/" + resumeId).second).contains("\"complete\":true"))
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(), "resumed.txt",
+            uploadId = resumeId, uploadTotal = resumeData.size.toLong(),
+            uploadOffset = resumeData.size.toLong()).first == 201)
+        val badId = "b".repeat(32)
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(5), "bad-hash.bin",
+            sha256 = "0".repeat(64), uploadId = badId, uploadTotal = 1, uploadOffset = 0).first == 422)
+        check("bad-hash.bin" !in uploaded)
+        check(request(root + "/upload-status/" + badId).first == 404)
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(1), "bad.bin",
+            uploadId = "invalid", uploadTotal = 1, uploadOffset = 0).first == 400)
+        // M25: cancellation is an authenticated POST on the existing secret HTTPS
+        // session. It must remove partial staging and block late chunk replay.
+        val cancelId = "c".repeat(32)
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(8), "cancel-me.bin",
+            uploadId = cancelId, uploadTotal = 3, uploadOffset = 0).first == 200)
+        check(request(root + "/upload-status/" + cancelId).first == 200)
+        check(request(root + "/upload-cancel/" + cancelId).first == 405) {
+            "GET must not mutate upload state"
+        }
+        check(request(root + "/upload-cancel/invalid-id", "POST").first == 400)
+        check(request("https://127.0.0.1:${engine.port}/s/guess/upload-cancel/" + cancelId,
+            "POST").first == 404)
+        val cancelReply = request(root + "/upload-cancel/" + cancelId, "POST")
+        check(cancelReply.first == 200 &&
+            String(cancelReply.second).contains("\"cancelled\":true")) {
+            "HTTPS cancel did not confirm staged upload cleanup"
+        }
+        check(request(root + "/upload-status/" + cancelId).first == 404)
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(8), "cancel-me.bin",
+            uploadId = cancelId, uploadTotal = 3, uploadOffset = 0).first == 409) {
+            "Cancelled upload ID must reject delayed chunk replay"
+        }
+        check("cancel-me.bin" !in uploaded)
+        val earlyCancelId = "d".repeat(32)
+        check(String(request(root + "/upload-cancel/" + earlyCancelId, "POST").second)
+            .contains("\"cancelled\":false"))
+        check(request(root + "/upload-chunk", "POST", byteArrayOf(1), "late.bin",
+            uploadId = earlyCancelId, uploadTotal = 2, uploadOffset = 0).first == 409)
+        check("late.bin" !in uploaded)
+        check(String(request(root + "/upload-cancel/" + cancelId, "POST").second)
+            .contains("\"cancelled\":false"))
+        check(String(request(root + "/upload-cancel/" + resumeId, "POST").second)
+            .contains("\"cancelled\":false")) {
+            "A completed SAF file must not be falsely reported as cancelled"
+        }
+        check(uploaded["resumed.txt"]!!.contentEquals(resumeData))
+        println("PASS: authenticated HTTPS cancellation, no GET mutation, staging cleanup, replay refusal, committed-file safety")
+        println("PASS: real TLS resumable browser upload, offset conflict, final commit and hash refusal")
         check(request(root + "/missing").first == 405)
         uploadsAllowed = false
         check(request(root + "/upload", "POST", byteArrayOf(1), "refused.bin").first == 409)
         uploadsAllowed = true
+        rejectUpload = true
+        check(request(root + "/upload", "POST", byteArrayOf(42), "revoked.bin").first == 403)
+        check("revoked.bin" !in uploaded)
+        rejectUpload = false
         uploadLimit = 1
         check(request(root + "/upload", "POST", byteArrayOf(1, 2), "too-large.bin").first == 413)
         check("too-large.bin" !in uploaded)
@@ -200,5 +516,66 @@ fun main(args: Array<String>) {
         con.disconnect()
         check(timed.sessionRemainingMillis == 0L)
     }
+    // M27: a lease that expires AFTER headers must also stop in-flight
+    // fixed-length and chunked downloads, even if SAF supplies more bytes.
+    for (knownLength in listOf(true, false)) {
+        val secondReadReturned = java.util.concurrent.atomic.AtomicBoolean(false)
+        val expiringStorage = object : ShareStorage {
+            override fun items() = listOf(ShareItem(itemId, "expiring.bin",
+                if (knownLength) 2L else null))
+            override fun open(id: String): SharedStream? {
+                if (id != itemId) return null
+                val stream = object : InputStream() {
+                    private var position = 0
+                    override fun read(): Int {
+                        val b = ByteArray(1)
+                        return if (read(b, 0, 1) < 0) -1 else b[0].toInt() and 255
+                    }
+                    override fun read(b: ByteArray, off: Int, len: Int): Int {
+                        if (position >= 2) return -1
+                        if (position == 1) {
+                            Thread.sleep(1600) // Lease expires during a blocked SAF read.
+                            secondReadReturned.set(true)
+                        }
+                        b[off] = if (position++ == 0) 11 else 22
+                        return 1
+                    }
+                }
+                return SharedStream(stream, if (knownLength) 2L else null)
+            }
+            override fun canUpload() = false
+            override fun upload(fileName: String, body: InputStream, length: Long,
+                expectedSha256: String?, progress: (Long) -> Unit): String =
+                throw UnsupportedOperationException()
+        }
+        TransferHttpEngine(serverSsl.serverSocketFactory, expiringStorage,
+            sessionLifetimeMillis = 1200L).use { expiring ->
+            expiring.start()
+            val con = URI("https://127.0.0.1:${expiring.port}/s/${expiring.token}/file/$itemId")
+                .toURL().openConnection() as HttpsURLConnection
+            con.sslSocketFactory = clientSsl.socketFactory
+            con.hostnameVerifier = HostnameVerifier { _, _ -> true } // Test-only fixture.
+            con.readTimeout = 6000
+            check(con.responseCode == 200) { "Initial share should be authorized" }
+            val bytes = java.io.ByteArrayOutputStream()
+            // A truncated Content-Length or chunked body can raise an IOException.
+            runCatching {
+                con.inputStream.use { input ->
+                    val buffer = ByteArray(16)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        bytes.write(buffer, 0, n)
+                    }
+                }
+            }
+            con.disconnect()
+            check(secondReadReturned.get()) { "Test did not cross the lease boundary" }
+            check(bytes.toByteArray().contentEquals(byteArrayOf(11))) {
+                "Expired share leaked the next byte (knownLength=$knownLength)"
+            }
+        }
+    }
+    println("PASS: expired HTTPS lease interrupts active fixed-length and chunked downloads")
     println("PASS: HTTPS session expiration rejects expired bearer token")
 }

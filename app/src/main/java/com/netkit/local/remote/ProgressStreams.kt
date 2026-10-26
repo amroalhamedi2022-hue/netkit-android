@@ -1,5 +1,6 @@
 package com.netkit.local.remote
 
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -19,9 +20,21 @@ class ProgressInputStream(
         return value
     }
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        val read = input.read(buffer, offset, length)
-        if (read > 0) increment(read)
-        return read
+        // A few SAF/network providers temporarily return 0 for a non-empty read.
+        // Retrying forever would pin the FTP/SFTP transfer worker at 100% CPU.
+        // A zero-length caller request must still obey InputStream's contract.
+        if (length == 0) return input.read(buffer, offset, length)
+        var emptyReads = 0
+        while (true) {
+            val read = input.read(buffer, offset, length)
+            if (read != 0) {
+                if (read > 0) increment(read)
+                return read
+            }
+            if (++emptyReads >= 32) {
+                throw IOException("FTP/SFTP source stalled after 32 empty reads")
+            }
+        }
     }
     private fun increment(n: Int) {
         transferred += n.toLong()

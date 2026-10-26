@@ -15,6 +15,7 @@ data class TransferTask(
     val id: String,
     val source: String,
     val destination: String,
+    /** -1 means SAF/provider size unknown; zero means a known empty file. */
     val size: Long,
     val completedBytes: Long = 0,
     val state: TransferState = TransferState.QUEUED,
@@ -30,57 +31,95 @@ interface TransferJournal {
 /** Thread-safe state transitions; journal failures must never silently leave an in-memory change. */
 class TransferQueue(private val journal: TransferJournal) {
     private val mutex = Any()
-    private val tasks = journal.load().map {
+    private val loaded = journal.load()
+    private val tasks = loaded.map {
         if (it.state == TransferState.RUNNING) it.copy(
             state = TransferState.PAUSED, error = "Interrupted; verify remote offset before retry"
         ) else it
     }.toMutableList()
 
-    init { journal.save(tasks) }
+    // Only persist when recovering a previously RUNNING task. Rewriting a
+    // healthy journal on every app launch adds I/O and can erase forensic
+    // evidence if storage is unreliable, without changing queue state.
+    init { if (tasks != loaded) journal.save(tasks) }
 
     fun snapshot(): List<TransferTask> = synchronized(mutex) { tasks.toList() }
 
     fun add(source: String, destination: String, size: Long): TransferTask = synchronized(mutex) {
         require(source.isNotBlank() && destination.isNotBlank())
-        require(size >= 0 && tasks.size < 1000)
+        require(size >= -1 && tasks.size < 1000)
         val task = TransferTask(UUID.randomUUID().toString(), source, destination, size)
         persistChange { add(task) }
         task
     }
 
+    /**
+     * Reclaim bounded journal capacity without ever deleting pending, paused or
+     * failed work. Terminal records are removed only by an explicit user action.
+     * A failed journal write leaves the in-memory queue unchanged.
+     */
+    fun clearFinished(): Int = synchronized(mutex) {
+        val count = tasks.count {
+            it.state == TransferState.COMPLETED || it.state == TransferState.CANCELLED
+        }
+        if (count > 0) persistChange {
+            removeAll {
+                it.state == TransferState.COMPLETED || it.state == TransferState.CANCELLED
+            }
+        }
+        count
+    }
+
     /** Explicit start of the exact selected task, with no accidental start of a different task. */
     fun begin(id: String): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.QUEUED }
+        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.QUEUED && it.attempts < Int.MAX_VALUE }
         if (index < 0) null else edit(index) { it.copy(state = TransferState.RUNNING, attempts = it.attempts + 1, error = "") }
     }
 
     fun next(): TransferTask? = synchronized(mutex) {
-        val item = tasks.firstOrNull { it.state == TransferState.QUEUED } ?: return@synchronized null
+        val item = tasks.firstOrNull { it.state == TransferState.QUEUED && it.attempts < Int.MAX_VALUE }
+            ?: return@synchronized null
         begin(item.id)
     }
 
-    fun progress(id: String, bytes: Long): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
-        if (index < 0) null else edit(index) {
-            it.copy(completedBytes = bytes.coerceIn(it.completedBytes, it.size))
+    /** Reject late progress callbacks from a cancelled or superseded attempt. */
+    fun progress(id: String, attempt: Int, bytes: Long): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
+        // A callback reporting impossible bytes must not silently fabricate 100% progress.
+        if (index < 0 || bytes < 0 ||
+            (tasks[index].size >= 0 && bytes > tasks[index].size)) null else edit(index) {
+            it.copy(completedBytes = maxOf(it.completedBytes, bytes))
         }
     }
 
     // API state changes don't magically pause an existing network stream. Execution controller must close it.
     fun pause(id: String) = transition(id, setOf(TransferState.RUNNING, TransferState.QUEUED), TransferState.PAUSED)
-    fun resume(id: String) = transition(id, setOf(TransferState.PAUSED, TransferState.FAILED), TransferState.QUEUED)
+    /** A journal byte count is not a verified remote offset: restart from zero. */
+    fun resume(id: String): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst { it.id == id && it.state in setOf(TransferState.PAUSED, TransferState.FAILED) }
+        if (index < 0) null else edit(index) {
+            it.copy(state = TransferState.QUEUED, completedBytes = 0, error = "")
+        }
+    }
     fun cancel(id: String) = transition(id,
         setOf(TransferState.QUEUED, TransferState.RUNNING, TransferState.PAUSED, TransferState.FAILED), TransferState.CANCELLED)
 
-    fun finish(id: String): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
-        if (index < 0) null else edit(index) {
-            it.copy(state = TransferState.COMPLETED, completedBytes = it.size, error = "")
+    fun finish(id: String, attempt: Int): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
+        // A transport success flag alone is not evidence of a complete known-size
+        // transfer. Never fabricate the missing bytes in the persisted journal.
+        // Unknown-length SAF files use size=-1, never a misleading zero.
+        // Caller must have completed the protocol (and optional SHA readback).
+        if (index < 0 || (tasks[index].size >= 0 &&
+                tasks[index].completedBytes != tasks[index].size)) null else edit(index) {
+            // Preserve observed bytes for unknown-length streams; -1 is never
+            // a completed byte count. Caller must verify transport success.
+            it.copy(state = TransferState.COMPLETED, error = "")
         }
     }
 
-    fun fail(id: String, message: String): TransferTask? = synchronized(mutex) {
-        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING }
+    fun fail(id: String, attempt: Int, message: String): TransferTask? = synchronized(mutex) {
+        val index = tasks.indexOfFirst { it.id == id && it.state == TransferState.RUNNING && it.attempts == attempt }
         if (index < 0) null else edit(index) {
             it.copy(state = TransferState.FAILED, error = message.take(200))
         }
@@ -113,17 +152,33 @@ class FileTransferJournal(private val file: File) : TransferJournal {
         val count = properties.getProperty("count")?.toIntOrNull()
             ?: throw IllegalStateException("Invalid transfer journal count")
         require(count in 0..1000) { "Too many saved transfer tasks" }
+        // A malformed journal must never be silently normalized and re-saved
+        // by TransferQueue initialization: reject duplicate task identities.
+        val seenIds = HashSet<String>()
         return (0 until count).map { n ->
             val prefix = "$n."
             fun required(key: String) = properties.getProperty(prefix + key)
                 ?: throw IllegalStateException("Missing saved task field $n.$key")
             val size = required("size").toLong()
             val done = required("done").toLong()
-            require(size >= 0 && done in 0..size) { "Invalid saved task byte count" }
+            require(size >= -1 && done >= 0 && (size == -1L || done <= size)) {
+                "Invalid saved task byte count"
+            }
+            val id = required("id")
+            val source = required("source")
+            val destination = required("dest")
+            val attempts = required("attempts").toInt()
+            val state = TransferState.valueOf(required("state"))
+            require(id.isNotBlank() && seenIds.add(id)) { "Duplicate or blank saved task id" }
+            require(source.isNotBlank() && destination.isNotBlank()) { "Missing saved task endpoint" }
+            require(attempts >= 0) { "Negative saved task attempts" }
+            require(state != TransferState.COMPLETED || size == -1L || done == size) {
+                "Completed task has incomplete saved byte count"
+            }
             TransferTask(
-                id = required("id"), source = required("source"), destination = required("dest"),
-                size = size, completedBytes = done, state = TransferState.valueOf(required("state")),
-                attempts = required("attempts").toInt(), error = properties.getProperty(prefix + "error", "")
+                id = id, source = source, destination = destination,
+                size = size, completedBytes = done, state = state,
+                attempts = attempts, error = properties.getProperty(prefix + "error", "")
             )
         }
     }

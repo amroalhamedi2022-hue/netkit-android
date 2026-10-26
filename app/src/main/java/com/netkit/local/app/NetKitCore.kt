@@ -16,6 +16,7 @@ import com.netkit.local.share.AndroidShareStorage
 import com.netkit.local.share.AndroidTls
 import com.netkit.local.share.TransferHttpEngine
 import com.netkit.local.tools.Diagnostics
+import com.netkit.local.tools.WakeOnLan
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +26,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 
 class NetKitCore(context: Context) {
+    private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     val hotspot = HotspotManager(context)
     val network = NetworkStatus(context)
@@ -103,6 +105,12 @@ class NetKitCore(context: Context) {
             try {
                 val started = withContext(Dispatchers.IO) {
                     val tls = AndroidTls.loadOrCreate()
+                    // Chunk IDs are scoped to one HTTPS session. After a process crash,
+                    // old private parts cannot be resumed; reclaim only our own cache dirs.
+                    val oldParts = Regex("netkit-browser-[0-9a-fA-F-]{36}")
+                    appContext.cacheDir.listFiles()?.filter {
+                        it.isDirectory && oldParts.matches(it.name)
+                    }?.forEach { runCatching { it.deleteRecursively() } }
                     val created = TransferHttpEngine(tls.factory, storage, progress = { done, total ->
                         // Avoid scheduling thousands of Compose state updates per second on fast LANs.
                         val now = System.nanoTime()
@@ -117,7 +125,8 @@ class NetKitCore(context: Context) {
                                 }
                             }
                         }
-                    }, sessionLifetimeMillis = settings.shareExpirationMinutes.toLong() * 60_000L)
+                    }, sessionLifetimeMillis = settings.shareExpirationMinutes.toLong() * 60_000L,
+                        uploadCacheRoot = appContext.cacheDir)
                     synchronized(serverLock) {
                         if (disposed || generation != sessionGeneration) {
                             created.close()
@@ -174,6 +183,8 @@ class NetKitCore(context: Context) {
     }
     fun runDns(host: String) = runDiagnostic { Diagnostics.dns(host) }
     fun runTcp(host: String, port: Int) = runDiagnostic { Diagnostics.tcp(host, port) }
+    fun runWakeOnLan(mac: String, broadcast: String, port: Int) =
+        runDiagnostic { WakeOnLan.send(mac, broadcast, port) }
     private fun runDiagnostic(block: () -> String) {
         if (busy) return
         busy = true
