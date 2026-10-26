@@ -23,8 +23,22 @@ internal fun stalePartialFailure(
     delete: (File) -> Boolean = { it.delete() }
 ): IOException {
     val failure = IOException(reason)
-    if (part.exists() && !delete(part) && part.exists()) {
-        failure.addSuppressed(IOException("Could not remove stale partial download"))
+    try {
+        if (part.exists()) {
+            val deleted = delete(part)
+            // Do not trust the callback's Boolean alone: verify that the path is
+            // actually gone. This also catches providers/test doubles that report
+            // success while leaving the stale partial in place.
+            if (!deleted || part.exists()) {
+                failure.addSuppressed(IOException("Could not remove stale partial download"))
+            }
+        }
+    } catch (cleanupFailure: Exception) {
+        // SecurityException and other cleanup failures must not replace the
+        // original integrity error that caused this partial to be rejected.
+        failure.addSuppressed(
+            IOException("Could not remove stale partial download", cleanupFailure)
+        )
     }
     return failure
 }
