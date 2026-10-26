@@ -178,18 +178,18 @@ fun main() {
         val unsafeErrorTask = queue.add("content://safe/error", "peer/error", 1)
         check(queue.begin(unsafeErrorTask.id) != null)
         val sanitizedError = queue.fail(unsafeErrorTask.id,
-            "peer\\u202Etxt\\nline\\u0085bad\\uD800")!!
+            "peer\u202Etxt\\nline\u0085bad\uD800")!!
         check(sanitizedError.error == "peer txt line bad")
         check(FileTransferJournal(file).load().single { it.id == unsafeErrorTask.id }.error ==
             "peer txt line bad")
         val localizedErrorTask = queue.add("content://safe/localized-error", "peer/localized-error", 1)
         check(queue.begin(localizedErrorTask.id) != null)
-        val localizedError = "فشل\\u200cالنقل 👨‍👩‍👧‍👦"
+        val localizedError = "فشل\u200cالنقل 👨‍👩‍👧‍👦"
         check(queue.fail(localizedErrorTask.id, localizedError)?.error == localizedError)
         val unsafeDirectSave = runCatching {
             FileTransferJournal(File(dir, "unsafe-error-save.properties")).save(listOf(
                 TransferTask("unsafe-error", "content://safe/a", "peer/a", 1,
-                    error = "bad\\u202Etext")
+                    error = "bad\u202Etext")
             ))
         }.exceptionOrNull()
         check(unsafeDirectSave is IllegalArgumentException)
