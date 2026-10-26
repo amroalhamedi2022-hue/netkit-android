@@ -33,7 +33,7 @@ object VerifiedDownloadStaging {
             throw failure
         } finally {
             try {
-                }
+                output.fd.sync()
             } catch (syncFailure: Throwable) {
                 val original = primary
                 if (original != null) original.addSuppressed(syncFailure)
@@ -152,7 +152,6 @@ object VerifiedDownloadStaging {
                 if (remote.read() != -1) {
                     throw IOException("Remote ignored offset or grew during download")
                 }
-                output.fd.sync()
             }
         }
         check(part.length() == expectedBytes) { "Staged offset file length mismatch" }
