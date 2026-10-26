@@ -138,6 +138,9 @@ object DirectoryArchive {
                         val input = source.open(child.id) ?: error("Shared file became unreadable")
                         val digest = if (includeChecksums) MessageDigest.getInstance("SHA-256") else null
                         input.use {
+                            // Opening a SAF descriptor may block past the share lease. Re-check
+                            // before emitting even the ZIP local-file header for that document.
+                            ensureActive()
                             zip.putNextEntry(ZipEntry(path))
                             var consecutiveEmptyReads = 0
                             while (true) {
