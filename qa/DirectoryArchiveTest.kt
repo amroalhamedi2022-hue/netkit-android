@@ -195,7 +195,9 @@ fun main() {
         val unicodeSource = object : ArchiveDirectorySource {
             override fun list(folderId: String, offset: Int, limit: Int) =
                 ArchivePage(listOf(ArchiveFile("safe", "ملف آمن.txt", false),
-                    ArchiveFile("emoji", "📁 ملف.txt", false)), null)
+                    ArchiveFile("emoji", "📁 ملف.txt", false),
+                    ArchiveFile("zwnj", "می\u200Cخواهم.txt", false),
+                    ArchiveFile("family", "👨‍👩‍👧‍👦.txt", false)), null)
             override fun open(fileId: String) = ByteArrayInputStream(byteArrayOf(7))
         }
         val safeZip = ByteArrayOutputStream()
@@ -204,6 +206,10 @@ fun main() {
             check(it.nextEntry?.name == "ملف آمن.txt")
             check(it.readBytes().contentEquals(byteArrayOf(7)))
             check(it.nextEntry?.name == "📁 ملف.txt")
+            check(it.readBytes().contentEquals(byteArrayOf(7)))
+            check(it.nextEntry?.name == "می\u200Cخواهم.txt")
+            check(it.readBytes().contentEquals(byteArrayOf(7)))
+            check(it.nextEntry?.name == "👨‍👩‍👧‍👦.txt")
             check(it.readBytes().contentEquals(byteArrayOf(7)))
         }
     }
