@@ -160,14 +160,33 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         var rows by remember { mutableStateOf(core.transfers.snapshot().takeLast(30).reversed()) }
         var rates by remember { mutableStateOf<Map<String, TransferSnapshot>>(emptyMap()) }
         val estimators = remember { mutableMapOf<String, TransferTelemetry>() }
+        val attemptsByTask = remember { mutableMapOf<String, Int>() }
+        val confirmationByTask = remember { mutableMapOf<String, Boolean>() }
+        val lastBytesByTask = remember { mutableMapOf<String, Long>() }
         LaunchedEffect(core.transfers) {
             while (true) {
                 val updated = core.transfers.snapshot().takeLast(30).reversed()
                 if (updated != rows) rows = updated
                 // Rate derives from persisted byte changes, never synthetic animation.
+                // A verified remote resume may move the durable offset backwards; start
+                // a fresh estimator epoch only after the queue confirms that offset.
                 rates = updated.filter { it.state == TransferState.RUNNING }.associate { task ->
-                    task.id to estimators.getOrPut(task.id) { TransferTelemetry() }
-                        .sample(task.completedBytes, task.size.takeIf { it > 0 })
+                    val estimator = estimators.getOrPut(task.id) {
+                        TransferTelemetry().also { it.reset(task.completedBytes) }
+                    }
+                    val previousAttempt = attemptsByTask[task.id]
+                    val previousNeedsConfirmation = confirmationByTask[task.id]
+                    val previousBytes = lastBytesByTask[task.id]
+                    val confirmedNewEpoch = !task.offsetNeedsConfirmation && (
+                        (previousAttempt != null && previousAttempt != task.attempts) ||
+                        previousNeedsConfirmation == true ||
+                        (previousBytes != null && task.completedBytes < previousBytes && task.attempts > 1)
+                    )
+                    if (confirmedNewEpoch) estimator.reset(task.completedBytes)
+                    attemptsByTask[task.id] = task.attempts
+                    confirmationByTask[task.id] = task.offsetNeedsConfirmation
+                    lastBytesByTask[task.id] = task.completedBytes
+                    task.id to estimator.sample(task.completedBytes, task.size.takeIf { it > 0 })
                 }
                 delay(450)
             }

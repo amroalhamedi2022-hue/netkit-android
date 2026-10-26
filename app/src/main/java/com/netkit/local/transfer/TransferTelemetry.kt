@@ -22,6 +22,17 @@ class TransferTelemetry(
     private var lastBytes = 0L
     private var rate: Double? = null
 
+    /**
+     * Starts a new measurement epoch at an offset that the caller has already
+     * confirmed with the remote peer. Ordinary progress regressions remain errors.
+     */
+    fun reset(confirmedBytes: Long = 0L) = synchronized(lock) {
+        require(confirmedBytes >= 0L)
+        lastNanos = nowNanos()
+        lastBytes = confirmedBytes
+        rate = null
+    }
+
     fun sample(bytes: Long, totalBytes: Long? = null): TransferSnapshot = synchronized(lock) {
         require(bytes >= 0L)
         require(totalBytes == null || totalBytes >= 0L)

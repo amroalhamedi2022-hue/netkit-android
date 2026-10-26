@@ -20,5 +20,21 @@ fun main() {
     stopped.sample(0, 100)
     nanos += 1_000_000_000L
     check(stopped.sample(0, 100).estimatedSecondsRemaining == null)
-    println("PASS: measured throughput, ETA, idle handling, decreasing-byte rejection")
+
+    // A resumed transfer may legitimately restart from a lower, peer-confirmed
+    // durable offset. Reset the measurement epoch without weakening ordinary
+    // monotonic-progress validation.
+    val resumed = TransferTelemetry({ nanos }, smoothing = 0.5, minimumSampleMillis = 100)
+    resumed.reset(100)
+    nanos += 1_000_000_000L
+    check(resumed.sample(500, 1_000).bytesPerSecond == 400.0)
+    resumed.reset(200)
+    nanos += 1_000_000_000L
+    val afterResume = resumed.sample(300, 1_000)
+    check(afterResume.bytesPerSecond == 100.0)
+    check(afterResume.estimatedSecondsRemaining == 7L)
+    check(runCatching { resumed.sample(250, 1_000) }.isFailure) {
+        "Unconfirmed progress regression must still be rejected"
+    }
+    println("PASS: measured throughput, ETA, idle handling, strict regression and confirmed resume reset")
 }
