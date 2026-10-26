@@ -18,7 +18,13 @@ fun main() {
     denied.forEach { ip ->
         check(!PeerAddressPolicy.isLocalPeer(InetAddress.getByName(ip))) { "Accepted nonlocal address: $ip" }
     }
-    val safeNames = listOf("NetKit-Xiaomi Pad 5", "جهاز أندرويد", "NetKit 🫧")
+    val safeNames = listOf(
+        "NetKit-Xiaomi Pad 5",
+        "جهاز أندرويد",
+        "NetKit 🫧",
+        "می‌خواهم", // ZWNJ is meaningful in Persian orthography.
+        "family-👨‍👩‍👧" // ZWJ is required by this emoji sequence.
+    )
     safeNames.forEach { name ->
         check(PeerDisplayNamePolicy.isSafeServiceName(name)) { "Rejected safe service label: $name" }
     }
@@ -26,6 +32,8 @@ fun main() {
         "", " ", " padded ", "line" + 0x0A.toChar() + "break",
         "Host" + 0x202E.toChar() + "txt", "Host" + 0x200B.toChar() + "name",
         "Host" + 0xFEFF.toChar() + "name", "Host" + 0xFFFD.toChar() + "name",
+        "soft" + 0x00AD.toChar() + "hyphen", "grapheme" + 0x034F.toChar() + "joiner",
+        "obsolete" + 0x180E.toChar() + "separator",
         "Cafe" + 0x0301.toChar(), "x".repeat(64)
     )
     unsafeNames.forEach { name ->

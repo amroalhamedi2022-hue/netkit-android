@@ -28,8 +28,12 @@ object PeerDisplayNamePolicy {
             }
 
             if (codePoint < 0x20 || codePoint in 0x7f..0x9f ||
-                codePoint == 0xfffd || codePoint == 0x061c ||
-                codePoint in 0x200b..0x200f ||
+                codePoint == 0xfffd || codePoint == 0x00ad ||
+                codePoint == 0x034f || codePoint == 0x061c ||
+                codePoint == 0x180e || codePoint == 0x200b ||
+                // Preserve ZWNJ/ZWJ (U+200C/U+200D): legitimate Persian/Arabic
+                // joining and emoji sequences use them. Reject adjacent spoofing controls.
+                codePoint in 0x200e..0x200f ||
                 codePoint in 0x2028..0x202e ||
                 codePoint in 0x2060..0x206f ||
                 codePoint == 0xfeff || codePoint in 0xfff9..0xfffb ||
