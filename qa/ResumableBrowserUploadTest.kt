@@ -11,6 +11,7 @@ private class FakeBrowserStorage : ShareStorage {
     var epoch = 1L
     val saved = mutableListOf<Pair<String, ByteArray>>()
     var beforeSave: (() -> Unit)? = null
+    var afterSave: (() -> Unit)? = null
     override fun items() = emptyList<ShareItem>()
     override fun open(id: String): SharedStream? = null
     override fun canUpload() = enabled
@@ -26,6 +27,7 @@ private class FakeBrowserStorage : ShareStorage {
         if (actual != expectedSha256) throw UploadHashMismatchException()
         beforeSave?.invoke()
         saved.add(fileName to data)
+        afterSave?.invoke()
         return fileName
     }
 }
@@ -334,6 +336,38 @@ fun main() {
     check(capStore.saved.single().second.contentEquals(byteArrayOf(1, 2)))
     capStage.close()
     check(!capRoot.exists())
+
+    // M35: once the SAF storage adapter has committed the destination, a consent
+    // toggle immediately afterward must not turn success into a failed response.
+    // The same upload ID remains a read-only final-response replay, never a re-publish.
+    val commitThenRevoke = id()
+    store.afterSave = {
+        store.enabled = false
+        store.epoch++
+    }
+    check(stage.append(commitThenRevoke, "commit-race.bin", emptyList(), 1, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(77))).complete) {
+        "A successful SAF commit must be acknowledged even if consent is revoked just after rename"
+    }
+    store.afterSave = null
+    check(stage.status(commitThenRevoke)?.complete == true) {
+        "Committed response must remain queryable after upload consent is revoked"
+    }
+    check(stage.append(commitThenRevoke, "commit-race.bin", emptyList(), 1, 1, 0, null,
+        ByteArrayInputStream(byteArrayOf())).complete) {
+        "Lost final response must be replayable after consent revocation"
+    }
+    check(store.saved.count { it.first == "commit-race.bin" } == 1) {
+        "Final-response replay must never publish a duplicate file"
+    }
+    expectFailure {
+        stage.append(commitThenRevoke, "commit-race.bin", emptyList(), 1, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(78)))
+    }
+    expectFailure {
+        stage.append(id(), "new-after-revoke.bin", emptyList(), 1, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(1)))
+    }
 
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
