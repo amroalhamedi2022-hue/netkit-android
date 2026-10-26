@@ -74,6 +74,30 @@ fun main() {
         ByteArrayInputStream(byteArrayOf(4, 5, 6))).complete)
     check(store.saved.last().second.contentEquals(byteArrayOf(1, 2, 3, 4, 5, 6)))
 
+    // A socket/provider exception after partial progress must sync the prefix before
+    // reporting its resumable offset, not only when the body returns ordinary EOF.
+    val interruptedByException = id()
+    val throwingBody = object : ByteArrayInputStream(byteArrayOf(31, 32, 33, 34, 35, 36)) {
+        var consumed = 0
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (consumed >= 2) throw IOException("simulated socket reset")
+            val n = super.read(b, off, minOf(len, 2 - consumed))
+            if (n > 0) consumed += n
+            return n
+        }
+    }
+    expectFailure {
+        stage.append(interruptedByException, "reset.bin", emptyList(), 6, 0, 6,
+            null, throwingBody)
+    }
+    check(stage.status(interruptedByException)?.received == 2L) {
+        "Only the durable partial chunk may be advertised after a socket reset"
+    }
+    check(File(root, "$interruptedByException.part").readBytes().contentEquals(byteArrayOf(31, 32)))
+    check(stage.append(interruptedByException, "reset.bin", emptyList(), 6, 2, 4,
+        null, ByteArrayInputStream(byteArrayOf(33, 34, 35, 36))).complete)
+    check(store.saved.last().second.contentEquals(byteArrayOf(31, 32, 33, 34, 35, 36)))
+
     val c = id()
     stage.append(c, "old.bin", emptyList(), 2, 0, 1, null, ByteArrayInputStream(byteArrayOf(7)))
     store.enabled = false
