@@ -202,7 +202,7 @@ fun main(args: Array<String>) {
         // Browser upload names must be safe on Windows as well as on Android,
         // and must not disguise extensions with invisible Unicode controls.
         val unsafeUploadNames = listOf(
-            "CON.txt", "LPT1.doc", "COM1.log", "report.", "report ", "bad?.txt", "bad:stream.txt", "bad|name.txt",
+            "CON.txt", "PRN", "AUX.log", "NUL.txt", "LPT1.doc", "COM1.log", "report.", "report ", "bad?.txt", "bad:stream.txt", "bad|name.txt",
             "safe\u202Egpj.exe", "bad\u0085.txt", ".NETKIT-hidden.part"
         )
         for (unsafeName in unsafeUploadNames) {
