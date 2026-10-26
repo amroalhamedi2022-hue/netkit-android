@@ -2,6 +2,7 @@ package com.netkit.local.remote
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
@@ -66,7 +67,12 @@ private fun verifiedDownloadToSaf(
                 { context.contentResolver.openOutputStream(destination, "w")
                     ?: error("Cannot write selected SAF document") },
                 { context.contentResolver.openInputStream(destination)
-                    ?: error("Cannot re-read selected SAF document for SHA-256 verification") })
+                    ?: error("Cannot re-read selected SAF document for SHA-256 verification") },
+                {
+                    check(DocumentsContract.deleteDocument(context.contentResolver, destination)) {
+                        "SAF provider could not remove failed verified-download destination"
+                    }
+                })
         }
     }
     return true

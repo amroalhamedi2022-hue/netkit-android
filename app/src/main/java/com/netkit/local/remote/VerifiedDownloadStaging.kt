@@ -224,7 +224,7 @@ object VerifiedDownloadStaging {
      * Re-verify the app-private stage before opening the SAF destination so a stale
      * or externally modified .part is rejected without exposing corrupted bytes.
      */
-    fun publish(part: File, expectedDigest: ByteArray, output: () -> OutputStream, readback: () -> InputStream) {
+    fun publish(part: File, expectedDigest: ByteArray, output: () -> OutputStream, readback: () -> InputStream, rollbackDestination: () -> Unit = {}) {
         require(part.isFile) { "Missing verified staged download" }
         require(expectedDigest.size == 32) { "Expected SHA-256 digest must be 32 bytes" }
         val length = part.length()
@@ -233,37 +233,53 @@ object VerifiedDownloadStaging {
             throw RemoteContentChangedException("Local staged file SHA-256 differs before SAF publish")
         }
 
-        // Hash again while copying to detect a stage changed after the preflight read.
-        val copyDigest = MessageDigest.getInstance("SHA-256")
-        val buffer = ByteArray(BLOCK)
-        var copied = 0L
-        var emptyReads = 0
-        output().use { destination ->
-            FileInputStream(part).use { input ->
-                while (true) {
-                    val n = input.read(buffer)
-                    if (n < 0) break
-                    if (n == 0) {
-                        if (++emptyReads >= 32) throw IOException("Staged file read stalled during publish")
-                        continue
+        // The caller supplies a newly created SAF document. Once output opening is attempted,
+        // any write/readback failure must roll that document back so a partial file is not left
+        // looking like a completed download.
+        var destinationMayHaveBeenTouched = false
+        try {
+            // Hash again while copying to detect a stage changed after the preflight read.
+            val copyDigest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(BLOCK)
+            var copied = 0L
+            var emptyReads = 0
+            destinationMayHaveBeenTouched = true
+            output().use { destination ->
+                FileInputStream(part).use { input ->
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        if (n == 0) {
+                            if (++emptyReads >= 32) throw IOException("Staged file read stalled during publish")
+                            continue
+                        }
+                        emptyReads = 0
+                        if (n.toLong() > length - copied) {
+                            throw IOException("Staged file grew during publish")
+                        }
+                        destination.write(buffer, 0, n)
+                        copyDigest.update(buffer, 0, n)
+                        copied += n
                     }
-                    emptyReads = 0
-                    if (n.toLong() > length - copied) {
-                        throw IOException("Staged file grew during publish")
-                    }
-                    destination.write(buffer, 0, n)
-                    copyDigest.update(buffer, 0, n)
-                    copied += n
+                }
+                if (copied != length || part.length() != length) {
+                    throw IOException("Staged file length changed during publish")
+                }
+                if (!MessageDigest.isEqual(copyDigest.digest(), expectedDigest)) {
+                    throw RemoteContentChangedException("Local staged file SHA-256 changed during SAF publish")
                 }
             }
-            if (copied != length || part.length() != length) {
-                throw IOException("Staged file length changed during publish")
+            readback().use { verifyReadback(it, length, expectedDigest) }
+        } catch (failure: Throwable) {
+            if (destinationMayHaveBeenTouched) {
+                try {
+                    rollbackDestination()
+                } catch (cleanupFailure: Throwable) {
+                    if (cleanupFailure !== failure) failure.addSuppressed(cleanupFailure)
+                }
             }
-            if (!MessageDigest.isEqual(copyDigest.digest(), expectedDigest)) {
-                throw RemoteContentChangedException("Local staged file SHA-256 changed during SAF publish")
-            }
+            throw failure
         }
-        readback().use { verifyReadback(it, length, expectedDigest) }
         // The SAF document is already verified: failed cache cleanup must not report a false transfer failure.
         part.delete()
     }

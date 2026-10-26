@@ -41,16 +41,48 @@ fun main() {
         }
         val untouchedDestination = ByteArrayOutputStream()
         var readbackOpened = false
+        var tamperRollbackCalled = false
         val tamperFailure = runCatching {
             VerifiedDownloadStaging.publish(tamperedStage, digest, { untouchedDestination }, {
                 readbackOpened = true
                 ByteArrayInputStream(untouchedDestination.toByteArray())
-            })
+            }, rollbackDestination = { tamperRollbackCalled = true })
         }.exceptionOrNull()
         check(tamperFailure is com.netkit.local.remote.RemoteContentChangedException)
         check(untouchedDestination.size() == 0)
         check(!readbackOpened)
+        check(!tamperRollbackCalled) // Preflight rejects the stage before touching SAF.
         check(tamperedStage.isFile) // Keep evidence for retry/recovery.
+        // A provider may create a new document before failing to open its output stream.
+        val failedOpenStage = File(dir, "failed-open.part").apply { writeBytes(bytes) }
+        var failedOpenRolledBack = false
+        val failedOpen = runCatching {
+            VerifiedDownloadStaging.publish(failedOpenStage, digest,
+                { throw IOException("simulated SAF output-open failure") },
+                { error("readback must not open") },
+                rollbackDestination = { failedOpenRolledBack = true })
+        }.exceptionOrNull()
+        check(failedOpen is IOException && failedOpen.message == "simulated SAF output-open failure")
+        check(failedOpenRolledBack)
+        check(failedOpenStage.isFile)
+        // A full write followed by a bad readback must trigger rollback; cleanup
+        // failure is suppressed without hiding the original integrity error.
+        val rollbackStage = File(dir, "rollback-readback.part").apply { writeBytes(bytes) }
+        val alteredReadback = bytes.clone().apply { this[0] = (this[0].toInt() xor 1).toByte() }
+        val rollbackOutput = ByteArrayOutputStream()
+        var rollbackAttempts = 0
+        val rollbackFailure = runCatching {
+            VerifiedDownloadStaging.publish(rollbackStage, digest, { rollbackOutput },
+                { ByteArrayInputStream(alteredReadback) },
+                rollbackDestination = {
+                    rollbackAttempts++
+                    throw IOException("simulated SAF delete failure")
+                })
+        }.exceptionOrNull()
+        check(rollbackFailure is com.netkit.local.remote.RemoteContentChangedException)
+        check(rollbackAttempts == 1)
+        check(rollbackFailure.suppressed.any { it.message == "simulated SAF delete failure" })
+        check(rollbackStage.isFile)
         // A modified remote prefix is never appended to an old partial.
         part.writeBytes(bytes.copyOf(5))
         val modified = bytes.clone().apply { this[2] = 0 }
