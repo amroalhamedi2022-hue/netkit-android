@@ -180,6 +180,7 @@ object DirectoryArchive {
                 }
                 val next = page.nextOffset
                 if (next != null) {
+                    check(next > offset) { "Invalid archive pagination loop" }
                     // Advancing past the number of entries returned silently omits
                     // files from the ZIP while still producing a valid-looking archive.
                     // Require contiguous pagination and guard Int overflow from a bad provider.
