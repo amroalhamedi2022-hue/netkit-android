@@ -16,6 +16,19 @@ import java.security.MessageDigest
  */
 class RemoteContentChangedException(message: String) : IOException(message)
 
+/** Build an integrity failure while retaining cleanup failure as suppressed evidence. */
+internal fun stalePartialFailure(
+    part: File,
+    reason: String,
+    delete: (File) -> Boolean = { it.delete() }
+): IOException {
+    val failure = IOException(reason)
+    if (part.exists() && !delete(part) && part.exists()) {
+        failure.addSuppressed(IOException("Could not remove stale partial download"))
+    }
+    return failure
+}
+
 object VerifiedDownloadStaging {
     private const val BLOCK = 64 * 1024
 
@@ -47,8 +60,7 @@ object VerifiedDownloadStaging {
         require(part.isFile || !part.exists()) { "Staging path is not a regular file" }
         val saved = if (part.exists()) part.length() else 0L
         if (saved > expectedBytes) {
-            part.delete()
-            throw IOException("Saved download exceeds remote size; stale partial removed")
+            throw stalePartialFailure(part, "Saved download exceeds remote size")
         }
         val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(BLOCK)
@@ -61,8 +73,7 @@ object VerifiedDownloadStaging {
                     readExactly(remote, buffer, wanted)
                     readExactly(local, localBuffer, wanted)
                     if (!MessageDigest.isEqual(buffer.copyOf(wanted), localBuffer.copyOf(wanted))) {
-                        part.delete()
-                        throw IOException("Remote prefix changed; stale partial removed")
+                        throw stalePartialFailure(part, "Remote prefix changed")
                     }
                     digest.update(buffer, 0, wanted)
                     received += wanted
@@ -109,8 +120,7 @@ object VerifiedDownloadStaging {
         require(part.isFile || !part.exists()) { "Staging path is not a regular file" }
         val saved = if (part.exists()) part.length() else 0L
         if (saved > expectedBytes) {
-            part.delete()
-            throw IOException("Saved download exceeds remote size; stale partial removed")
+            throw stalePartialFailure(part, "Saved download exceeds remote size")
         }
         val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(BLOCK)
