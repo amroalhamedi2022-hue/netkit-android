@@ -87,6 +87,49 @@ fun main() {
             check(runCatching { FileTransferJournal(negativeAttempts).load() }.exceptionOrNull()
                 is IllegalArgumentException)
 
+            fun writeCompletedJournal(target: File, done: Int, verifyOffset: Boolean) {
+                val properties = Properties()
+                properties.setProperty("count", "1")
+                properties.setProperty("0.id", "completed-id")
+                properties.setProperty("0.source", "content://safe/completed")
+                properties.setProperty("0.dest", "peer/completed")
+                properties.setProperty("0.size", "10")
+                properties.setProperty("0.done", done.toString())
+                properties.setProperty("0.verifyOffset", verifyOffset.toString())
+                properties.setProperty("0.state", "COMPLETED")
+                properties.setProperty("0.attempts", "1")
+                properties.setProperty("0.error", "")
+                FileOutputStream(target).use { properties.store(it, "completed-state invariant regression") }
+            }
+
+            val partialCompleted = File(dir, "partial-completed.properties")
+            writeCompletedJournal(partialCompleted, done = 9, verifyOffset = false)
+            val partialCompletedError = runCatching {
+                FileTransferJournal(partialCompleted).load()
+            }.exceptionOrNull()
+            check(partialCompletedError is IllegalArgumentException &&
+                partialCompletedError.message!!.contains("Completed transfer"))
+
+            val unverifiedCompleted = File(dir, "unverified-completed.properties")
+            writeCompletedJournal(unverifiedCompleted, done = 10, verifyOffset = true)
+            val unverifiedCompletedError = runCatching {
+                FileTransferJournal(unverifiedCompleted).load()
+            }.exceptionOrNull()
+            check(unverifiedCompletedError is IllegalArgumentException &&
+                unverifiedCompletedError.message!!.contains("Completed transfer"))
+
+            val badSave = File(dir, "bad-completed-save.properties")
+            val badSaveError = runCatching {
+                FileTransferJournal(badSave).save(listOf(TransferTask(
+                    id = "bad-complete", source = "content://safe/a",
+                    destination = "peer/a", size = 10, completedBytes = 9,
+                    state = TransferState.COMPLETED
+                )))
+            }.exceptionOrNull()
+            check(badSaveError is IllegalArgumentException &&
+                badSaveError.message!!.contains("Completed transfer"))
+            check(!badSave.exists()) // reject before replacing/creating the journal
+
             val oversized = File(dir, "oversized.properties")
             FileOutputStream(oversized).use { it.write(ByteArray(16 * 1024 * 1024 + 1)) }
             val oversizedError = runCatching { FileTransferJournal(oversized).load() }.exceptionOrNull()

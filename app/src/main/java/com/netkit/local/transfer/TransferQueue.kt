@@ -200,11 +200,17 @@ class FileTransferJournal(private val file: File) : TransferJournal {
             }
             require(size >= 0 && done in 0..size && attempts >= 0 &&
                 error.length <= MAX_TRANSFER_ERROR_LENGTH) { "Invalid saved transfer state" }
+            val state = TransferState.valueOf(required("state"))
+            // A journal is not allowed to resurrect a partial or unverified task as completed.
+            require(state != TransferState.COMPLETED ||
+                (done == size && !offsetNeedsConfirmation)) {
+                "Completed transfer must have all bytes and a confirmed offset"
+            }
             TransferTask(
                 id = id, source = source, destination = destination,
                 size = size, completedBytes = done,
                 offsetNeedsConfirmation = offsetNeedsConfirmation,
-                state = TransferState.valueOf(required("state")),
+                state = state,
                 attempts = attempts, error = error
             )
         }
@@ -224,6 +230,10 @@ class FileTransferJournal(private val file: File) : TransferJournal {
             require(task.size >= 0 && task.completedBytes in 0..task.size &&
                 task.attempts >= 0 && task.error.length <= MAX_TRANSFER_ERROR_LENGTH) {
                 "Invalid transfer task state"
+            }
+            require(task.state != TransferState.COMPLETED ||
+                (task.completedBytes == task.size && !task.offsetNeedsConfirmation)) {
+                "Completed transfer must have all bytes and a confirmed offset"
             }
         }
         val properties = Properties()
