@@ -1,5 +1,7 @@
 import com.netkit.local.transfer.*
 import java.io.File
+import java.io.FileOutputStream
+import java.util.Properties
 import java.nio.file.Files
 
 fun main() {
@@ -39,6 +41,41 @@ fun main() {
         check(restored.cancel(first.id)?.state == TransferState.CANCELLED)
         check(restored.resume(first.id) == null)
         check(TransferQueue(FileTransferJournal(file)).snapshot().single { it.id == second.id }.state == TransferState.COMPLETED)
-        println("PASS: exact task selection, durable journal, confirmed remote-offset reconciliation, retry, recover, cancel")
+        run {
+            fun writeJournal(target: File, ids: List<String>, attempts: List<Int>) {
+                val properties = Properties()
+                properties.setProperty("count", ids.size.toString())
+                ids.indices.forEach { i ->
+                    val p = "$i."
+                    properties.setProperty(p + "id", ids[i])
+                    properties.setProperty(p + "source", "content://safe/item-$i")
+                    properties.setProperty(p + "dest", "peer/item-$i")
+                    properties.setProperty(p + "size", "10")
+                    properties.setProperty(p + "done", "0")
+                    properties.setProperty(p + "state", "QUEUED")
+                    properties.setProperty(p + "attempts", attempts[i].toString())
+                    properties.setProperty(p + "error", "")
+                }
+                FileOutputStream(target).use { properties.store(it, "journal corruption regression") }
+            }
+
+            val duplicate = File(dir, "duplicate.properties")
+            writeJournal(duplicate, listOf("same-id", "same-id"), listOf(0, 0))
+            val duplicateError = runCatching { FileTransferJournal(duplicate).load() }.exceptionOrNull()
+            check(duplicateError is IllegalArgumentException &&
+                duplicateError.message!!.contains("duplicate"))
+
+            val negativeAttempts = File(dir, "negative-attempts.properties")
+            writeJournal(negativeAttempts, listOf("one-id"), listOf(-1))
+            check(runCatching { FileTransferJournal(negativeAttempts).load() }.exceptionOrNull()
+                is IllegalArgumentException)
+
+            val oversized = File(dir, "oversized.properties")
+            FileOutputStream(oversized).use { it.write(ByteArray(16 * 1024 * 1024 + 1)) }
+            val oversizedError = runCatching { FileTransferJournal(oversized).load() }.exceptionOrNull()
+            check(oversizedError is IllegalArgumentException &&
+                oversizedError.message!!.contains("safe size"))
+        }
+        println("PASS: durable queue, confirmed offsets, corruption rejection, size bounds, retry and recovery")
     } finally { dir.deleteRecursively() }
 }
