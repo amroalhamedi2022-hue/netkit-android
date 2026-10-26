@@ -14,6 +14,15 @@ fun main() {
         val bytes = ByteArray(170_033) { (it * 31 % 251).toByte() }
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
         val part = File(dir, "test.part")
+        val undeletedPart = File(dir, "undeleted.part").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val cleanupFailure = stalePartialFailure(undeletedPart, "stale partial rejected") { false }
+        check(cleanupFailure.message == "stale partial rejected")
+        check(cleanupFailure.suppressed.any { it.message == "Could not remove stale partial download" })
+        check(undeletedPart.isFile) // failed cleanup is visible; no false "removed" claim
+        val removedPart = File(dir, "removed.part").apply { writeBytes(byteArrayOf(1)) }
+        val removalFailure = stalePartialFailure(removedPart, "stale partial rejected")
+        check(!removedPart.exists())
+        check(removalFailure.suppressed.isEmpty())
         var latest = -1L
         // A real interrupted network stream writes a partial and leaves it for retry.
         fail {
