@@ -233,4 +233,38 @@ fun main(args: Array<String>) {
         check(timed.sessionRemainingMillis == 0L)
     }
     println("PASS: HTTPS session expiration rejects expired bearer token")
+
+    // A local LAN client must not monopolize one of the four workers by
+    // dripping an incomplete request header just before each socket timeout.
+    TransferHttpEngine(
+        serverSsl.serverSocketFactory, store,
+        headerTimeoutMillis = 300, bodyTimeoutMillis = 2_000
+    ).use { guarded ->
+        guarded.start()
+        val socket = clientSsl.socketFactory.createSocket("127.0.0.1", guarded.port) as SSLSocket
+        socket.soTimeout = 2_000
+        socket.use {
+            it.outputStream.write("G".toByteArray(StandardCharsets.US_ASCII))
+            it.outputStream.flush()
+            Thread.sleep(120)
+            runCatching {
+                it.outputStream.write("E".toByteArray(StandardCharsets.US_ASCII))
+                it.outputStream.flush()
+            }
+            Thread.sleep(120)
+            runCatching {
+                it.outputStream.write("T".toByteArray(StandardCharsets.US_ASCII))
+                it.outputStream.flush()
+            }
+            Thread.sleep(180)
+            val closed = runCatching { it.inputStream.read() }.fold(
+                onSuccess = { value -> value == -1 },
+                onFailure = { true }
+            )
+            check(closed) { "Slow request header was not closed at the absolute deadline" }
+        }
+        repeat(40) { if (guarded.activeClientCount != 0) Thread.sleep(25) }
+        check(guarded.activeClientCount == 0) { "Slow-header socket remained registered" }
+    }
+    println("PASS: bounded absolute HTTP request-header deadline and worker cleanup")
 }
