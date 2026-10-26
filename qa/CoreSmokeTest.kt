@@ -199,6 +199,21 @@ fun main(args: Array<String>) {
         check("malformed-hash.bin" !in uploaded)
         check(request(root + "/upload", "POST", byteArrayOf(1), "..%2Fsecrets.txt").first == 400)
         check(request(root + "/upload", "POST", byteArrayOf(1), ".netkit-backdoor.part").first == 400)
+        // Browser upload names must be safe on Windows as well as on Android,
+        // and must not disguise extensions with invisible Unicode controls.
+        val unsafeUploadNames = listOf(
+            "CON.txt", "LPT1.doc", "COM¹.log", "report.", "report ",
+            "safe\\u202Egpj.exe", "bad\\u0085.txt", ".NETKIT-hidden.part"
+        )
+        for (unsafeName in unsafeUploadNames) {
+            check(request(root + "/upload", "POST", byteArrayOf(1), unsafeName).first == 400) {
+                "Unsafe upload name was accepted: ${unsafeName.toList()}"
+            }
+            check(unsafeName !in uploaded)
+        }
+        val unicodeName = "تقرير طبي 📷.txt"
+        check(request(root + "/upload", "POST", byteArrayOf(7), unicodeName).first == 201)
+        check(uploaded[unicodeName]?.contentEquals(byteArrayOf(7)) == true)
         check(request(root + "/missing").first == 405)
         uploadsAllowed = false
         check(request(root + "/upload", "POST", byteArrayOf(1), "refused.bin").first == 409)
