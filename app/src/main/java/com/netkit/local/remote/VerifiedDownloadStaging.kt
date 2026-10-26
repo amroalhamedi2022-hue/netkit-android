@@ -152,6 +152,7 @@ object VerifiedDownloadStaging {
                 if (remote.read() != -1) {
                     throw IOException("Remote ignored offset or grew during download")
                 }
+                }
             }
         }
         check(part.length() == expectedBytes) { "Staged offset file length mismatch" }
