@@ -49,6 +49,12 @@ assert 'RequestMultiplePermissions()' in main
 assert 'ACCESS_COARSE_LOCATION' in main and 'NEARBY_WIFI_DEVICES' in main
 for required in ['startShare = onStartShare', 'stopShare = onStopShare', 'onStopHotspot', 'ProDashboard', 'SettingsScreen']:
     assert required in ui, f'Missing {required}'
+storage = (root / 'app/src/main/java/com/netkit/local/share/AndroidShareStorage.kt').read_text()
+assert 'netkit_upload_destination' in storage
+assert 'takePersistableUriPermission' in storage
+assert 'UploadDestinationPolicy.canRestore' in storage
+assert 'restoreUploadTree()' in storage
+assert 'UploadDestinationPolicy.kt' in (root / 'app/src/main/java/com/netkit/local/share/UploadDestinationPolicy.kt').read_text()
 engine = (root / 'app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt').read_text()
 assert 'activeClients.remove(client)' in engine
 assert 'x-content-sha256' in engine
