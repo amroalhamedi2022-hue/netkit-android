@@ -377,4 +377,26 @@ fun main() {
         check(error is IllegalStateException && error.message == "Invalid archive pagination loop")
     }
     println("PASS: paged ZIP, nested folders, path/quotas, incremental checksum budget, invalid pagination, transient zero-read recovery, Windows-safe names/collisions and cancellation")
+
+    run {
+        // A provider must not skip an offset and silently omit files from an otherwise
+        // valid ZIP. The archive should fail rather than report a partial folder as complete.
+        val skipping = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int): ArchivePage =
+                if (offset == 0) ArchivePage(
+                    listOf(
+                        ArchiveFile("one", "one.txt", false),
+                        ArchiveFile("two", "two.txt", false)
+                    ), 3
+                ) else ArchivePage(emptyList(), null)
+            override fun open(fileId: String): InputStream = ByteArrayInputStream(byteArrayOf(1))
+        }
+        val error = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", skipping, it)
+            }
+        }.exceptionOrNull()
+        check(error is IllegalStateException &&
+            error.message == "Non-contiguous archive pagination")
+    }
 }

@@ -179,7 +179,15 @@ object DirectoryArchive {
                     }
                 }
                 val next = page.nextOffset
-                if (next != null) check(next > offset) { "Invalid archive pagination loop" }
+                if (next != null) {
+                    // Advancing past the number of entries returned silently omits
+                    // files from the ZIP while still producing a valid-looking archive.
+                    // Require contiguous pagination and guard Int overflow from a bad provider.
+                    val expectedNext = offset.toLong() + page.files.size.toLong()
+                    check(expectedNext <= Int.MAX_VALUE && next.toLong() == expectedNext) {
+                        "Non-contiguous archive pagination"
+                    }
+                }
                 offset = next ?: -1
             } while (offset >= 0)
         }
