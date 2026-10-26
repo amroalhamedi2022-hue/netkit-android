@@ -26,6 +26,9 @@ fun main() {
             val arabic = queue.add("content://safe/ملف", "peer/ملف", 1)
             check(arabic.source.endsWith("ملف") && arabic.destination.endsWith("ملف"))
             check(queue.cancel(arabic.id)?.state == TransferState.CANCELLED)
+            val joinedEmoji = queue.add("content://safe/👨‍👩‍👧‍👦", "peer/👨‍👩‍👧‍👦", 1)
+            check(joinedEmoji.source.contains("👨‍👩‍👧‍👦"))
+            check(queue.cancel(joinedEmoji.id)?.state == TransferState.CANCELLED)
         }
         check(queue.begin(second.id)?.id == second.id)
         check(queue.begin(second.id) == null)
