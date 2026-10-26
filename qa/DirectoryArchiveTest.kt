@@ -1,4 +1,5 @@
 import com.netkit.local.share.*
+// Device-acceptance scope: recursive SAF ZIP and checksum-manifest budget on Xiaomi Pad 5.
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
