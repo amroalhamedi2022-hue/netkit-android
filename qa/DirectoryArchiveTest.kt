@@ -158,6 +158,13 @@ fun main() {
             check(failure is IllegalArgumentException) { "Unsafe ZIP entry accepted: $names ($failure)" }
         }
         reject(listOf("NUL.txt" to false))
+        reject(listOf("soft\u00ADhyphen.txt" to false))
+        reject(listOf("combining\u034Fmark.txt" to false))
+        reject(listOf("mongolian\u180Eseparator.txt" to false))
+        reject(listOf("zero\u200Bwidth.txt" to false))
+        reject(listOf("word\u2060joiner.txt" to false))
+        reject(listOf("math\u2065invisible.txt" to false))
+        reject(listOf(("tag" + String(Character.toChars(0xE0001)) + ".txt") to false))
         // Windows device names remain reserved when whitespace precedes the extension.
         reject(listOf("CON .txt" to false))
         reject(listOf("NUL .bin" to false))
