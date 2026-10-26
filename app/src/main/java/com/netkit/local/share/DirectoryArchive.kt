@@ -89,14 +89,24 @@ object DirectoryArchive {
                     index++
                 }
             }
-            // Replacement characters and format controls can make two distinct SAF
-            // names look identical, or let ZIP extractors display misleading paths.
-            // Reject them consistently with browser uploads; Arabic text and valid
-            // supplementary-plane characters (including emoji) remain supported.
+            // Invisible formatting characters can disguise extensions or create
+            // names that differ on screen but are hard to distinguish in an archive.
+            // Preserve Arabic ZWNJ (U+200C) and emoji ZWJ (U+200D), but reject other
+            // default-ignorable controls used by the peer filename policies.
             require(segment.none {
                 it == '\uFFFD' || it == '\u061C' || it == '\uFEFF' ||
-                    it.code in 0x2028..0x2029 || it.code in 0xFFF9..0xFFFB
+                    it.code == 0x00AD || it.code == 0x034F || it.code == 0x180E ||
+                    it.code == 0x200B || it.code in 0x2028..0x2029 ||
+                    it.code in 0x2060..0x206F || it.code in 0xFFF9..0xFFFB
             }) { "Unsafe archive filename Unicode" }
+            var codePointOffset = 0
+            while (codePointOffset < segment.length) {
+                val codePoint = Character.codePointAt(segment, codePointOffset)
+                require(codePoint !in 0xE0000..0xE007F) {
+                    "Unsafe archive filename Unicode tags"
+                }
+                codePointOffset += Character.charCount(codePoint)
+            }
             require(segment.length <= 240 && segment.toByteArray(Charsets.UTF_8).size <= 768)
             // SAF document names are untrusted. Reject control characters and bidi
             // overrides that can disguise a file extension in a downloaded ZIP.
