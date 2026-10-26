@@ -7,6 +7,41 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 fun main() {
+    run {
+        // The root document ID is provider-controlled input too; reject it before listing.
+        var calls = 0
+        val source = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int): ArchivePage {
+                calls++
+                return ArchivePage(emptyList(), null)
+            }
+            override fun open(fileId: String): InputStream? = null
+        }
+        val failure = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use { DirectoryArchive.write("", source, it) }
+        }.exceptionOrNull()
+        check(failure is IllegalArgumentException && failure.message == "Invalid archive document ID")
+        check(calls == 0)
+    }
+    run {
+        // Child IDs are opaque SAF keys but must be nonblank and bounded before provider access.
+        for (id in listOf("", "x".repeat(4097))) {
+            var opens = 0
+            val source = object : ArchiveDirectorySource {
+                override fun list(folderId: String, offset: Int, limit: Int) =
+                    ArchivePage(listOf(ArchiveFile(id, "file.bin", false)), null)
+                override fun open(fileId: String): InputStream? {
+                    opens++
+                    return ByteArrayInputStream(byteArrayOf(1))
+                }
+            }
+            val failure = runCatching {
+                ZipOutputStream(ByteArrayOutputStream()).use { DirectoryArchive.write("root", source, it) }
+            }.exceptionOrNull()
+            check(failure is IllegalArgumentException && failure.message == "Invalid archive document ID")
+            check(opens == 0)
+        }
+    }
     val expected = mutableMapOf<String, ByteArray>()
     val storage = object : ArchiveDirectorySource {
         override fun list(folderId: String, offset: Int, limit: Int): ArchivePage {
