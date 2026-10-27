@@ -78,12 +78,17 @@ private fun sanitizeTransferError(value: String): String {
             codePoint in 0x2060..0x206f || codePoint == 0xfeff ||
             codePoint in 0xfff9..0xfffb || codePoint in 0xe0000..0xe007f
         if (unsafe) {
-            if (output.isNotEmpty() && output[output.length - 1] != ' ') output.append(' ')
+            if (output.isNotEmpty() && output[output.length - 1] != ' ' &&
+                output.length < MAX_TRANSFER_ERROR_LENGTH) output.append(' ')
         } else {
+            // Append whole Unicode code points only. A supplementary character at
+            // the final UTF-16 slot must not be split into an isolated surrogate.
+            val units = Character.charCount(codePoint)
+            if (output.length + units > MAX_TRANSFER_ERROR_LENGTH) break
             output.appendCodePoint(codePoint)
         }
     }
-    return output.toString().trim().take(MAX_TRANSFER_ERROR_LENGTH)
+    return output.toString().trim()
 }
 
 /** Thread-safe state transitions; journal failures must never silently leave an in-memory change. */
