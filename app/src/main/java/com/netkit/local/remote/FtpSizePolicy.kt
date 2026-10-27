@@ -3,7 +3,7 @@ package com.netkit.local.remote
 import java.io.IOException
 
 /**
- * Commons Net FTPClient.getSize() returns the raw FTP reply (e.g. "213 123\r\n").
+ * Commons Net FTPClient.getSize() returns the raw FTP reply (for example, a 213 line).
  * RFC 3659 MLST is optional; strict SIZE fallback enables verified resume
  * without trusting ambiguous LIST output or accepting malformed lengths.
  */
@@ -12,9 +12,8 @@ object FtpSizePolicy {
 
     fun parseReply(reply: String?): Long? {
         if (reply == null) return null
-        // Accept a single complete CRLF (FTP) or LF (legacy/test-server) terminator.
-        // trimEnd('', '\n') is too permissive: it silently accepts multiple lines
-        // and a lone CR, so a malformed/multiline reply can masquerade as one SIZE.
+        // Accept one complete CRLF (FTP) or LF (legacy/test-server) terminator.
+        // Do not strip arbitrary terminators: that would hide malformed multi-line replies.
         val line = when {
             reply.endsWith("\r\n") -> reply.dropLast(2)
             reply.endsWith("\n") -> reply.dropLast(1)
