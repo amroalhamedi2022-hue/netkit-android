@@ -263,3 +263,16 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Integration gate:** PR #7 remains **DRAFT / mergeable=false**. Its PR metadata base SHA is still `6a971514906d6194709e4b3de8fa10bdc55d0dc6`, while the live PR #6 feature branch head is `e209308ca41efb2ca2a7c2041c833e7d0e66eef4`. No base change, rebase, cherry-pick, merge, force-push or `main` write was performed.
 - **Safety:** no dependency added, no paid API, no secret or binary artifact; NetKit remains separate from Remote Control and includes no Wi-Fi Analyzer.
 - **Live Google Docs Handoff:** **SYNC FAILED** until an authorized Google Docs write/read connector is available; this repository ledger does not replace the live Drive document.
+
+## 2026-10-27 — M68 — Win32 Unicode case-alias collisions in SAF ZIP
+
+- **Production changed:** `DirectoryArchive.canonicalPath` now applies NFC normalization, invariant uppercase using `Locale.ROOT`, then NFC again. Lowercase-only folding can miss Windows case-insensitive aliases such as `I.txt` versus `ı.txt` and Greek sigma variants. The archive rejects those sibling aliases instead of emitting a ZIP that may overwrite data on extraction.
+- **Regression changed:** `qa/DirectoryArchiveTest.kt` adds explicit Turkish dotless-I and Greek sigma collision pairs to the existing rejection matrix.
+- **Production commit:** [2ab3a515e62b4a06594dccf38961955f7899fec9](https://github.com/amroalhamedi2022-hue/netkit-android/commit/2ab3a515e62b4a06594dccf38961955f7899fec9).
+- **Regression/test head:** [67fb31fc3adafea989ff29b8389f377ed7fe23e2](https://github.com/amroalhamedi2022-hue/netkit-android/commit/67fb31fc3adafea989ff29b8389f377ed7fe23e2).
+- **Exact-head CI:** **NOT VERIFIED**. The GitHub connector exposed no status checks or pull-request-triggered run for this push head; no run ID/logs could be verified. Do not treat earlier M67 CI as proof of M68.
+- **Android assemble/lint/APK:** **NOT TESTED / NOT BUILT**; this is a Kotlin/JVM archive-policy regression and a device artifact is not needed to check the code path.
+- **Windows extraction and SAF provider acceptance:** **NOT TESTED** on Windows or Xiaomi Pad 5.
+- **Integration gate:** PR #7 remains **DRAFT / mergeable=false**; its base is the NetKit reliability branch. No base change, rebase, cherry-pick, merge, force-push or `main` write was performed.
+- **Safety:** no dependency added, no paid API, secret or binary artifact. NetKit remains separate from Remote Control and contains no Wi-Fi Analyzer.
+- **Live Google Docs Handoff:** **SYNC FAILED** because no Google Docs write/read connector is available in this session; this ledger is not a substitute for the live Drive document.
