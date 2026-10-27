@@ -106,3 +106,19 @@ No merge, no main changes, no new dependency or paid API.
 - **Real Pad 5/Windows browser session-expiry and stop/revoke tests:** **NOT TESTED**.
 - **Boundary:** this protects the local monotonic TTL from rollback; it does not authenticate a peer or replace TLS/certificate and user-consent review.
 - **Safety:** no dependency, paid API, secret, artifact build, auto-merge or main change.
+
+
+## 2026-10-27 — M63: Enforce HTTPS share lease through in-flight upload publication
+
+- **Scope:** NetKit PR #6 only, branch `feature/netkit-reliability-20261023`. PR #7 remains on its own child branch; no cherry-pick, merge or main change.
+- **Production:** `TransferHttpEngine` now wraps browser-upload bodies in a lease-aware stream. It checks the monotonic share lease before and after each body read, shortens the socket read timeout to the lease's remaining lifetime, returns HTTP 410 when the lease expires mid-upload, and returns 408 for a genuine body-idle timeout while the lease remains valid.
+- **SAF commit boundary:** `ShareStorage.uploadGuarded` adds a live authorization hook. `AndroidShareStorage` checks it while receiving data and immediately before/after the temporary SAF document is renamed. If expiry wins before completion, the temporary document is deleted rather than acknowledged as a successful upload.
+- **Regression:** `qa/CoreSmokeTest.kt` opens a real local TLS socket, starts an upload, stalls across the lease deadline, and verifies HTTP 410 plus absence of a committed file.
+- **Source commit:** `bf768ddff4d0fb784b52120fb548ebd3172081b7`; regression/test head: `c17fc1828c57af4689483cb7cc8c217b7a94753b`.
+- **Exact-source CI:** [run 40468661194](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40468661194) and [run 40468667776](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40468667776) — **SUCCESS**. Static checks, HTTPS/TLS transport regressions, upload/hash checks, lease-expiry rejection, the new mid-upload expiry test, and persistent transfer-queue state-machine tests passed.
+- **Earlier failed test attempt:** run [40468329222](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40468329222) failed because the new raw-socket test accidentally emitted literal backslash sequences instead of HTTP CRLF. The test was corrected in `c17fc182`; the subsequent exact-head runs passed.
+- **Android compile/APK:** **NOT TESTED / NOT BUILT** in this batch; package jobs were not requested for this source-level lifecycle regression.
+- **Xiaomi Pad 5↔Windows browser acceptance, SAF-provider cleanup after expiry, and real Wi-Fi/hotspot behavior:** **NOT TESTED**.
+- **Boundary:** this enforces lease expiry during an upload; it does not implement true resumable uploads, nor does it complete native pairing, FTP/SFTP server roles, or device acceptance.
+- **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector was available in this run. GitHub checkpoint is updated; the live Drive document is not claimed updated.
+- **Safety:** no new dependency, paid API, secret, APK artifact, auto-merge or main change.
