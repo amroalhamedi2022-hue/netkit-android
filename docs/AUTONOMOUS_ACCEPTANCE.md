@@ -378,3 +378,13 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **APK / device acceptance:** **NOT BUILT / NOT TESTED**. This is a source-level concurrency regression; no device binary is needed until a targeted SAF acceptance run is scheduled.
 - **Safety:** no dependency change, no paid API, no Wi-Fi Analyzer, no secret, no merge, no rebase/retarget, and no `main` write. PR #7 remains Draft with its existing base/head mismatch.
 - **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector was available; this ledger is not a substitute for the live Drive document.
+
+## 2026-10-27 — M77 bounded and cancellable SAF stream reads
+
+- **Production fix:** `app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt` replaces repeated `Thread.yield()` on zero-byte SAF reads with bounded exponential backoff (capped at 16 ms), while retaining the 32-empty-read failure bound. It now checks an already-interrupted worker and converts interruption during backoff to `InterruptedIOException`, preserving the interrupt flag.
+- **Regression evidence:** `qa/CoreSmokeTest.kt` retains transient-zero byte integrity and permanent-stall retry-budget checks and adds an interrupted-worker test that requires prompt exit and preserved cancellation status.
+- **Source SHA:** `776e705fea6fd230203e208f467425cf63598a8f`.
+- **CI:** [run 40564418402](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40564418402) — **PASS**. Static source checks passed; Kotlin/JVM HTTPS/SAF transport, resumable-upload, ZIP/path/quota, session, FTP/SFTP integrity/resume and DNS-SD lifecycle tests passed; persistent transfer queue state-machine tests passed. The warning about an always-true null check in `ResumableBrowserUpload.kt` is pre-existing and non-fatal.
+- **Build decision:** Android package jobs were skipped intentionally. This is a stream-cancellation/performance regression with a JVM-level acceptance test; no APK/EXE is justified in this batch.
+- **Device acceptance:** **NOT TESTED** on Xiaomi Pad 5 or Windows browser. Real SAF provider timing, nested ZIP and Android↔Windows transfer remain open.
+- **Scope/security:** no dependency or license change, no Wi-Fi Analyzer or Remote Control feature, no credentials/secrets, no paid API. PR #7 remains Draft and unmerged; its feature-base mismatch remains a separate integration gate.
