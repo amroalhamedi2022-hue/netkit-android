@@ -76,7 +76,11 @@ fun main() {
         check(restored.next()?.id == first.id)
         check(restored.progress(first.id, 70) == null) // interrupted offset must be verified first
         check(restored.confirmRemoteOffset(first.id, 70)?.completedBytes == 70L)
-        check(restored.confirmRemoteOffset(first.id, 40)?.completedBytes == 40L) // verified server offset may rewind
+        check(restored.confirmRemoteOffset(first.id, 40) == null) // stale/duplicate offset cannot rewind an active transfer
+        check(restored.pause(first.id)?.offsetNeedsConfirmation == true)
+        check(restored.resume(first.id)?.state == TransferState.QUEUED)
+        check(restored.begin(first.id)?.offsetNeedsConfirmation == true)
+        check(restored.confirmRemoteOffset(first.id, 40)?.completedBytes == 40L) // a new interrupted/resume cycle may reconcile a fresh offset
         check(restored.confirmRemoteOffset(first.id, 101) == null) // beyond declared file size
         check(restored.confirmRemoteOffset(first.id, -1) == null) // negative offsets fail closed
         check(restored.snapshot().single { it.id == first.id }.completedBytes == 40L)
