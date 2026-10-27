@@ -538,5 +538,30 @@ fun main() {
     cleanupStage.close()
     check(!cleanupRoot.exists())
 
-    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, explicit cancellation, cleanup deletion retry and replay guard")
+    // M66: shutdown must not silently forget a private staging file when deletion fails.
+    // The first close fails closed and keeps the session/cache available for a later retry.
+    val closeRoot = File(System.getProperty("java.io.tmpdir"),
+        "netkit-resume-close-cleanup-" + UUID.randomUUID())
+    check(closeRoot.mkdirs())
+    val closeStore = FakeBrowserStorage()
+    var allowCloseDelete = false
+    val closeStage = ResumableBrowserUpload(closeRoot, closeStore,
+        { closeStore.epoch }, { closeStore.enabled }, { 1_000L },
+        { part -> if (allowCloseDelete) part.delete() else false })
+    val closeId = id()
+    closeStage.append(closeId, "close-cleanup.bin", emptyList(), 2, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(42)))
+    val closePart = File(closeRoot, "$closeId.part")
+    check(closePart.exists())
+    expectFailure { closeStage.close() }
+    check(closePart.exists()) {
+        "Failed shutdown cleanup must not claim private staging was removed"
+    }
+    allowCloseDelete = true
+    closeStage.close()
+    check(!closeRoot.exists()) {
+        "A later close must retry staging deletion before clearing the upload registry"
+    }
+
+    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, explicit cancellation, cleanup deletion retry, shutdown cleanup retry and replay guard")
 }
