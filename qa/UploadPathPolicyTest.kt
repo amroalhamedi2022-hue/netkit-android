@@ -1,6 +1,17 @@
 package com.netkit.local.share
 
 fun main() {
+    run {
+        val ceiling = 2048L
+        UploadLengthPolicy.check(0L, ceiling)
+        UploadLengthPolicy.check(ceiling, ceiling)
+        for (invalid in listOf(-1L, ceiling + 1L, Long.MAX_VALUE)) {
+            check(runCatching { UploadLengthPolicy.check(invalid, ceiling) }.isFailure) {
+                "Accepted invalid declared upload length: $invalid"
+            }
+        }
+        check(runCatching { UploadLengthPolicy.check(0L, 0L) }.isFailure)
+    }
     check(UploadPathPolicy.folders("Pictures/2026/صورة-😀.png", "صورة-😀.png") ==
         listOf("Pictures", "2026"))
     check(UploadPathPolicy.folders("Books/Ortho.pdf", "Ortho.pdf") == listOf("Books"))
