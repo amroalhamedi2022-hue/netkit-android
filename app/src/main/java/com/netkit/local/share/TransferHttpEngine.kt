@@ -38,31 +38,54 @@ class UploadHashMismatchException : IllegalStateException("Upload SHA-256 does n
 class UploadSessionExpiredException : IOException("Sharing session expired during upload")
 
 /**
- * Re-checks the bearer-session lease around every body read. The socket timeout is
- * shortened to the remaining lease, so a stalled body wakes at expiry instead of
- * pinning a worker until the ordinary idle timeout.
+ * Re-checks both the bearer-session lease and an absolute per-request body deadline.
+ * SO_TIMEOUT alone is only a per-read idle timeout: a peer could otherwise drip a
+ * byte before every timeout and occupy one of the bounded upload workers until the
+ * share lease expires. Each blocking read is capped to the smaller remaining budget.
  */
-private class LeaseBoundUploadInputStream(
+internal class LeaseBoundUploadInputStream(
     private val delegate: InputStream,
     private val socket: java.net.Socket,
     private val bodyTimeoutMillis: Int,
-    private val lease: SessionLease
+    private val lease: SessionLease,
+    private val nowNanos: () -> Long = System::nanoTime
 ) : InputStream() {
+    private val bodyStartedAtNanos = nowNanos()
+    private val bodyTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(bodyTimeoutMillis.toLong())
+
+    init {
+        require(bodyTimeoutMillis in 1..600_000) { "Body timeout must be between 1 ms and 10 min" }
+    }
+
+    private fun remainingBodyNanos(): Long {
+        val elapsed = nowNanos() - bodyStartedAtNanos
+        if (elapsed < 0L || elapsed >= bodyTimeoutNanos) {
+            throw java.net.SocketTimeoutException("Upload body exceeded absolute deadline")
+        }
+        return bodyTimeoutNanos - elapsed
+    }
+
     private fun beforeRead() {
+        val bodyRemainingNanos = remainingBodyNanos()
         if (!lease.isValid()) throw UploadSessionExpiredException()
-        val remaining = lease.remainingMillis()
-        if (remaining <= 0L) throw UploadSessionExpiredException()
-        socket.soTimeout = minOf(bodyTimeoutMillis.toLong(), remaining).coerceAtLeast(1L).toInt()
+        val leaseRemaining = lease.remainingMillis()
+        if (leaseRemaining <= 0L) throw UploadSessionExpiredException()
+        val bodyRemainingMillis = ((bodyRemainingNanos + 999_999L) / 1_000_000L).coerceAtLeast(1L)
+        socket.soTimeout = minOf(bodyRemainingMillis, leaseRemaining).coerceAtLeast(1L).toInt()
     }
 
     private inline fun guardedRead(read: () -> Int): Int {
         beforeRead()
         return try {
             val count = read()
+            remainingBodyNanos()
             if (!lease.isValid()) throw UploadSessionExpiredException()
             count
         } catch (timeout: java.net.SocketTimeoutException) {
             if (!lease.isValid()) throw UploadSessionExpiredException()
+            // Preserve an idle socket timeout, but prefer the absolute-deadline
+            // diagnosis when a slow trickle consumed the complete body budget.
+            remainingBodyNanos()
             throw timeout
         }
     }
