@@ -196,3 +196,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Workflow evidence:** [NetKit development workflow filtered to this branch](https://github.com/amroalhamedi2022-hue/netkit-android/actions/workflows/netkit-import-build.yml?query=branch%3Aautomation%2Fnetkit-zip-stall-guard-20261023).
 - **Acceptance:** source diff reviewed **PASS**; exact-head Kotlin/JVM CI **NOT TESTED/NOT VERIFIED**; Android compile/APK **NOT TESTED**; SAF provider and Windows extraction on real devices **NOT TESTED**.
 - **Safety:** no merge, no `main` changes, no new dependency or APK. PR #7 remains non-mergeable and independent from PR #6.
+
+
+## M60 — Strict FTP SIZE response framing (2026-10-27)
+
+**Scope:** NetKit PR #7 only; branch `automation/netkit-zip-stall-guard-20261023`, layered over its current PR #6 base. No cross-branch merge or main update.
+
+- **Production:** `FtpSizePolicy.parseReply` accepts one complete CRLF terminator (FTP) or one LF terminator (legacy/test fixtures); it rejects lone CR, repeated terminators, and embedded/multiple response lines before parsing a byte count.
+- **Regression:** `qa/FtpSizePolicyTest.kt` adds malformed framing cases while preserving valid zero-length, maximum signed-64-bit, tab-separated and LF-compatible cases.
+- **Source/test commits:** production `9a0243000e0d9673ece9100b7d879fcd2b2817b7`, regression `29ada5b6c9944c1071aa91ed27dee42b3491708e`, source-comment cleanup/current branch head `f8e9f759bed59e8902ce0cc1d4a50c569650981f`.
+- **CI on exact head:** **NOT VERIFIED** in this run. The repository workflow is configured for pushes to this branch, but the available connector only returns pull-request-triggered workflow runs and exposed no run ID for the push. Do not substitute an earlier green run.
+- **Acceptance:** source diff reviewed **PASS**; added regression cases **PRESENT / execution NOT VERIFIED**; Android compile/APK **NOT TESTED**; real FTP server/client interoperability **NOT TESTED**.
+- **Safety:** no new dependency, APK, secret, paid API or main change. FTP remains plaintext unless separately secured; strict SIZE framing is not authentication and size equality is not a cryptographic integrity proof.
