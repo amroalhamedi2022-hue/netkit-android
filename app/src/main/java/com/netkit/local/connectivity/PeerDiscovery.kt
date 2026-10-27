@@ -5,6 +5,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.compose.runtime.mutableStateListOf
 
 /** LAN DNS-SD peer sightings. Discovery is NOT authentication or trusted pairing. */
@@ -23,7 +24,13 @@ class PeerDiscovery(context: Context) {
     val discoveryWarning = androidx.compose.runtime.mutableStateOf<String?>(null)
     val found = mutableStateListOf<Peer>()
     private var callback: NsdManager.DiscoveryListener? = null
-    private var registration: NsdManager.RegistrationListener? = null
+    private val advertisementLock = Any()
+    private val advertisementEpoch = AdvertisementEpoch()
+    private data class AdvertisementRegistration(
+        val epoch: Long,
+        val listener: NsdManager.RegistrationListener
+    )
+    private var registration: AdvertisementRegistration? = null
     private var discoveryEpoch = 0L
     private val resolutionLedger = NsdResolveLedger(maxPending = 128)
 
@@ -97,19 +104,59 @@ class PeerDiscovery(context: Context) {
         if (port <= 0) return
         val name = "NetKit-${Build.MODEL.take(16).replace(Regex("[^a-zA-Z0-9_-]"), "-")}"
         val service = NsdServiceInfo().apply { serviceName = name; serviceType = "_netkit._tcp."; setPort(port) }
+        val epoch = advertisementEpoch.begin()
+        val unregisterRetry = AtomicBoolean(false)
         val listener = object : NsdManager.RegistrationListener {
-            override fun onServiceRegistered(info: NsdServiceInfo) = Unit
-            override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) = Unit
-            override fun onServiceUnregistered(info: NsdServiceInfo) = Unit
-            override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) = Unit
+            override fun onServiceRegistered(info: NsdServiceInfo) {
+                // registerService is asynchronous: stopAdvertising may have run before this callback.
+                // A stale listener must immediately revoke its late registration.
+                if (!advertisementEpoch.isCurrent(epoch)) {
+                    runCatching { manager.unregisterService(this) }
+                }
+            }
+            override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
+                advertisementEpoch.stop(epoch)
+                synchronized(advertisementLock) {
+                    if (registration?.epoch == epoch) registration = null
+                }
+            }
+            override fun onServiceUnregistered(info: NsdServiceInfo) {
+                advertisementEpoch.stop(epoch)
+                synchronized(advertisementLock) {
+                    if (registration?.epoch == epoch) registration = null
+                }
+            }
+            override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {
+                // A failed early unregister can precede onServiceRegistered. Retry once here
+                // only for a stale listener; onServiceRegistered also handles that ordering.
+                if (!advertisementEpoch.isCurrent(epoch) && unregisterRetry.compareAndSet(false, true)) {
+                    runCatching { manager.unregisterService(this) }
+                }
+            }
         }
-        registration = listener
+        synchronized(advertisementLock) {
+            registration = AdvertisementRegistration(epoch, listener)
+        }
         runCatching { manager.registerService(service, NsdManager.PROTOCOL_DNS_SD, listener) }
-            .onFailure { registration = null }
+            .onFailure {
+                advertisementEpoch.stop(epoch)
+                synchronized(advertisementLock) {
+                    if (registration?.epoch == epoch) registration = null
+                }
+            }
     }
     fun stopAdvertising() {
-        registration?.let { runCatching { manager.unregisterService(it) } }
-        registration = null
+        val current = synchronized(advertisementLock) {
+            val value = registration
+            if (value != null) {
+                // Invalidate the callback before touching the platform API; unregister may race
+                // registration and throw, in which case onServiceRegistered must retry cleanup.
+                advertisementEpoch.stop(value.epoch)
+                registration = null
+            }
+            value
+        }
+        current?.let { runCatching { manager.unregisterService(it.listener) } }
     }
     fun stop() {
         discoveryEpoch++
