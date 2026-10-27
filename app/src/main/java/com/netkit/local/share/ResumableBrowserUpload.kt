@@ -302,7 +302,7 @@ internal class ResumableBrowserUpload(
                     }
                 }
             }
-            session.touched = clockMillis()
+            session.touched = requireClockMillis()
             if (session.received == total) {
                 if (!session.part.exists()) FileOutputStream(session.part).use { it.fd.sync() }
                 if (session.part.length() != total) throw IOException("Staging length mismatch")
