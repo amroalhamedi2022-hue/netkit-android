@@ -75,7 +75,7 @@ object DirectoryArchive {
         val checksumLines = StringBuilder()
         var checksumBytes = 0L
         val checksumName = "NetKit-SHA256SUMS.txt"
-        if (includeChecksums) paths.add(checksumName.lowercase(Locale.ROOT))
+        if (includeChecksums) paths.add(Normalizer.normalize(checksumName.uppercase(Locale.ROOT), Normalizer.Form.NFC))
         var entries = 0
         var bytes = 0L
         val buffer = ByteArray(64 * 1024)
