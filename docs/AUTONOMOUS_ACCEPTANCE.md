@@ -290,3 +290,18 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Integration:** PR #7 remains **DRAFT / mergeable=false** with base `feature/netkit-reliability-20261023`; its base SHA mismatch against PR #6's current head remains unresolved. No base retarget, rebase, cherry-pick, merge, force-push or `main` write.
 - **Safety:** no dependency, paid API, secret or artifact added; NetKit remains LAN/file-transfer only, with no Wi-Fi Analyzer.
 - **Live Google Docs Handoff:** **SYNC FAILED**; no authorized Google Docs write/read connector was available. This ledger does not replace the live Drive document.
+
+## 2026-10-27 — M70: Canonical Unicode-safe SAF upload name reservations
+
+- **Scope:** NetKit PR #7 only; branch `automation/netkit-zip-stall-guard-20261023`. PR #6 source and `main` untouched.
+- **Finding:** `UploadNameReservations.key` used lowercase-only folding and no Unicode normalization. Two SAF names with canonically equivalent spellings (composed/decomposed accents) or case aliases such as ASCII I/dotless i and Greek sigma could be reserved separately even when a provider/filesystem treats them as the same destination. This undermines the no-overwrite name reservation during concurrent browser uploads.
+- **Production change:** canonicalize the filename key as Unicode NFC → `uppercase(Locale.ROOT)` → NFC, matching the conservative ZIP collision policy. SAF tree scope remains part of the key, so identical names in distinct selected trees stay independent.
+- **Regression coverage:** `qa/UploadNameReservationsTest.kt` now checks composed/decomposed `café.txt`, ASCII I/dotless-i, Greek sigma aliases, and independent reservations for `tree-A` vs `tree-B`. The test is included in the default `qa/run_jvm_tests.sh` source gate.
+- **Source commit:** [2449734180789658ffc03c999b9c239032c20616](https://github.com/amroalhamedi2022-hue/netkit-android/commit/2449734180789658ffc03c999b9c239032c20616).
+- **Regression/test head:** [c66b3f55f91a6579d3b0295674d15a4c55cd98eb](https://github.com/amroalhamedi2022-hue/netkit-android/commit/c66b3f55f91a6579d3b0295674d15a4c55cd98eb).
+- **Exact-head CI:** **NOT VERIFIED** in this run. The GitHub connector returned no combined status entries and no pull-request-triggered run record for the new test head; its run lookup does not expose push-triggered runs. Do not infer a pass from M69's earlier CI.
+- **Android compile/APK:** **NOT TESTED / NOT BUILT**. This is a JVM source regression; no APK was required.
+- **Device acceptance:** **NOT TESTED** — simultaneous browser uploads into real SAF providers, Windows extraction, Pad 5 UX, FTP/SFTP, hotspot and Liquid UI remain open.
+- **Integration:** PR #7 remains **DRAFT / mergeable=false**, based on `feature/netkit-reliability-20261023`; the base SHA discrepancy with PR #6 remains unresolved. No rebase, base change, cherry-pick, merge, force-push or `main` write.
+- **Safety:** no new dependency, paid API, secret or binary artifact. NetKit remains local-first and contains no Wi-Fi Analyzer.
+- **Live Google Docs Handoff:** **SYNC FAILED**; no authorized Google Docs write/read connector was available. This ledger does not replace the live Drive document.
