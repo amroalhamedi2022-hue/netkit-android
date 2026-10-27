@@ -207,7 +207,7 @@ fun main() {
         val exactBoundary = "x".repeat(198) + "👋"
         val exactBoundaryError = queue.fail(boundaryTask.id, exactBoundary)!!.error
         check(exactBoundaryError == exactBoundary && exactBoundaryError.length == 200)
-        check(!Character.isSurrogate(exactBoundaryError.last()))
+        check(Character.isHighSurrogate(exactBoundaryError[198]) && Character.isLowSurrogate(exactBoundaryError[199]))
         check(FileTransferJournal(file).load().single { it.id == boundaryTask.id }.error == exactBoundary)
 
         val overflowBoundaryTask = queue.add("content://safe/error-overflow", "peer/error-overflow", 1)
