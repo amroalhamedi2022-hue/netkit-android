@@ -151,7 +151,8 @@ class TransferQueue(private val journal: TransferJournal) {
     fun confirmRemoteOffset(id: String, confirmedBytes: Long): TransferTask? = synchronized(mutex) {
         if (confirmedBytes < 0L) return@synchronized null
         val index = tasks.indexOfFirst {
-            it.id == id && it.state == TransferState.RUNNING && confirmedBytes <= it.size
+            it.id == id && it.state == TransferState.RUNNING &&
+                it.offsetNeedsConfirmation && confirmedBytes <= it.size
         }
         if (index < 0) null else edit(index) {
             it.copy(completedBytes = confirmedBytes, offsetNeedsConfirmation = false)
