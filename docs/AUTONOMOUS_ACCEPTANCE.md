@@ -232,3 +232,14 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Android compile/APK:** **NOT TESTED** on M63. **Pad 5 SAF/HTTPS, Windows browser, FTP/SFTP, hotspot and UI acceptance:** **NOT TESTED**.
 - **Safety:** no new dependency, paid API, secret, artifact, auto-merge or main change. No Wi-Fi Analyzer or Remote Control scope added.
 
+## 2026-10-27 — M66: retryable fail-closed cleanup on share shutdown
+
+- **Scope:** PR #7 only, branch `automation/netkit-zip-stall-guard-20261023`; PR #6 and `main` were not changed.
+- **Production fix:** `ResumableBrowserUpload.close()` no longer ignores a failed `.part` deletion and then clears the session/tombstone registries. It now uses the checked deletion path for each private staging file, verifies removal of the private cache directory, and only clears the registries after cleanup succeeds. If the filesystem refuses deletion, shutdown fails closed and preserves enough closed-manager state for a later `close()` retry.
+- **Regression:** an injected deleter refuses the first shutdown cleanup. The test confirms the partial bytes remain visible and the call fails; after enabling deletion, a second `close()` removes the staging and cache directory successfully.
+- **Commits:** production `6dc5fed4d892f8aaf60cc4827a4d4c3ddf852fc5`; regression and constructor-compatibility fix `61e510c6f81c1cbcb814941bd995e918f431448d`, `d1d2e53f9dc8ccfdb1948f4b79ee0eabbf6fc7d1`.
+- **Exact-head CI:** [run 40481353664](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40481353664) — **SUCCESS** on `d1d2e53f9dc8ccfdb1948f4b79ee0eabbf6fc7d1`. Static source checks, full Kotlin/JVM HTTPS/SAF ZIP/session suite, DNS-SD/multicast policy tests, and persistent transfer-queue state-machine tests passed. The new `ResumableBrowserUploadTest` output explicitly includes **shutdown cleanup retry**.
+- **Earlier failure retained for audit:** [run 40480814208](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40480814208) — **FAIL** because the newly injected deletion parameter changed Kotlin trailing-lambda binding for an older clock test. The test now names `clockMillis` explicitly; exact-head run 40481353664 passes.
+- **Build/device gate:** Android compile/APK **NOT TESTED / NOT BUILT** on M66. Xiaomi Pad 5 SAF/HTTPS, Windows browser, FTP/SFTP, hotspot and Liquid UI acceptance **NOT TESTED**. This is source-level reliability acceptance only.
+- **Safety:** no new dependency, paid API, secret, APK, merge or `main` write. NetKit remains local-first; no Wi-Fi Analyzer and no Remote Control scope added.
+
