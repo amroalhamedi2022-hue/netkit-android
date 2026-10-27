@@ -48,5 +48,28 @@ fun main() {
     }.isFailure)
     names.release(reuse)
     check(names.reserve("fresh.txt") { false } == "fresh.txt")
-    println("PASS: concurrent upload name reservations, case folding, collision, rollback")
+    // Unicode-equivalent and invariant-case aliases must not reserve the same destination twice.
+    run {
+        val unicodeNames = UploadNameReservations()
+        val composed = unicodeNames.reserve("caf\u00e9.txt") { false }
+        val decomposed = unicodeNames.reserve("cafe\u0301.txt") { false }
+        check(composed == "caf\u00e9.txt")
+        check(decomposed == "cafe\u0301 (2).txt")
+
+        val dottedI = unicodeNames.reserve("reportI.txt") { false }
+        val dotlessI = unicodeNames.reserve("report\u0131.txt") { false }
+        check(dottedI == "reportI.txt")
+        check(dotlessI == "report\u0131 (2).txt")
+
+        val upperSigma = unicodeNames.reserve("\u039f\u03a3.txt") { false }
+        val lowerSigma = unicodeNames.reserve("\u03bf\u03c3.txt") { false }
+        check(upperSigma == "\u039f\u03a3.txt")
+        check(lowerSigma == "\u03bf\u03c3 (2).txt")
+
+        // Separate SAF trees are independent namespaces even for identical names.
+        check(unicodeNames.reserve("same.txt", scope = "tree-A") { false } == "same.txt")
+        check(unicodeNames.reserve("same.txt", scope = "tree-B") { false } == "same.txt")
+    }
+
+    println("PASS: concurrent upload name reservations, Unicode NFC/case aliases, scoped trees, collision, rollback")
 }
