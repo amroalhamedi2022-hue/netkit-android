@@ -171,7 +171,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
                     ensureSessionValid()
-                    val n = StreamReadGuard.read(body, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                    val n = readRequiredUploadChunk(body, buffer, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) error("Connection closed before complete upload")
                     // Do not let bytes received after lease expiry reach even the private SAF stage.
                     ensureSessionValid()
