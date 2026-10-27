@@ -208,3 +208,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **CI on exact head:** **NOT VERIFIED** in this run. The repository workflow is configured for pushes to this branch, but the available connector only returns pull-request-triggered workflow runs and exposed no run ID for the push. Do not substitute an earlier green run.
 - **Focused local verification:** Kotlin/JVM source/test reproduction compiled with `kotlinc` and executed **PASS**; all valid and malformed framing assertions passed. This is a focused run, not a checkout-wide GitHub CI result. Android compile/APK **NOT TESTED**; real FTP server/client interoperability **NOT TESTED**.
 - **Safety:** no new dependency, APK, secret, paid API or main change. FTP remains plaintext unless separately secured; strict SIZE framing is not authentication and size equality is not a cryptographic integrity proof.
+
+## M62 — Browser upload clock health and DNS-SD ledger concurrency (2026-10-27)
+
+**Scope:** NetKit PR #7 only, branch `automation/netkit-zip-stall-guard-20261023`. PR #6 remains independent; no rebase, merge or main change.
+
+- **Production change:** `ResumableBrowserUpload` now observes its injected monotonic clock under a dedicated lock. A backwards reading or runtime clock failure latches the upload manager fail-closed, removes partial staging on the next cleanup, retires affected upload IDs, and rejects new uploads for the rest of that share lifetime. A clock failure after a successful SAF publication does not turn that commit into a failed response; subsequent cleanup retires the replay ID to prevent duplicate publication.
+- **Regression:** `qa/ResumableBrowserUploadTest.kt` checks that rollback removes partial bytes, the old upload ID cannot be replayed after clock recovery, and a fresh ID is not admitted by the broken manager. `qa/NsdDiscoveryPolicyTest.kt` adds concurrent begin/finish/invalidate/clear stress coverage for asynchronous Android NSD callbacks.
+- **Source/test head:** `629d3640d6abe104b5ae37d379ca937181b1591f`.
+- **Exact-head CI:** [run 40462629817](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40462629817) — **SUCCESS**. Kotlin/JVM transport and SAF ZIP suite, NSD policy/ledger tests, multicast-lock lease tests, and persistent transfer-queue state-machine tests passed. No Android APK was built for this source-level reliability gate.
+- **Earlier failed attempt:** [run 40461684933](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40461684933) — **FAIL** because an edit temporarily duplicated the `@Synchronized` annotation. The duplicate was removed before the passing exact-head run; the final branch contains a single annotation.
+- **Android compile/APK:** **NOT TESTED** on M62. **Real Pad 5 SAF/HTTPS transfer and Windows browser acceptance:** **NOT TESTED**. Clock rollback is an injected-clock defensive gate; the production clock uses `System.nanoTime()`.
+- **Safety:** no new dependency, paid API, secret, APK, merge or main change. No Wi-Fi Analyzer or Remote Control functionality added to NetKit.
