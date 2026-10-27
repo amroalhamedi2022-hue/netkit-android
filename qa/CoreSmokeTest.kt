@@ -11,6 +11,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.net.URI
+import java.net.InetAddress
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.SecureRandom
@@ -19,6 +20,18 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.*
 
 /** TEST ONLY. The trust-all verifier MUST NEVER be imported into the Android app. */
+private fun testLanPeerAddressPolicy() {
+    fun allowed(ip: String) = isAllowedLanPeer(InetAddress.getByName(ip))
+    check(allowed("192.168.1.8")) { "RFC1918 IPv4 peer should be allowed" }
+    check(allowed("169.254.1.8")) { "IPv4 link-local peer should be allowed" }
+    check(allowed("127.0.0.1")) { "Loopback remains available for local tests" }
+    check(allowed("fd12:3456:789a::1")) { "IPv6 ULA peer should be allowed" }
+    check(allowed("fc00::1")) { "The lower edge of IPv6 ULA should be allowed" }
+    check(allowed("fe80::1")) { "IPv6 link-local peer should be allowed" }
+    check(!allowed("8.8.8.8")) { "Public IPv4 peer must be rejected" }
+    check(!allowed("2001:4860:4860::8888")) { "Global IPv6 peer must be rejected" }
+}
+
 private fun testStreamReadGuard() {
     val payload = byteArrayOf(3, 1, 4, 1, 5)
     var transientZeros = 2
@@ -122,6 +135,7 @@ private fun testAbsoluteUploadBodyDeadline() {
 }
 
 fun main(args: Array<String>) {
+    testLanPeerAddressPolicy()
     testStreamReadGuard()
     testRequiredUploadChunkRejectsPrematureEof()
     testAbsoluteUploadBodyDeadline()
