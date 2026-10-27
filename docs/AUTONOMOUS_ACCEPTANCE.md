@@ -366,3 +366,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **NOT TESTED:** installation and SAF/browser upload behavior on Xiaomi Pad 5; concurrent slow uploads across two different SAF trees; Windows interoperability and physical-device acceptance.
 - **Branch safety:** PR #7 remains Draft on `automation/netkit-zip-stall-guard-20261023`; PR #6 source unchanged. Existing PR #7 base/head mismatch remains unresolved. No rebase, retarget, merge, force-push, `main` change, new dependency or Wi-Fi Analyzer.
 - **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector was available in this run; this GitHub ledger is not a substitute for the live Drive document.
+
+## 2026-10-27 — M76: Hold committed upload aliases until reservation release
+
+- **Scope:** NetKit PR #7 only; branch `automation/netkit-zip-stall-guard-20261023`. PR #6 and `main` remain untouched.
+- **Finding:** when an external writer claims the reserved name during streaming, commit selects an alternate name. A SAF provider may report rename success before `findFile()` reflects the new destination; a concurrent upload could otherwise reserve that final alias in the visibility gap.
+- **Fix:** `UploadNameReservations` now links all keys held by an upload reservation. Commit reserves the alternate final key before rename and retains it alongside the original key until `release(originalName, scope)`; failed rename removes the provisional alias. No storage URI is added to user-visible paths.
+- **Regression:** `qa/UploadNameReservationsTest.kt` simulates a provider whose rename succeeds while its existence listing remains stale. The next upload must skip the committed alias; releasing the original reservation releases both keys.
+- **Source + regression commit:** [c608c66133b5d9bed10ae27099efce3cd4856a3e](https://github.com/amroalhamedi2022-hue/netkit-android/commit/c608c66133b5d9bed10ae27099efce3cd4856a3e).
+- **CI:** [run 40551003782](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40551003782) was **QUEUED / NOT VERIFIED** at this ledger update. Exact-head source QA is not yet counted as PASS.
+- **APK / device acceptance:** **NOT BUILT / NOT TESTED**. This is a source-level concurrency regression; no device binary is needed until a targeted SAF acceptance run is scheduled.
+- **Safety:** no dependency change, no paid API, no Wi-Fi Analyzer, no secret, no merge, no rebase/retarget, and no `main` write. PR #7 remains Draft with its existing base/head mismatch.
+- **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector was available; this ledger is not a substitute for the live Drive document.
