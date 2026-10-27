@@ -151,3 +151,15 @@ No merge, no main changes, no new dependency or paid API.
 - **Live Google Docs Handoff:** **SYNC FAILED** until an authorized Google Docs write/read connector is available; this repository checkpoint is not a substitute for the live Drive document.
 
 - **Targeted package attempt:** the commit includes the explicit `[device-test-build]` marker for AndroidShareStorage integration, but the only exposed run was a `pull_request` event; the workflow's package gate accepts that marker only on `push` (or an approved manual dispatch). Therefore `device-test-build` was **SKIPPED**, no APK/ZIP artifact was produced, and no package SHA exists. Exact-head source CI still passed. Do not claim Android compile/package acceptance; the current connector exposes no workflow-dispatch write action.
+
+
+## 2026-10-27 — M80: cancellation-safe stalled SAF reads (PR #6)
+
+- **Problem:** the PR #6 baseline's JVM StreamReadGuard used Thread.yield() after repeated zero-byte reads. A broken SAF/provider stream could hot-spin a worker, and cancelling the worker did not promptly interrupt the retry loop.
+- **Fix:** added a bounded exponential pause (1, 2, 4, 8, then 16 ms capped) and checks thread interruption before each provider read. Interruption during backoff restores the thread interrupt flag and throws InterruptedIOException. The existing 33-attempt hard ceiling remains.
+- **Source commit:** [dfc474b9](https://github.com/amroalhamedi2022-hue/netkit-android/commit/dfc474b9f3cb75124fea99cdc50c651f19aab3b8).
+- **Regression commit / exact tested head:** [28f262c4](https://github.com/amroalhamedi2022-hue/netkit-android/commit/28f262c4af030418b0ce5ba8da7f09cbf9558741) adds an interrupt-during-stall test checking prompt termination, InterruptedIOException, and preservation of the interrupt flag.
+- **Exact-head CI:** [push run 40587380242](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40587380242) and [PR run 40587387977](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40587387977) — both **SUCCESS** on 28f262c4af030418b0ce5ba8da7f09cbf9558741. Static source checks, Kotlin/JVM transport/SAF/ZIP/session tests, and persistent transfer queue state-machine tests passed.
+- **Build/device:** APK packaging and lint jobs were **SKIPPED** for this source-only milestone; no APK produced. Physical Xiaomi Pad 5 / SAF acceptance remains **NOT TESTED**.
+- **Safety/branching:** PR #6 branch only (feature/netkit-reliability-20261023); PR #7 was not modified. No merge, main write, new dependency, paid API, secret or permission bypass.
+- **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Docs write/read connector available in this run; this checkpoint is not a substitute for the live Drive document.
