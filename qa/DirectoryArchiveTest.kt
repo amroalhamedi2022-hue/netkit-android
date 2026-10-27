@@ -507,4 +507,34 @@ fun main() {
         check(entries["a.txt"]!!.contentEquals("a".toByteArray()))
         check(entries["c.txt"]!!.contentEquals("c".toByteArray()))
     }
+    run {
+        // Keep the complete relative path within a conservative Windows-compatible
+        // budget, not merely each individual segment. Five 39-character directory
+        // names fit exactly; a sixth would produce a 240-character relative path.
+        fun nestedSource(depth: Int) = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int): ArchivePage {
+                val index = if (folderId == "root") 0 else folderId.removePrefix("f").toInt()
+                if (index >= depth) return ArchivePage(emptyList(), null)
+                val next = index + 1
+                return ArchivePage(listOf(ArchiveFile("f$next", "d$next" + "x".repeat(37), true)), null)
+            }
+            override fun open(fileId: String): InputStream? = null
+        }
+
+        val portable = ByteArrayOutputStream()
+        val portableResult: ArchiveResult
+        ZipOutputStream(portable).use {
+            portableResult = DirectoryArchive.write("root", nestedSource(5), it)
+        }
+        check(portableResult.entries == 5)
+
+        val tooLong = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", nestedSource(6), it)
+            }
+        }.exceptionOrNull()
+        check(tooLong is IllegalArgumentException &&
+            tooLong.message == "Colliding or too-long archive path")
+    }
+
 }
