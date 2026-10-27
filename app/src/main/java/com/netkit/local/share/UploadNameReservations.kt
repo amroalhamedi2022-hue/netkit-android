@@ -4,6 +4,18 @@ import java.text.Normalizer
 import java.util.Locale
 
 /**
+ * Build an unambiguous, in-memory namespace for a selected SAF tree and relative folders.
+ * Tree URI identity matters: equal folder paths in two user-selected trees are not the same destination.
+ */
+internal fun uploadReservationScope(treeUri: String, folders: List<String>): String {
+    require(treeUri.isNotBlank()) { "Missing SAF upload tree" }
+    return buildString {
+        append(treeUri.length).append(':').append(treeUri)
+        folders.forEach { segment -> append('|').append(segment.length).append(':').append(segment) }
+    }
+}
+
+/**
  * Reserves browser-upload destination names without holding a lock while the
  * potentially multi-gigabyte SAF stream is copied.
  *
