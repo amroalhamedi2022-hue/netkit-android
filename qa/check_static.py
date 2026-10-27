@@ -59,6 +59,11 @@ assert 'UploadPathPolicy.folders' in engine and 'storage.uploadRelative' in engi
 storage_source = (root / 'app/src/main/java/com/netkit/local/share/AndroidShareStorage.kt').read_text()
 assert 'override fun uploadRelative(' in storage_source
 assert 'UploadPathPolicy.checkFolders' in storage_source
+assert 'UploadLengthPolicy.check(length, maxUploadSize())' in storage_source, \
+    'Declared upload length must be bounded at the SAF storage boundary'
+length_guard = storage_source.index('UploadLengthPolicy.check(length, maxUploadSize())')
+consent_snapshot = storage_source.index('val (consentTicket, treeUri) = uploadConsent.snapshot', length_guard)
+assert length_guard < consent_snapshot, 'Reject invalid upload lengths before SAF destination work'
 assert 'uploadConsent.withCurrent(' in storage_source
 limit_setter = re.search(r'fun setMaxBrowserUploadMiB\(size: Int\) \{(.*?)\n    \}', storage_source, re.S)
 assert limit_setter and 'uploadConsent.change {' in limit_setter.group(1), \
