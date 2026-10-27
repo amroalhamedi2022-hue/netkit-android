@@ -420,3 +420,5 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - APK/build: **NOT BUILT**; this milestone is a focused JVM cancellation regression. Android compile result remains **NOT VERIFIED**.
 - Device acceptance: **NOT TESTED** on Xiaomi Pad 5 or a real SAF provider.
 - Remaining gates: confirm both workflow results on this exact commit, then run a large-folder ZIP/cancel trial with a real SAF provider and Windows browser.
+
+- Live Google Docs handoff: **SYNC FAILED** — no authorized Google Docs/Drive connector is available in this run; this GitHub ledger is not a substitute for the live Drive document.
