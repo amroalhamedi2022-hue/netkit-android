@@ -1,5 +1,6 @@
 package com.netkit.local.share
 
+import java.text.Normalizer
 import java.util.Locale
 
 /**
@@ -14,7 +15,14 @@ internal class UploadNameReservations {
     private val inFlight = HashSet<String>()
     private val lock = Any()
 
-    private fun key(name: String, scope: String): String = scope + "\u0000" + name.lowercase(Locale.ROOT)
+    private fun key(name: String, scope: String): String {
+        // SAF providers differ in Unicode normalization and case behavior. Reserve
+        // conservatively using the same NFC + invariant-uppercase key as ZIP paths,
+        // so equivalent spellings cannot race into the same destination.
+        val normalized = Normalizer.normalize(name, Normalizer.Form.NFC)
+        val folded = Normalizer.normalize(normalized.uppercase(Locale.ROOT), Normalizer.Form.NFC)
+        return scope + "\u0000" + folded
+    }
 
     private fun available(requested: String, exists: (String) -> Boolean, scope: String): String {
         val dot = requested.lastIndexOf('.')
