@@ -44,8 +44,10 @@ internal object UploadPathPolicy {
                 c.code in 0x2066..0x206f || c.code in 0x2028..0x2029 ||
                 c.code in 0xfff9..0xfffb || c.code == 0xfeff
             }) return false
-        val stem = v.substringBefore('.').trimEnd(' ').uppercase(Locale.ROOT)
-        if (stem in setOf("CON", "PRN", "AUX", "NUL") ||
+        val stem = v.substringBefore('.').trimEnd(' ', '.').uppercase(Locale.ROOT)
+        // Keep browser uploads compatible with the portable ZIP policy: Windows
+        // reserves CONIN$/CONOUT$ as well as the classic DOS device stems.
+        if (stem in setOf("CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$") ||
             Regex("^(COM|LPT)[1-9¹²³]$").matches(stem)) return false
         return true
     }
