@@ -220,3 +220,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Earlier failed attempt:** [run 40461684933](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40461684933) — **FAIL** because an edit temporarily duplicated the `@Synchronized` annotation. The duplicate was removed before the passing exact-head run; the final branch contains a single annotation.
 - **Android compile/APK:** **NOT TESTED** on M62. **Real Pad 5 SAF/HTTPS transfer and Windows browser acceptance:** **NOT TESTED**. Clock rollback is an injected-clock defensive gate; the production clock uses `System.nanoTime()`.
 - **Safety:** no new dependency, paid API, secret, APK, merge or main change. No Wi-Fi Analyzer or Remote Control functionality added to NetKit.
+
+## 2026-10-27 — M63: fail closed when retired upload staging cannot be deleted
+
+- **Scope:** NetKit PR #7 only, branch `automation/netkit-zip-stall-guard-20261023`. PR #6's branch and `main` were not changed.
+- **Production:** `ResumableBrowserUpload` now checks deletion of invalid/expired private `.part` staging before removing the corresponding session from its registry. The ID is retired and the session is marked invalid first. If deletion fails or throws while the file remains, cleanup returns an `IOException` and keeps the session tracked so a later cleanup can retry; the service no longer silently forgets bytes that are still on disk. Cancellation uses the same checked deletion path. The production default remains `File.delete()`; the injectable deleter exists for deterministic regression coverage.
+- **Regression:** `qa/ResumableBrowserUploadTest.kt` injects a deletion failure for an expired partial upload. The first status/cleanup must fail while the file remains; a subsequent successful deletion must remove it; the retired ID must remain unable to start a new upload.
+- **Source commit:** [47c3e67fb6720188146d0fa337c56a163d7914ff](https://github.com/amroalhamedi2022-hue/netkit-android/commit/47c3e67fb6720188146d0fa337c56a163d7914ff).
+- **Regression commit / source-test head:** [d62cfed1f3c28aa6c0a97e3a9dfbf7c4321e2f58](https://github.com/amroalhamedi2022-hue/netkit-android/commit/d62cfed1f3c28aa6c0a97e3a9dfbf7c4321e2f58).
+- **Exact-head CI:** **NOT VERIFIED** in this run. The configured development workflow is [NetKit Android - development build and verification](https://github.com/amroalhamedi2022-hue/netkit-android/actions/workflows/netkit-import-build.yml); the connected workflow lookup returned no pull-request-triggered run for this SHA, and a passing run ID could not be confirmed. Do not infer PASS from the prior M62 run.
+- **Android compile/APK:** **NOT TESTED** on M63. **Pad 5 SAF/HTTPS, Windows browser, FTP/SFTP, hotspot and UI acceptance:** **NOT TESTED**.
+- **Safety:** no new dependency, paid API, secret, artifact, auto-merge or main change. No Wi-Fi Analyzer or Remote Control scope added.
+
