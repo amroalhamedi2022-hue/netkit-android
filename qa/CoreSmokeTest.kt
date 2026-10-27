@@ -6,6 +6,9 @@ import java.util.zip.ZipInputStream
 import java.io.File
 import java.io.InputStream
 import java.net.URI
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import java.security.KeyStore
 import java.security.SecureRandom
 import java.security.MessageDigest
@@ -49,6 +52,34 @@ fun main(args: Array<String>) {
         val error = runCatching { StreamReadGuard.read(stalled, ByteArray(8), 0, 8) }.exceptionOrNull()
         check(error is IllegalStateException && error.message == "Shared stream read stalled")
         check(attempts == 33) { "Unexpected zero-read retry budget: $attempts" }
+    }
+    run {
+        // Cancellation while backing off must promptly release a worker instead
+        // of waiting for all 32 malformed-provider retries.
+        val enteredRead = CountDownLatch(1)
+        var failure: Throwable? = null
+        val stalled = object : InputStream() {
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                enteredRead.countDown()
+                return 0
+            }
+        }
+        val worker = thread(start = true, name = "NetKit stalled-stream cancellation test") {
+            try {
+                StreamReadGuard.read(stalled, ByteArray(8), 0, 8)
+                failure = IllegalStateException("Stalled stream unexpectedly returned")
+            } catch (error: Throwable) {
+                failure = error
+            }
+        }
+        check(enteredRead.await(1, TimeUnit.SECONDS))
+        worker.interrupt()
+        worker.join(1000)
+        check(!worker.isAlive) { "Interrupted stalled read did not exit promptly" }
+        check(failure is java.io.InterruptedIOException &&
+            failure?.message == "Shared stream read cancelled") { "Unexpected cancellation result: $failure" }
+        check(worker.isInterrupted) { "Cancellation must preserve the thread interrupt flag" }
     }
     // A Range prefix skip/read can block inside a SAF provider. Recheck the
     // lease immediately after each provider call, even when that call consumes
