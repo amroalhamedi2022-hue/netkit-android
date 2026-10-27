@@ -42,5 +42,17 @@ fun main() {
     committing.join(); changer.join()
     check(changed.count == 0L)
     check(runCatching { gate.withCurrent(third, allowed(thirdTree), ::revoked) { } }.isFailure)
-    println("PASS: consent revocation survives toggles/tree reuse; commit serialized")
+    // Changing the configured upload ceiling is a consent-generation change too.
+    enabled = true
+    var maxUploadMiB = 2048
+    val (beforeLimitChange, _) = gate.snapshot { maxUploadMiB }
+    gate.change { maxUploadMiB = 512 }
+    check(runCatching {
+        gate.withCurrent(beforeLimitChange, allowed("folder-a"), ::revoked) { }
+    }.isFailure) { "Upload-limit changes must revoke staged browser uploads" }
+    val (afterLimitChange, capturedLimit) = gate.snapshot { maxUploadMiB }
+    check(capturedLimit == 512)
+    gate.withCurrent(afterLimitChange, allowed("folder-a"), ::revoked) { check(true) }
+
+    println("PASS: consent revocation survives toggles/tree reuse/upload-limit changes; commit serialized")
 }
