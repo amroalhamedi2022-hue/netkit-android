@@ -92,3 +92,17 @@ No merge, no main changes, no new dependency or paid API.
 - **CI:** [run 40412794098](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40412794098) — **PASS**. The source-qa job completed successfully; logs explicitly report the persistent queue state-machine regression passing. Android APK/lint jobs were skipped by design.
 - **Acceptance:** strict progress-bound JVM regression **PASS**; static/JVM source QA **PASS**; Android compile on this source SHA **NOT TESTED**; Xiaomi Pad 5/Windows end-to-end transfer **NOT TESTED**.
 - **Safety:** no merge, no `main` changes, no new dependencies, no APK created. This queue is still a persisted intent/journal, not a completed network-resume protocol.
+
+
+## 2026-10-27 — M61: Permanently invalidate HTTPS share lease after monotonic rollback
+
+- **Scope:** PR #6 head branch `feature/netkit-reliability-20261023`; PR #7 remains a separate child branch. No merge or main update.
+- **Production:** `SessionLease` tracks the last monotonic observation and permanently invalidates the lease if the source moves backwards or elapsed-time arithmetic becomes negative. A recovered clock cannot resurrect the same HTTPS bearer-token session; the owner must create a new lease/session. Lease operations are synchronized so revocation and validity checks do not race.
+- **Regression:** `qa/SessionLeaseTest.kt` now checks rollback after a positive elapsed interval, zero remaining lifetime, and continued invalidity after the clock rises above the original start time.
+- **Commits:** source `e480e929e33a3b6a02e316350a26e9a8824d5301`; test/head `f7c3ae737d943413a39fc28c85a80f259f9144f6`.
+- **Focused local Kotlin/JVM test:** **PASS** using the installed Kotlin compiler and Java runtime; output: `PASS: session expiry, revocation, bounded lifetime and permanent fail-closed clock rollback`.
+- **GitHub exact-head CI:** [run 40454871545](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40454871545) and [run 40454869072](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40454869072) — **SUCCESS** on the source/test head; `source-qa` PASS, Android package jobs SKIPPED.
+- **Android compile/APK:** **NOT TESTED** in this batch; no package was needed for the lease-state regression.
+- **Real Pad 5/Windows browser session-expiry and stop/revoke tests:** **NOT TESTED**.
+- **Boundary:** this protects the local monotonic TTL from rollback; it does not authenticate a peer or replace TLS/certificate and user-consent review.
+- **Safety:** no dependency, paid API, secret, artifact build, auto-merge or main change.
