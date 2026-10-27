@@ -163,3 +163,15 @@ No merge, no main changes, no new dependency or paid API.
 - **Build/device:** APK packaging and lint jobs were **SKIPPED** for this source-only milestone; no APK produced. Physical Xiaomi Pad 5 / SAF acceptance remains **NOT TESTED**.
 - **Safety/branching:** PR #6 branch only (feature/netkit-reliability-20261023); PR #7 was not modified. No merge, main write, new dependency, paid API, secret or permission bypass.
 - **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Docs write/read connector available in this run; this checkpoint is not a substitute for the live Drive document.
+
+
+## 2026-10-28 — M82: local HTTPS peer scope includes IPv6 ULA (PR #6)
+
+- **Functional change:** the local HTTPS listener now uses `isAllowedLanPeer(InetAddress)`. It preserves the existing private IPv4, link-local and loopback handling and explicitly permits IPv6 unique-local addresses in `fc00::/7`, which Java's `isSiteLocalAddress()` does not classify as site-local. Public/global IPv4 and IPv6 remain rejected by this guard.
+- **Source commit:** [4b190e4a](https://github.com/amroalhamedi2022-hue/netkit-android/commit/4b190e4a1b9009d7c7ef8dcbe2ead68445bea446).
+- **Regression commit / exact tested head:** [7f178f5a](https://github.com/amroalhamedi2022-hue/netkit-android/commit/7f178f5a4f0345aa748671f5a6d776f541072ef1) adds JVM checks for RFC1918, IPv4 link-local, loopback, IPv6 link-local, IPv6 ULA, and rejection of public IPv4/global IPv6.
+- **Exact-head CI:** [run 40602956860](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40602956860) — **SUCCESS** on 7f178f5a4f0345aa748671f5a6d776f541072ef1. `source-qa` passed static checks, Kotlin/JVM transport/SAF/ZIP/session tests and persistent transfer-queue tests. `device-test-build` and `verified-build` were **SKIPPED**.
+- **Build/device:** APK packaging and Android compile were **NOT RUN on this exact head**; no APK or new artifact SHA exists. Xiaomi Pad 5 IPv6 ULA / real LAN acceptance remains **NOT TESTED**.
+- **Security boundary:** address classification is defense-in-depth, not peer authentication or proof that a route is physically on the same Wi-Fi. Pairing/consent requirements remain unchanged.
+- **Branch safety:** PR #6 branch only (`feature/netkit-reliability-20261023`); PR #7 remains untouched. No merge, main write, dependency, paid API, secret or permission bypass.
+- **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Docs write/read connector is available in this run; this GitHub checkpoint is not a replacement for the live Drive document.
