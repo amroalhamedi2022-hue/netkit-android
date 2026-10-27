@@ -32,6 +32,10 @@ object DirectoryArchive {
     // SAF document IDs are opaque provider keys, not paths. Bound their size so a
     // broken provider cannot retain arbitrarily large identifiers in traversal sets.
     private const val MAX_DOCUMENT_ID_CHARS = 4096
+    // Keep ZIP-relative paths portable to common Windows extractors without
+    // requiring long-path opt-in. The destination root still consumes part of
+    // the platform's path budget, so this is deliberately conservative.
+    private const val MAX_PORTABLE_RELATIVE_PATH_CHARS = 200
 
     private fun validateDocumentId(id: String) {
         require(id.isNotBlank() && id.length <= MAX_DOCUMENT_ID_CHARS) {
@@ -115,7 +119,7 @@ object DirectoryArchive {
                 }
                 codePointOffset += Character.charCount(codePoint)
             }
-            require(segment.length <= 240 && segment.toByteArray(Charsets.UTF_8).size <= 768)
+            require(segment.length <= 200 && segment.toByteArray(Charsets.UTF_8).size <= 768)
             // SAF document names are untrusted. Reject control characters and bidi
             // overrides that can disguise a file extension in a downloaded ZIP.
             // Normal Arabic/Hebrew letters remain valid.
@@ -164,7 +168,7 @@ object DirectoryArchive {
                     // ZIP may be extracted on case-insensitive Windows filesystems. Reject
                     // aliases (including file-vs-directory and Unicode normalization) rather
                     // than silently overwrite an earlier entry when unzipped.
-                    require(path.length <= 2048 && paths.add(canonicalPath(path))) {
+                    require(path.length <= MAX_PORTABLE_RELATIVE_PATH_CHARS && paths.add(canonicalPath(path))) {
                         "Colliding or too-long archive path"
                     }
                     if (child.folder) {
