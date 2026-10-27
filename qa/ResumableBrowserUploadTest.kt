@@ -484,14 +484,17 @@ fun main() {
     check(finalClockRoot.mkdirs())
     val finalClockStore = FakeBrowserStorage()
     val finalClockReads = java.util.concurrent.atomic.AtomicInteger()
-    val finalClockStage = ResumableBrowserUpload(finalClockRoot, finalClockStore,
-        { finalClockStore.epoch }, { finalClockStore.enabled }) {
-        when (finalClockReads.getAndIncrement()) {
-            0 -> 1_000L // cleanup observes the initial clock
-            1 -> 1_000L // newly created session records the same clock
-            else -> 999L // old implementation accepted this unguarded final read
+    val finalClockStage = ResumableBrowserUpload(
+        finalClockRoot, finalClockStore,
+        { finalClockStore.epoch }, { finalClockStore.enabled },
+        clockMillis = {
+            when (finalClockReads.getAndIncrement()) {
+                0 -> 1_000L // cleanup observes the initial clock
+                1 -> 1_000L // newly created session records the same clock
+                else -> 999L // old implementation accepted this unguarded final read
+            }
         }
-    }
+    )
     expectFailure {
         finalClockStage.append(id(), "empty-clock-rollback.bin", emptyList(),
             0, 0, 0, null, ByteArrayInputStream(byteArrayOf()))
