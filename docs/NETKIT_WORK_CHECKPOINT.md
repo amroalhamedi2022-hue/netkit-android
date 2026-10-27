@@ -135,3 +135,17 @@ No merge, no main changes, no new dependency or paid API.
 - **Android compile/APK:** **NOT TESTED / NOT BUILT**; this source-only deadline change was covered by the portable transport suite and did not require a device package.
 - **Device acceptance:** slow-trickle behavior over a real HTTPS socket, Xiaomi Pad 5 SAF publication rollback after 408, and Windows browser interoperability remain **NOT TESTED**.
 - **Safety:** no new dependency, paid API, secret, artifact, merge or `main` write. Session lease remains the outer lifetime bound; this deadline adds a stricter per-request cap.
+
+
+## 2026-10-27 — M70: Fail closed on premature EOF in SAF browser uploads
+
+- **Scope:** NetKit PR #6 only; branch `feature/netkit-reliability-20261023`. PR #7, its ZIP branch and `main` untouched.
+- **Finding:** `StreamReadGuard.read()` correctly returns `-1` at EOF. `AndroidShareStorage.uploadInternal()` passed that value directly to `OutputStream.write(buffer, 0, n)` when a request body ended before its declared Content-Length, causing a misleading bounds exception instead of a clear truncation failure. The temporary SAF document was still removed in `finally`, but the failure reason was wrong.
+- **Production fix:** added JVM-testable `readRequiredUploadChunk()`, which retains bounded transient-zero recovery and throws `EOFException("Connection closed before complete upload")` on early EOF. SAF upload now uses this helper before writing any returned chunk.
+- **Regression:** `qa/CoreSmokeTest.kt` reads a short stream, then verifies the next required read fails with the explicit EOF exception.
+- **Commits:** transport helper [`e462a91bb021f9598d70153f6fbfed268bddd473`](https://github.com/amroalhamedi2022-hue/netkit-android/commit/e462a91bb021f9598d70153f6fbfed268bddd473); SAF caller [`e0e5b00e68760667b8a22939f9bb6f0a8e0e4e5e`](https://github.com/amroalhamedi2022-hue/netkit-android/commit/e0e5b00e68760667b8a22939f9bb6f0a8e0e4e5e); regression/source-test head [`8dfb3d739aa8e94d89cd7f68707839b98971315d`](https://github.com/amroalhamedi2022-hue/netkit-android/commit/8dfb3d739aa8e94d89cd7f68707839b98971315d).
+- **Exact-head CI:** [run 40512823363](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40512823363) — **SUCCESS**. Static source checks, Kotlin/JVM HTTPS/session/SAF ZIP suite (including the early-EOF regression), and persistent transfer-queue state-machine tests all passed.
+- **Android compile / APK:** **NOT TESTED / NOT BUILT** by this run; this targeted JVM regression did not justify a package build.
+- **Device acceptance:** **NOT TESTED** — Xiaomi Pad 5 SAF provider truncation, Windows browser upload interruption, FTP/SFTP interoperability, hotspot behavior and Liquid UI acceptance remain open.
+- **Safety/integration:** no new dependency, paid API, secret or binary artifact; no merge, rebase, cherry-pick, force-push, base retarget or `main` write. NetKit remains separate from Remote Control and has no Wi-Fi Analyzer.
+- **Live Google Docs Handoff:** **SYNC FAILED** until an authorized Google Docs write/read connector is available; this repository checkpoint is not a substitute for the live Drive document.
