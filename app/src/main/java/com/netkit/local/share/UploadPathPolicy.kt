@@ -39,9 +39,9 @@ internal object UploadPathPolicy {
                 c == '/' || c == '\\' || c.code < 32 || c.code in 0x7f..0x9f ||
                 c in "<>:\"|?*" || c.code == 0x061c ||
                 c.code == 0x00ad || c.code == 0x034f || c.code == 0x180e ||
-                c.code == 0x200b || c.code == 0x2060 ||
-                c.code in 0x200e..0x200f || c.code in 0x202a..0x202e ||
-                c.code in 0x2066..0x206f || c.code in 0x2028..0x2029 ||
+                c.code == 0x200b || c.code in 0x200e..0x200f ||
+                c.code in 0x2060..0x206f || c.code in 0x202a..0x202e ||
+                c.code in 0x2028..0x2029 ||
                 c.code in 0xfff9..0xfffb || c.code == 0xfeff
             }) return false
         val stem = v.substringBefore('.').trimEnd(' ', '.').uppercase(Locale.ROOT)
