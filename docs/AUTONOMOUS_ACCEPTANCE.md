@@ -397,7 +397,7 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Regression:** `qa/UploadPathPolicyTest.kt` covers `CONIN$.txt`, `CONOUT$.txt`, lowercase aliases, `CONIN$ .txt`, `CONOUT$ .txt`, `CON .txt` and `COM1 .log`, including destination-folder validation.
 - **Source commit:** [ecab0c4c1adcbe6f2d6a56cbb322e57d4254f891](https://github.com/amroalhamedi2022-hue/netkit-android/commit/ecab0c4c1adcbe6f2d6a56cbb322e57d4254f891).
 - **Test commit / current source-test head before this ledger update:** [348af306bbc51a45f4497218859b0ca4bb856ea3](https://github.com/amroalhamedi2022-hue/netkit-android/commit/348af306bbc51a45f4497218859b0ca4bb856ea3).
-- **PASS — targeted local policy smoke:** Kotlin compiler + JVM smoke rejected all 7 reserved-name cases and retained 4 ordinary names. This validates the stem rule, not the complete repository test suite.
+- **PASS — isolated local policy smoke:** a small Kotlin/JVM snippet mirroring the production stem rule rejected all 7 reserved-name cases and retained 4 ordinary names. This validates the rule logic only, not compilation of the repository source or the full test suite.
 - **CI:** **NOT VERIFIED** on the new head. The connected status endpoint returned no status contexts, and the available workflow-run helper only lists PR-triggered runs; do not infer success from prior M77 CI.
 - **APK/build:** **NOT BUILT**; the change is a portable-name validation regression covered by JVM source tests. No new artifact or SHA-256 exists.
 - **Device acceptance:** **NOT TESTED** on Xiaomi Pad 5; SAF provider and browser-to-device transfer remain open.
