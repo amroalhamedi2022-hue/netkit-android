@@ -77,5 +77,34 @@ fun main() {
         check(unicodeNames.reserve("same.txt", scope = treeA) { false } == "same (2).txt")
     }
 
+    // A provider may report a successful rename before findFile() reflects it.
+    // The committed final name must remain reserved until the original upload releases it.
+    run {
+        val lagged = UploadNameReservations()
+        val visible = mutableSetOf<String>()
+        val scope = "tree-a"
+        val reserved = lagged.reserve("artifact.bin", scope) { it in visible }
+        check(reserved == "artifact.bin")
+        visible.add(reserved) // an external writer claims the reservation during streaming
+        val committed = lagged.commit(
+            reserved, "artifact.bin", { it in visible }, scope
+        ) { candidate ->
+            check(candidate == "artifact (2).bin")
+            true // simulate provider listing lag: rename succeeds, exists() still returns false
+        }
+        check(committed == "artifact (2).bin")
+        val concurrent = lagged.reserve("artifact.bin", scope) { it in visible }
+        check(concurrent == "artifact (3).bin") {
+            "Committed alternate name was reused while provider listing lagged"
+        }
+        lagged.release(reserved, scope)
+        val afterRelease = lagged.reserve("artifact.bin", scope) { it in visible }
+        check(afterRelease == "artifact (2).bin") {
+            "Committed alias reservation was not released with the original token"
+        }
+        lagged.release(concurrent, scope)
+        lagged.release(afterRelease, scope)
+    }
+
     println("PASS: concurrent upload name reservations, Unicode NFC/case aliases, scoped trees, collision, rollback")
 }

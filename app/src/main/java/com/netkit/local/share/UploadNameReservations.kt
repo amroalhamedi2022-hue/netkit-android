@@ -25,6 +25,9 @@ internal fun uploadReservationScope(treeUri: String, folders: List<String>): Str
  */
 internal class UploadNameReservations {
     private val inFlight = HashSet<String>()
+    // Keep the original reservation token linked to any alternate final name selected
+    // at commit time. Some SAF providers may not expose a rename immediately to findFile().
+    private val heldKeysByReservation = HashMap<String, MutableSet<String>>()
     private val lock = Any()
 
     private fun key(name: String, scope: String): String {
@@ -49,7 +52,9 @@ internal class UploadNameReservations {
 
     fun reserve(requested: String, scope: String = "", exists: (String) -> Boolean): String = synchronized(lock) {
         val name = available(requested, exists, scope)
-        check(inFlight.add(key(name, scope)))
+        val reservationKey = key(name, scope)
+        check(inFlight.add(reservationKey))
+        heldKeysByReservation[reservationKey] = mutableSetOf(reservationKey)
         name
     }
 
@@ -73,13 +78,34 @@ internal class UploadNameReservations {
         scope: String,
         rename: (String) -> Boolean
     ): String = synchronized(lock) {
-        check(key(reservedName, scope) in inFlight) { "Unknown upload reservation" }
+        val reservationKey = key(reservedName, scope)
+        check(reservationKey in inFlight && reservationKey in heldKeysByReservation) {
+            "Unknown upload reservation"
+        }
         val destination = if (exists(reservedName)) available(requested, exists, scope) else reservedName
-        check(rename(destination)) { "Storage provider refused final rename" }
-        destination
+        val destinationKey = key(destination, scope)
+        val addedDestinationReservation = destinationKey != reservationKey
+        if (addedDestinationReservation) {
+            check(inFlight.add(destinationKey)) { "Final upload name is already reserved" }
+        }
+        var renamed = false
+        try {
+            check(rename(destination)) { "Storage provider refused final rename" }
+            renamed = true
+            // Keep both keys until release(reservedName): the provider's exists() view may
+            // lag behind a successful rename, and a concurrent upload must not reuse it.
+            if (addedDestinationReservation) {
+                heldKeysByReservation.getValue(reservationKey).add(destinationKey)
+            }
+            destination
+        } finally {
+            if (addedDestinationReservation && !renamed) inFlight.remove(destinationKey)
+        }
     }
 
     fun release(reservedName: String, scope: String = "") = synchronized(lock) {
-        inFlight.remove(key(reservedName, scope))
+        val reservationKey = key(reservedName, scope)
+        val heldKeys = heldKeysByReservation.remove(reservationKey) ?: setOf(reservationKey)
+        heldKeys.forEach { inFlight.remove(it) }
     }
 }
