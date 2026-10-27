@@ -60,6 +60,9 @@ storage_source = (root / 'app/src/main/java/com/netkit/local/share/AndroidShareS
 assert 'override fun uploadRelative(' in storage_source
 assert 'UploadPathPolicy.checkFolders' in storage_source
 assert 'uploadConsent.withCurrent(' in storage_source
+limit_setter = re.search(r'fun setMaxBrowserUploadMiB\\(size: Int\\) \\{(.*?)\\n    \\}', storage_source, re.S)
+assert limit_setter and 'uploadConsent.change {' in limit_setter.group(1), \
+    'Changing the browser upload limit must revoke in-flight staged upload sessions'
 assert 'uploadNames.reserve(fileName, scope)' in storage_source
 assert 'downloadArchive' in engine and 'browseDirectory' in engine and 'browse-archive/' in engine
 assert 'shareExpirationMinutes' in (root / 'app/src/main/java/com/netkit/local/app/NetKitCore.kt').read_text()
