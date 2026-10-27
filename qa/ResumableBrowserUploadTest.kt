@@ -508,5 +508,35 @@ fun main() {
 
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
-    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, explicit cancellation and replay guard, empty, duplicate commit")
+    // M63: an expired upload must remain tracked and fail closed if its private
+    // staging file cannot be deleted. A later cleanup retries deletion before
+    // dropping the tombstoned session, so the failure is never silently forgotten.
+    val cleanupRoot = File(System.getProperty("java.io.tmpdir"),
+        "netkit-resume-cleanup-failure-" + UUID.randomUUID())
+    check(cleanupRoot.mkdirs())
+    val cleanupStore = FakeBrowserStorage()
+    var cleanupNow = 1000L
+    var allowPartDelete = false
+    val cleanupStage = ResumableBrowserUpload(cleanupRoot, cleanupStore,
+        { cleanupStore.epoch }, { cleanupStore.enabled }, { cleanupNow },
+        { part -> if (allowPartDelete) part.delete() else false })
+    val cleanupId = id()
+    cleanupStage.append(cleanupId, "cleanup.bin", emptyList(), 2, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(6)))
+    val cleanupPart = File(cleanupRoot, "$cleanupId.part")
+    check(cleanupPart.exists())
+    cleanupNow += 16L * 60 * 1000
+    expectFailure { cleanupStage.status(cleanupId) }
+    check(cleanupPart.exists()) { "Failed deletion must not be reported as cleaned" }
+    allowPartDelete = true
+    check(cleanupStage.status(cleanupId) == null)
+    check(!cleanupPart.exists()) { "A later cleanup must retry deleting retired staging" }
+    expectFailure {
+        cleanupStage.append(cleanupId, "cleanup.bin", emptyList(), 2, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(7)))
+    }
+    cleanupStage.close()
+    check(!cleanupRoot.exists())
+
+    println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, explicit cancellation, cleanup deletion retry and replay guard")
 }
