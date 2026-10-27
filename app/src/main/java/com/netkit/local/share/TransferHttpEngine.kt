@@ -3,6 +3,7 @@ package com.netkit.local.share
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.ZipOutputStream
@@ -108,13 +109,25 @@ internal object StreamReadGuard {
         require(length > 0) { "StreamReadGuard requires a positive read length" }
         var zeroReads = 0
         while (true) {
+            if (Thread.currentThread().isInterrupted) {
+                throw InterruptedIOException("Shared stream read cancelled")
+            }
             val count = input.read(buffer, offset, length)
             if (count != 0) return count
             zeroReads++
             if (zeroReads > MAX_CONSECUTIVE_ZERO_READS) {
                 throw IOException("Input stream stalled after $zeroReads consecutive zero-byte reads")
             }
-            Thread.yield()
+            // Bound CPU use for broken SAF providers while keeping retries responsive.
+            val delayMillis = minOf(16L, (1 shl (zeroReads - 1).coerceAtMost(4)).toLong())
+            try {
+                Thread.sleep(delayMillis)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw InterruptedIOException("Shared stream read cancelled").also {
+                    it.initCause(interrupted)
+                }
+            }
         }
     }
 }
