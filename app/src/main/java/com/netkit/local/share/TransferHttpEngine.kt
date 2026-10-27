@@ -4,6 +4,7 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.ZipOutputStream
@@ -90,10 +91,23 @@ internal object StreamReadGuard {
         require(length > 0 && offset >= 0 && offset <= buffer.size - length)
         var emptyReads = 0
         while (true) {
+            if (Thread.currentThread().isInterrupted) {
+                throw InterruptedIOException("Shared stream read cancelled")
+            }
             val n = input.read(buffer, offset, length)
             if (n != 0) return n
             check(++emptyReads <= 32) { "Shared stream read stalled" }
-            Thread.yield()
+            // A broken SAF provider can return zero repeatedly. Bounded backoff
+            // avoids a hot CPU loop while keeping the retry budget finite.
+            val delayMillis = minOf(16L, (1 shl (emptyReads - 1).coerceAtMost(4)).toLong())
+            try {
+                Thread.sleep(delayMillis)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw InterruptedIOException("Shared stream read cancelled").also {
+                    it.initCause(interrupted)
+                }
+            }
         }
     }
 }
