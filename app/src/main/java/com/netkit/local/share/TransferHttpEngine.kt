@@ -8,6 +8,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.ZipOutputStream
 import java.util.zip.Deflater
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
@@ -21,6 +23,20 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLServerSocketFactory
 import kotlin.concurrent.thread
+
+/**
+ * Accept only non-global peers for the local HTTPS share. IPv6 unique-local
+ * (fc00::/7) is private LAN space too; Java's isSiteLocalAddress() does not
+ * classify it as site-local. This is a network-scope guard, not peer auth.
+ */
+internal fun isAllowedLanPeer(address: InetAddress): Boolean {
+    if (address.isSiteLocalAddress || address.isLinkLocalAddress || address.isLoopbackAddress) {
+        return true
+    }
+    val bytes = address.address
+    return address is Inet6Address && bytes.size == 16 &&
+        (bytes[0].toInt() and 0xFE) == 0xFC
+}
 
 /** Java/JVM-only transport core. Android storage and certificate code are adapters. */
 data class ShareItem(val id: String, val name: String, val length: Long?)
@@ -215,9 +231,7 @@ class TransferHttpEngine(
             while (alive) {
                 try {
                     val client = server.accept()
-                    if (!client.inetAddress.isSiteLocalAddress &&
-                        !client.inetAddress.isLinkLocalAddress &&
-                        !client.inetAddress.isLoopbackAddress) {
+                    if (!isAllowedLanPeer(client.inetAddress)) {
                         client.close()
                         continue
                     }
