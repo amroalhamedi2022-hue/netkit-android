@@ -190,6 +190,9 @@ fun main() {
         reject(listOf("name\u2029.txt" to false)) // Unicode paragraph separator
         reject(listOf("name\uFFF9.txt" to false)) // interlinear annotation control
         reject(listOf("Report.txt" to false, "report.TXT" to false))
+        // Windows invariant-uppercase aliases missed by lowercase-only folding.
+        reject(listOf("I.txt" to false, "ı.txt" to false))
+        reject(listOf("ΟΣ.txt" to false, "οσ.TXT" to false))
         reject(listOf("Cafe\u0301.txt" to false, "Café.txt" to false))
         reject(listOf("folder" to true, "FOLDER" to false))
         // Isolated surrogates silently become replacement characters in UTF-8 ZIP
