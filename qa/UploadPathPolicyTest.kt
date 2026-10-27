@@ -16,6 +16,13 @@ fun main() {
         listOf("Pictures", "2026"))
     check(UploadPathPolicy.folders("Books/Ortho.pdf", "Ortho.pdf") == listOf("Books"))
     check(UploadPathPolicy.validName("تقرير نهائي.pdf"))
+    // Match DirectoryArchive's Windows-portable ZIP policy so a browser upload
+    // cannot create a file that later makes a recursive folder archive fail.
+    for (reserved in listOf("CONIN$.txt", "CONOUT$.txt", "conin$.txt",
+        "CONIN$ .txt", "CONOUT$ .txt", "CON .txt", "COM1 .log")) {
+        check(!UploadPathPolicy.validName(reserved)) { "Accepted reserved Windows device name: $reserved" }
+        check(runCatching { UploadPathPolicy.checkFolders(listOf("Shared"), reserved) }.isFailure)
+    }
     // Arabic and emoji joiner sequences remain valid, but invisible tag and
     // soft-hyphen tricks must not enter SAF folder names.
     check(UploadPathPolicy.validName("family-👨‍👩‍👧.png"))
