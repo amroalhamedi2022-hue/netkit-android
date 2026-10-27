@@ -106,6 +106,9 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
         expectedSha256: String?,
         progress: (Long) -> Unit
     ): String {
+        // Defense in depth: callers must not bypass the configured per-share ceiling.
+        // Reject negative/oversized Content-Length before creating SAF folders or temp files.
+        UploadLengthPolicy.check(length, maxUploadSize())
         require(UploadPathPolicy.validName(fileName)) { "Unsafe upload name" }
         val (consentTicket, treeUri) = uploadConsent.snapshot {
             val tree = uploadTree ?: throw UploadPermissionRevokedException()
