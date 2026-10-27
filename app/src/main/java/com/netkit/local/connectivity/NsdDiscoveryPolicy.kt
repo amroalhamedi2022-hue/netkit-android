@@ -25,14 +25,30 @@ class NsdResolveLedger(
         require(resolveTimeoutMillis in 1..300_000) { "Invalid DNS-SD resolve timeout" }
     }
 
+    private var lastObservedNanos: Long? = null
+
+    /** A broken injected/platform clock fails closed instead of extending old resolve leases. */
+    private fun readNowNanos(): Long? {
+        val now = nowNanos()
+        val previous = lastObservedNanos
+        if (previous != null && now < previous) {
+            pending.clear()
+            lastObservedNanos = now
+            return null
+        }
+        lastObservedNanos = now
+        return now
+    }
+
     val size: Int get() = synchronized(this) {
-        purgeExpired(nowNanos())
+        val now = readNowNanos() ?: return@synchronized 0
+        purgeExpired(now)
         pending.size
     }
 
     @Synchronized
     fun begin(serviceName: String): Long? {
-        val now = nowNanos()
+        val now = readNowNanos() ?: return null
         purgeExpired(now)
         if (serviceName.isBlank() || serviceName in pending || pending.size >= maxPending) {
             return null
@@ -44,13 +60,15 @@ class NsdResolveLedger(
 
     @Synchronized
     fun isCurrent(serviceName: String, ticket: Long): Boolean {
-        purgeExpired(nowNanos())
+        val now = readNowNanos() ?: return false
+        purgeExpired(now)
         return pending[serviceName]?.ticket == ticket
     }
 
     @Synchronized
     fun finish(serviceName: String, ticket: Long): Boolean {
-        purgeExpired(nowNanos())
+        val now = readNowNanos() ?: return false
+        purgeExpired(now)
         if (pending[serviceName]?.ticket != ticket) return false
         pending.remove(serviceName)
         return true
