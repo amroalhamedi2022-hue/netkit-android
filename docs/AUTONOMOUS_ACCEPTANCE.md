@@ -403,3 +403,11 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Device acceptance:** **NOT TESTED** on Xiaomi Pad 5; SAF provider and browser-to-device transfer remain open.
 - **Safety:** no new dependencies, paid APIs, secrets, Wi-Fi Analyzer, merge, rebase/retarget, force-push or `main` write. PR #7 remains Draft with the existing base/head mismatch.
 - **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Docs write/read connector is available in this run; this ledger is not a substitute for the live Drive document.
+
+
+## M79 — upload/archive invisible-control policy parity (2026-10-27)
+- **Production source:** `app/src/main/java/com/netkit/local/share/UploadPathPolicy.kt`, commit `f929f1ce375e54dc4f9289413c6053afbf39b411`. Browser upload validation now rejects the same LRM/RLM controls (U+200E/U+200F) and the complete U+2060–U+206F formatting-control range as the recursive ZIP policy, while continuing to allow Arabic ZWNJ and emoji ZWJ.
+- **Regression:** `qa/UploadPathPolicyTest.kt`, commit `5cb59240bfad48e518cb65b9e48c9925d5591bb0`, adds LRM/RLM and U+2061/U+2065 cases to the existing unsafe-name set; existing Arabic/emoji acceptance, Windows reserved-device aliases, relative-path and scoped-reservation cases remain.
+- **Exact-head CI:** [run 40578510063](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40578510063) — **SUCCESS** on `5cb59240bfad48e518cb65b9e48c9925d5591bb0`. Static source checks PASS; full Kotlin/JVM transport/HTTPS/SAF/ZIP/session suite PASS; persistent transfer queue state-machine suite PASS. Logs explicitly report safe relative folder paths, Arabic names, depth quotas and scoped reservations PASS.
+- **Not proven:** Android Gradle compile/APK, Xiaomi Pad 5 SAF provider behavior, QR scan, real Android↔Windows transfer, FTP/SFTP interoperability or hotspot behavior. No package was built because this is a policy-level JVM regression.
+- **Safety:** no dependency/paid API/secrets; no Wi-Fi Analyzer; no main write or merge. PR #7 remains Draft and its base/head mismatch is unresolved; PR #6 was not modified.
