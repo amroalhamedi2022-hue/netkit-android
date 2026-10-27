@@ -411,3 +411,12 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Exact-head CI:** [run 40578510063](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40578510063) — **SUCCESS** on `5cb59240bfad48e518cb65b9e48c9925d5591bb0`. Static source checks PASS; full Kotlin/JVM transport/HTTPS/SAF/ZIP/session suite PASS; persistent transfer queue state-machine suite PASS. Logs explicitly report safe relative folder paths, Arabic names, depth quotas and scoped reservations PASS.
 - **Not proven:** Android Gradle compile/APK, Xiaomi Pad 5 SAF provider behavior, QR scan, real Android↔Windows transfer, FTP/SFTP interoperability or hotspot behavior. No package was built because this is a policy-level JVM regression.
 - **Safety:** no dependency/paid API/secrets; no Wi-Fi Analyzer; no main write or merge. PR #7 remains Draft and its base/head mismatch is unresolved; PR #6 was not modified.
+
+
+## M81 — 2026-10-28 — interruptible stalled-SAF ZIP regression
+- Added a regression in `qa/DirectoryArchiveTest.kt` on branch `automation/netkit-zip-stall-guard-20261023`, commit `80746e67bd0b076f1124df5cad735d828ac4f440`.
+- The test waits until a deliberately non-conforming SAF-like stream enters the bounded zero-read sleep, interrupts the worker, and asserts prompt termination, `InterruptedIOException`, restored interrupt status, and stream closure.
+- CI: **NOT VERIFIED** for this exact SHA. The available workflow-run lookup returned no run entries and the combined commit-status query returned no statuses; this is not evidence of success or failure. The checked-in `netkit-import-build.yml` and `netkit-m15-compile.yml` are configured to exercise source/JVM QA and targeted Android compile without routine APK packaging.
+- APK/build: **NOT BUILT**; this milestone is a focused JVM cancellation regression. Android compile result remains **NOT VERIFIED**.
+- Device acceptance: **NOT TESTED** on Xiaomi Pad 5 or a real SAF provider.
+- Remaining gates: confirm both workflow results on this exact commit, then run a large-folder ZIP/cancel trial with a real SAF provider and Windows browser.
