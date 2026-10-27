@@ -45,8 +45,38 @@ private fun testStreamReadGuard() {
     check(attempts == 33) { "Expected 33 bounded attempts, got $attempts" }
 }
 
+private fun testAbsoluteUploadBodyDeadline() {
+    var nowNanos = 0L
+    val lease = SessionLease(60_000L) { nowNanos }
+    val socket = object : java.net.Socket() {
+        var timeoutValue = 0
+        override fun setSoTimeout(timeout: Int) { timeoutValue = timeout }
+        override fun getSoTimeout(): Int = timeoutValue
+    }
+    // The peer makes progress every 600 ms, below a 1 s idle timeout. The
+    // second read must still fail because the whole body exceeded one second.
+    val trickle = object : ByteArrayInputStream(byteArrayOf(1, 2, 3)) {
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            nowNanos += 600_000_000L
+            return super.read(buffer, offset, length)
+        }
+    }
+    val guarded = LeaseBoundUploadInputStream(trickle, socket, 1_000, lease) { nowNanos }
+    val one = ByteArray(1)
+    check(guarded.read(one, 0, 1) == 1) { "First in-budget trickle byte should be accepted" }
+    val failure = runCatching { guarded.read(one, 0, 1) }.exceptionOrNull()
+    check(failure is java.net.SocketTimeoutException &&
+        failure.message?.contains("absolute deadline") == true) {
+        "Slow trickle must hit the absolute body deadline, got $failure"
+    }
+    check(socket.timeoutValue in 1..1_000) { "Socket timeout must never exceed the body budget" }
+    guarded.close()
+    socket.close()
+}
+
 fun main(args: Array<String>) {
     testStreamReadGuard()
+    testAbsoluteUploadBodyDeadline()
     val ks = KeyStore.getInstance("PKCS12")
     val password = "temporary-test-only".toCharArray()
     File(args[0]).inputStream().use { ks.load(it, password) }
