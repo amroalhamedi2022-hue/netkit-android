@@ -328,3 +328,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - Check-run API confirms `source-qa: success`; `verified-build` and `device-test-build` were **skipped** as intended. This closes the earlier stale/in-progress summary note above.
 - **Acceptance:** Unicode NFC/case-alias name reservation JVM regression **PASS**. Android APK and device acceptance remain **NOT TESTED / NOT BUILT**.
 - PR #7 remains Draft / mergeable=false; PR #6 remains a separate branch. No integration action or `main` write.
+
+## 2026-10-27 — M71: Upload-limit consent revocation
+
+- **Production change:** `AndroidShareStorage.setMaxBrowserUploadMiB` now advances the existing `UploadConsentGate` generation when the configured browser-upload limit actually changes. Existing staged upload IDs therefore cannot resume under a newly selected size ceiling; setting the same limit is a no-op and does not interrupt active uploads unnecessarily.
+- **Source commit:** `277dd4715df53c8486473824bf9c057a0663c578`.
+- **Regression coverage:** `qa/UploadConsentGateTest.kt` verifies that changing the upload limit invalidates a prior ticket and allows a fresh ticket under the new value. `qa/check_static.py` guards the production wiring and unchanged-limit no-op.
+- **Exact-head source CI:** [run 40524000818](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40524000818), head `164820d00e4a9c2b9fb8d6ccfb0f35e85f869bd2` — **SUCCESS**. Static source checks, Kotlin/JVM transport/HTTPS/SAF ZIP/session tests, upload-consent regression and persistent transfer-queue state-machine tests passed.
+- **Exact-head Android compile:** [run 40524000955](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40524000955) — **SUCCESS** for `:app:compileDebugKotlin` and `:app:processDebugResources`. This was a targeted compile check; no APK was built.
+- **Gate:** source/JVM **PASS**; Android Kotlin/resource compile **PASS**; APK/package **NOT BUILT**; Xiaomi Pad 5, Windows browser/SAF and FTP/SFTP interoperability **NOT TESTED**.
+- **Branch safety:** PR #7 remains Draft and `mergeable=false` because its base SHA is still different from PR #6's head. PR #6 source/head unchanged. No retarget, rebase, cherry-pick, merge, force-push or `main` write.
+- **First guard attempt:** run [40522860231](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40522860231) failed because the newly added static-regex pattern was over-escaped. The pattern was corrected before the exact-head successful run above; this earlier failure is not being hidden.
+- **Live Google Docs Handoff:** SYNC FAILED — no authorized Docs write/read connector was available in this run. This repository ledger is not a replacement for the live Drive document.
