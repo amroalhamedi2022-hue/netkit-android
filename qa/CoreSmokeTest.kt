@@ -64,6 +64,7 @@ fun main(args: Array<String>) {
     val unknown = ByteArray(88_888) { (it % 247).toByte() }
     val unknownId = "ea54390d-ec27-43bf-acad-5131494470f1"
     val uploaded = mutableMapOf<String, ByteArray>()
+    val uploadAttempts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     val folderId = "bd8819ba-cafb-45b4-ae70-3ec73580d78d"
     val nestedId = "72c9c931-e477-4a92-a1e7-78b79b85130d"
     var uploadsAllowed = true
@@ -91,6 +92,7 @@ fun main(args: Array<String>) {
         }
         override fun canUpload() = uploadsAllowed
         override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String {
+            uploadAttempts.add(fileName)
             val result = ByteArray(length.toInt())
             var read = 0
             while (read < result.size) {
@@ -249,6 +251,39 @@ fun main(args: Array<String>) {
         check(timed.sessionRemainingMillis == 0L)
     }
     println("PASS: HTTPS session expiration rejects expired bearer token")
+// An HTTPS share lease must also govern an upload already in progress. A body
+    // that stalls across expiry is denied and never reaches the storage commit point.
+    TransferHttpEngine(
+        serverSsl.serverSocketFactory, store,
+        sessionLifetimeMillis = 2_500L, bodyTimeoutMillis = 4_000
+    ).use { timedUpload ->
+        timedUpload.start()
+        val socket = clientSsl.socketFactory.createSocket("127.0.0.1", timedUpload.port) as SSLSocket
+        socket.use {
+            it.soTimeout = 5_000
+            val name = "expired-mid-upload.bin"
+            val first = ByteArray(64 * 1024) { (it % 251).toByte() }
+            val second = ByteArray(64 * 1024) { ((it + 7) % 251).toByte() }
+            val headers = "POST /s/${timedUpload.token}/upload HTTP/1.1\\r\\n" +
+                "Host: localhost\\r\\nContent-Length: ${first.size + second.size}\\r\\n" +
+                "X-File-Name: ${java.net.URLEncoder.encode(name, "UTF-8")}\\r\\n" +
+                "Content-Type: application/octet-stream\\r\\n\\r\\n"
+            it.outputStream.write(headers.toByteArray(StandardCharsets.US_ASCII))
+            it.outputStream.write(first)
+            it.outputStream.flush()
+            val attemptDeadline = System.nanoTime() + 1_000_000_000L
+            while (!uploadAttempts.contains(name) && System.nanoTime() < attemptDeadline) Thread.sleep(10)
+            check(uploadAttempts.contains(name)) { "Upload did not enter storage before the expiry test" }
+            Thread.sleep(2_700)
+            // The server may already have returned 410 at the lease deadline.
+            runCatching { it.outputStream.write(second); it.outputStream.flush() }
+            val status = runCatching { it.inputStream.bufferedReader().readLine().orEmpty() }.getOrDefault("")
+            check(status.contains("410")) { "Expired in-flight upload should return HTTP 410, got: $status" }
+        }
+        check("expired-mid-upload.bin" !in uploaded) { "Expired upload must never be committed" }
+    }
+    println("PASS: active HTTPS upload is revoked at lease expiry and cannot commit")
+
 
     // A local LAN client must not monopolize one of the four workers by
     // dripping an incomplete request header just before each socket timeout.

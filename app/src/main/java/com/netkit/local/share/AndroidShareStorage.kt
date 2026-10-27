@@ -130,7 +130,27 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
         return false
     }
 
-    override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String = uploadLock.withLock {
+    override fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String =
+        uploadInternal(fileName, body, length, expectedSha256, ensureSessionValid = {}, progress = progress)
+
+    override fun uploadGuarded(
+        fileName: String,
+        body: InputStream,
+        length: Long,
+        expectedSha256: String?,
+        ensureSessionValid: () -> Unit,
+        progress: (Long) -> Unit
+    ): String = uploadInternal(fileName, body, length, expectedSha256, ensureSessionValid, progress)
+
+    private fun uploadInternal(
+        fileName: String,
+        body: InputStream,
+        length: Long,
+        expectedSha256: String?,
+        ensureSessionValid: () -> Unit,
+        progress: (Long) -> Unit
+    ): String = uploadLock.withLock {
+        ensureSessionValid()
         val treeUri = uploadTree ?: error("No destination folder")
         val folder = usableUploadFolder(treeUri, uploadDestinationSettings.getString("tree_uri", null))
             ?: run {
@@ -150,8 +170,11 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 var received = 0L
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
+                    ensureSessionValid()
                     val n = StreamReadGuard.read(body, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) error("Connection closed before complete upload")
+                    // Do not let bytes received after lease expiry reach even the private SAF stage.
+                    ensureSessionValid()
                     out.write(buffer, 0, n)
                     digest?.update(buffer, 0, n)
                     remaining -= n
@@ -161,11 +184,16 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 out.flush()
             }
             // Never finalize a corrupted file: a .part is removed on mismatch or failure.
+            ensureSessionValid()
             if (digest != null) {
                 val actual = digest.digest().joinToString("") { "%02x".format(it) }
                 if (!actual.equals(expectedSha256, ignoreCase = true)) throw UploadHashMismatchException()
             }
+            ensureSessionValid()
             if (!temp.renameTo(chosen)) error("Provider cannot finalize this file (rename failed)")
+            // If the lease expires during a provider rename, leave completed=false so
+            // the same DocumentFile handle is deleted in finally rather than published.
+            ensureSessionValid()
             completed = true
             return@withLock chosen
         } finally {

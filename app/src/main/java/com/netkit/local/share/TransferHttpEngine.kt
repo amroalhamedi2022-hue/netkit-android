@@ -34,6 +34,49 @@ interface DirectoryShareStorage {
 }
 class UploadHashMismatchException : IllegalStateException("Upload SHA-256 does not match")
 
+/** Raised when a browser upload outlives or loses its temporary HTTPS share lease. */
+class UploadSessionExpiredException : IOException("Sharing session expired during upload")
+
+/**
+ * Re-checks the bearer-session lease around every body read. The socket timeout is
+ * shortened to the remaining lease, so a stalled body wakes at expiry instead of
+ * pinning a worker until the ordinary idle timeout.
+ */
+private class LeaseBoundUploadInputStream(
+    private val delegate: InputStream,
+    private val socket: java.net.Socket,
+    private val bodyTimeoutMillis: Int,
+    private val lease: SessionLease
+) : InputStream() {
+    private fun beforeRead() {
+        if (!lease.isValid()) throw UploadSessionExpiredException()
+        val remaining = lease.remainingMillis()
+        if (remaining <= 0L) throw UploadSessionExpiredException()
+        socket.soTimeout = minOf(bodyTimeoutMillis.toLong(), remaining).coerceAtLeast(1L).toInt()
+    }
+
+    private inline fun guardedRead(read: () -> Int): Int {
+        beforeRead()
+        return try {
+            val count = read()
+            if (!lease.isValid()) throw UploadSessionExpiredException()
+            count
+        } catch (timeout: java.net.SocketTimeoutException) {
+            if (!lease.isValid()) throw UploadSessionExpiredException()
+            throw timeout
+        }
+    }
+
+    override fun read(): Int = guardedRead { delegate.read() }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        return guardedRead { delegate.read(buffer, offset, length) }
+    }
+
+    override fun close() = delegate.close()
+}
+
 /** Bounds repeated zero-byte reads from a malformed provider/socket stream. */
 internal object StreamReadGuard {
     private const val MAX_CONSECUTIVE_ZERO_READS = 32
@@ -59,6 +102,28 @@ interface ShareStorage {
     fun canUpload(): Boolean
     fun maxUploadSize(): Long = 16L * 1024 * 1024 * 1024
     fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String
+
+    /**
+     * Upload with a live authorization check. Platform stores that publish to SAF
+     * must override this method and check immediately before publication; the
+     * default preserves compatibility for test stores and checks before/after I/O.
+     */
+    fun uploadGuarded(
+        fileName: String,
+        body: InputStream,
+        length: Long,
+        expectedSha256: String?,
+        ensureSessionValid: () -> Unit,
+        progress: (Long) -> Unit
+    ): String {
+        ensureSessionValid()
+        val stored = upload(fileName, body, length, expectedSha256) { current ->
+            ensureSessionValid()
+            progress(current)
+        }
+        ensureSessionValid()
+        return stored
+    }
 }
 
 class TransferHttpEngine(
@@ -166,7 +231,7 @@ class TransferHttpEngine(
                         method == "GET" && path.startsWith("$prefix/browse-file/") -> download(out, path.removePrefix("$prefix/browse-file/"), headers["range"], folderMode = true)
                         method == "GET" && path.startsWith("$prefix/browse-archive/") -> downloadArchive(out, path.removePrefix("$prefix/browse-archive/"))
                         method == "GET" && path.startsWith("$prefix/file/") -> download(out, path.removePrefix("$prefix/file/"), headers["range"])
-                        method == "POST" && path == "$prefix/upload" -> upload(input, out, headers)
+                        method == "POST" && path == "$prefix/upload" -> upload(input, out, headers, socket)
                         else -> fail(out, 405, "Unsupported route")
                     }
                 } catch (_: Exception) {
@@ -410,7 +475,7 @@ class TransferHttpEngine(
         return true
     }
 
-    private fun upload(input: InputStream, out: OutputStream, h: Map<String,String>) {
+    private fun upload(input: InputStream, out: OutputStream, h: Map<String,String>, socket: java.net.Socket) {
         if (!storage.canUpload()) return fail(out, 409, "Choose upload folder on Android first")
         if (h["transfer-encoding"] != null) return fail(out, 400, "Chunked uploads not supported")
         val length = h["content-length"]?.toLongOrNull() ?: return fail(out, 400, "Content-Length required")
@@ -423,9 +488,22 @@ class TransferHttpEngine(
         if (expectedSha256 != null && !expectedSha256.matches(Regex("[0-9a-fA-F]{64}"))) {
             return fail(out, 400, "Invalid SHA-256")
         }
+        val ensureSessionValid: () -> Unit = {
+            if (!lease.isValid()) throw UploadSessionExpiredException()
+        }
+        val guardedBody = LeaseBoundUploadInputStream(input, socket, bodyTimeoutMillis, lease)
         try {
-            val stored = storage.upload(name, input, length, expectedSha256) { current -> progress(current, length) }
+            val stored = storage.uploadGuarded(name, guardedBody, length, expectedSha256, ensureSessionValid) { current ->
+                ensureSessionValid()
+                progress(current, length)
+            }
+            ensureSessionValid()
             response(out, 201, "Saved: $stored")
+        } catch (_: UploadSessionExpiredException) {
+            fail(out, 410, "Sharing session expired during upload")
+        } catch (timeout: java.net.SocketTimeoutException) {
+            if (!lease.isValid()) fail(out, 410, "Sharing session expired during upload")
+            else fail(out, 408, "Upload body timed out")
         } catch (_: UploadHashMismatchException) {
             fail(out, 422, "Upload SHA-256 mismatch. File was not committed")
         } catch (_: Exception) { fail(out, 500, "Could not save upload") }
