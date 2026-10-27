@@ -45,6 +45,21 @@ private fun testStreamReadGuard() {
     check(attempts == 33) { "Expected 33 bounded attempts, got $attempts" }
 }
 
+
+private fun testRequiredUploadChunkRejectsPrematureEof() {
+    val input = ByteArrayInputStream(byteArrayOf(1, 2, 3))
+    val buffer = ByteArray(8)
+    check(readRequiredUploadChunk(input, buffer, buffer.size) == 3)
+    val failure = runCatching {
+        readRequiredUploadChunk(input, buffer, buffer.size)
+    }.exceptionOrNull()
+    check(failure is java.io.EOFException &&
+        failure.message == "Connection closed before complete upload") {
+        "Premature upload EOF must be reported as EOFException, got $failure"
+    }
+}
+
+
 private fun testAbsoluteUploadBodyDeadline() {
     var nowNanos = 0L
     val lease = SessionLease(60_000L) { nowNanos }
@@ -76,6 +91,7 @@ private fun testAbsoluteUploadBodyDeadline() {
 
 fun main(args: Array<String>) {
     testStreamReadGuard()
+    testRequiredUploadChunkRejectsPrematureEof()
     testAbsoluteUploadBodyDeadline()
     val ks = KeyStore.getInstance("PKCS12")
     val password = "temporary-test-only".toCharArray()
