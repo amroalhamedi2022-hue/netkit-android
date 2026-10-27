@@ -140,8 +140,14 @@ object DirectoryArchive {
             return segment
         }
 
-        fun canonicalPath(path: String): String =
-            Normalizer.normalize(path.removeSuffix("/"), Normalizer.Form.NFC).lowercase(Locale.ROOT)
+        fun canonicalPath(path: String): String {
+            // Win32 invariant-uppercase lookup has aliases that lowercase-only folding
+            // can miss (for example ASCII I versus dotless i, and sigma variants).
+            // Normalize both before and after case conversion; conservative collisions
+            // are safer than a ZIP that overwrites a sibling during extraction.
+            val normalized = Normalizer.normalize(path.removeSuffix("/"), Normalizer.Form.NFC)
+            return Normalizer.normalize(normalized.uppercase(Locale.ROOT), Normalizer.Form.NFC)
+        }
 
         fun walk(folderId: String, prefix: String, depth: Int) {
             ensureActive()
