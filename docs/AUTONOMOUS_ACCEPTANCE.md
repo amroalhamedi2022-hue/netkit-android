@@ -243,3 +243,8 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Build/device gate:** Android compile/APK **NOT TESTED / NOT BUILT** on M66. Xiaomi Pad 5 SAF/HTTPS, Windows browser, FTP/SFTP, hotspot and Liquid UI acceptance **NOT TESTED**. This is source-level reliability acceptance only.
 - **Safety:** no new dependency, paid API, secret, APK, merge or `main` write. NetKit remains local-first; no Wi-Fi Analyzer and no Remote Control scope added.
 
+## Integration gate observation — 2026-10-27
+
+- PR #7 remains **DRAFT / mergeable=false**. Its PR metadata reports base SHA `6a971514906d6194709e4b3de8fa10bdc55d0dc6`, while the live `feature/netkit-reliability-20261023` branch ref currently resolves to `e209308ca41efb2ca2a7c2041c833e7d0e66eef4`.
+- This is recorded as a branch-integration discrepancy, not treated as a source-test failure. No rebase, base change, cherry-pick, merge, force-push, or `main` update was performed. Resolve the PR base/mergeability separately after reviewing the two independent histories.
+
