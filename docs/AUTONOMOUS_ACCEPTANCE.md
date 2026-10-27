@@ -305,3 +305,10 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Integration:** PR #7 remains **DRAFT / mergeable=false**, based on `feature/netkit-reliability-20261023`; the base SHA discrepancy with PR #6 remains unresolved. No rebase, base change, cherry-pick, merge, force-push or `main` write.
 - **Safety:** no new dependency, paid API, secret or binary artifact. NetKit remains local-first and contains no Wi-Fi Analyzer.
 - **Live Google Docs Handoff:** **SYNC FAILED**; no authorized Google Docs write/read connector was available. This ledger does not replace the live Drive document.
+
+## 2026-10-27 — M70 verification update: upload name aliases
+
+- **Source QA run:** [40516697448](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40516697448), exact head `c66b3f55f91a6579d3b0295674d15a4c55cd98eb`.
+- **Observed job-step evidence:** static source checks, Kotlin/JVM transport + SAF ZIP/session tests, and persistent transfer queue tests all completed successfully. The log explicitly reports `PASS: concurrent upload name reservations, Unicode NFC/case aliases, scoped trees, collision, rollback` and all subsequent queue assertions passed.
+- **Gate:** targeted source tests **PASS** from job logs. The run/job summary endpoint still reports `source-qa` as `in_progress` despite all returned steps, including cleanup, being marked successful; therefore the overall workflow conclusion is **NOT FINALIZED / NOT VERIFIED** until GitHub closes the job. Package jobs were correctly skipped; no APK was built.
+- **Device gate:** **NOT TESTED** — real SAF-provider behavior and Windows filesystem interoperability still require hardware/host acceptance.
