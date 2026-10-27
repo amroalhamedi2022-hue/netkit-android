@@ -122,3 +122,16 @@ No merge, no main changes, no new dependency or paid API.
 - **Boundary:** this enforces lease expiry during an upload; it does not implement true resumable uploads, nor does it complete native pairing, FTP/SFTP server roles, or device acceptance.
 - **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector was available in this run. GitHub checkpoint is updated; the live Drive document is not claimed updated.
 - **Safety:** no new dependency, paid API, secret, APK artifact, auto-merge or main change.
+
+## 2026-10-27 — M65: Absolute deadline for browser-upload bodies
+
+- **Scope:** PR #6 only, branch `feature/netkit-reliability-20261023`; no PR #7 or `main` changes.
+- **Problem:** `SO_TIMEOUT` is an idle timeout per blocking socket read. A slow client could drip bytes just before each idle timeout and keep one of the four HTTPS workers occupied far beyond the configured body timeout (bounded only by the share lease).
+- **Production change:** `LeaseBoundUploadInputStream` now measures one absolute monotonic deadline from the start of each request body. Each socket read timeout is capped to the smaller of the remaining body budget and remaining share lease; the deadline is checked both before and after each read. A slow trickle fails with HTTP 408, while share-lease expiry continues to fail closed with HTTP 410.
+- **Regression:** `qa/CoreSmokeTest.kt` uses a deterministic clock and a stream that yields a byte every 600 ms against a 1,000 ms total budget. The first byte is accepted; the second read is rejected even though each individual gap is below the idle timeout.
+- **Production commit:** [3d9d085c1e66202f3c40086ef6707eebca19a152](https://github.com/amroalhamedi2022-hue/netkit-android/commit/3d9d085c1e66202f3c40086ef6707eebca19a152).
+- **Source/test head:** [2747710027106a00b9880aa54711cb7d325388a3](https://github.com/amroalhamedi2022-hue/netkit-android/commit/2747710027106a00b9880aa54711cb7d325388a3).
+- **Exact-source CI:** [run 40477238262](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40477238262) — **PASS**. Static source checks, Kotlin/JVM HTTPS transport + SAF ZIP + session tests, and persistent transfer-queue state-machine tests all succeeded.
+- **Android compile/APK:** **NOT TESTED / NOT BUILT**; this source-only deadline change was covered by the portable transport suite and did not require a device package.
+- **Device acceptance:** slow-trickle behavior over a real HTTPS socket, Xiaomi Pad 5 SAF publication rollback after 408, and Windows browser interoperability remain **NOT TESTED**.
+- **Safety:** no new dependency, paid API, secret, artifact, merge or `main` write. Session lease remains the outer lifetime bound; this deadline adds a stricter per-request cap.
