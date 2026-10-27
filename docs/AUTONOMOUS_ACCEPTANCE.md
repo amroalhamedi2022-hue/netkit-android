@@ -248,3 +248,18 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - PR #7 remains **DRAFT / mergeable=false**. Its PR metadata reports base SHA `6a971514906d6194709e4b3de8fa10bdc55d0dc6`, while the live `feature/netkit-reliability-20261023` branch ref currently resolves to `e209308ca41efb2ca2a7c2041c833e7d0e66eef4`.
 - This is recorded as a branch-integration discrepancy, not treated as a source-test failure. No rebase, base change, cherry-pick, merge, force-push, or `main` update was performed. Resolve the PR base/mergeability separately after reviewing the two independent histories.
 
+ 
+## 2026-10-27 — M67: Bound the complete ZIP-relative path for portable Windows extraction
+
+- **Scope:** NetKit PR #7 only, branch `automation/netkit-zip-stall-guard-20261023`; PR #6 and `main` were not changed.
+- **Problem:** individual archive names were bounded, but the complete nested ZIP-relative path could still reach 2,048 UTF-16 code units. Such a ZIP can be valid while failing in common Windows extractors that do not have long-path support enabled.
+- **Production fix:** `DirectoryArchive` now limits each segment to 200 UTF-16 code units and the complete relative path, including directory separators, to 200 code units. This is a conservative portability budget that leaves room for the destination directory; it does not claim to guarantee every arbitrary extraction-root path. Existing SAF root scoping, Unicode/bidi checks, Windows device-name checks, NFC/case collision rejection, depth/entry/byte quotas and cancellation behavior remain intact.
+- **Regression:** `qa/DirectoryArchiveTest.kt` verifies five nested 39-character directory names (exactly 200 code units including separators) remain accepted and a sixth level (240 code units) is rejected before the unsafe ZIP entry is emitted.
+- **Production commit:** [effe749553ea0e253ede3ced391b7492bc702a77](https://github.com/amroalhamedi2022-hue/netkit-android/commit/effe749553ea0e253ede3ced391b7492bc702a77).
+- **Regression/test head:** [1c5cd398fe2fac26453dd0ebc2c03aaacfbee58f](https://github.com/amroalhamedi2022-hue/netkit-android/commit/1c5cd398fe2fac26453dd0ebc2c03aaacfbee58f).
+- **Exact-head CI:** [run 40489023622](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40489023622) — **SUCCESS**. Static checks, Kotlin/JVM HTTPS/SAF ZIP/session tests, recursive ZIP quota/path/cancellation regressions, DNS-SD/multicast tests and persistent transfer-queue tests passed. The log explicitly reports the ZIP traversal/path/quota suite passing and the complete NetKit JVM reliability QA passing.
+- **Android assemble/lint/APK:** **NOT TESTED / NOT BUILT** in M67; this was a Kotlin/JVM archive-policy change and no device binary was required.
+- **Xiaomi Pad 5↔Windows extraction/large-folder acceptance, SAF provider behavior, FTP/SFTP interoperability, hotspot capability behavior and Liquid UI:** **NOT TESTED**.
+- **Integration gate:** PR #7 remains **DRAFT / mergeable=false**. Its PR metadata base SHA is still `6a971514906d6194709e4b3de8fa10bdc55d0dc6`, while the live PR #6 feature branch head is `e209308ca41efb2ca2a7c2041c833e7d0e66eef4`. No base change, rebase, cherry-pick, merge, force-push or `main` write was performed.
+- **Safety:** no dependency added, no paid API, no secret or binary artifact; NetKit remains separate from Remote Control and includes no Wi-Fi Analyzer.
+- **Live Google Docs Handoff:** **SYNC FAILED** until an authorized Google Docs write/read connector is available; this repository ledger does not replace the live Drive document.
