@@ -66,9 +66,15 @@ fun main() {
         check(upperSigma == "\u039f\u03a3.txt")
         check(lowerSigma == "\u03bf\u03c3 (2).txt")
 
-        // Separate SAF trees are independent namespaces even for identical names.
-        check(unicodeNames.reserve("same.txt", scope = "tree-A") { false } == "same.txt")
-        check(unicodeNames.reserve("same.txt", scope = "tree-B") { false } == "same.txt")
+        // Production builds the reservation namespace from the selected SAF tree URI
+        // plus relative folder segments. Identical paths in distinct trees must not collide.
+        val treeA = uploadReservationScope("content://provider/tree/alpha", listOf("shared"))
+        val treeB = uploadReservationScope("content://provider/tree/beta", listOf("shared"))
+        check(treeA == uploadReservationScope("content://provider/tree/alpha", listOf("shared")))
+        check(treeA != treeB)
+        check(unicodeNames.reserve("same.txt", scope = treeA) { false } == "same.txt")
+        check(unicodeNames.reserve("same.txt", scope = treeB) { false } == "same.txt")
+        check(unicodeNames.reserve("same.txt", scope = treeA) { false } == "same (2).txt")
     }
 
     println("PASS: concurrent upload name reservations, Unicode NFC/case aliases, scoped trees, collision, rollback")
