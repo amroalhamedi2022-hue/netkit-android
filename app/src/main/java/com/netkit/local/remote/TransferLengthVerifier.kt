@@ -8,7 +8,8 @@ package com.netkit.local.remote
 object TransferLengthVerifier {
     fun requireMatch(expectedBytes: Long?, actualBytes: Long) {
         require(actualBytes >= 0) { "Negative transfer length" }
-        if (expectedBytes == null || expectedBytes < 0) return
+        if (expectedBytes == null) return
+        require(expectedBytes >= 0) { "Negative expected transfer length" }
         check(expectedBytes == actualBytes) {
             "Remote file size mismatch: expected $expectedBytes bytes, transferred $actualBytes"
         }
