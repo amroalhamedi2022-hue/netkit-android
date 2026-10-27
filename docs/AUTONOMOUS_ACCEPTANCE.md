@@ -276,3 +276,17 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Integration gate:** PR #7 remains **DRAFT / mergeable=false**; its base is the NetKit reliability branch. No base change, rebase, cherry-pick, merge, force-push or `main` write was performed.
 - **Safety:** no dependency added, no paid API, secret or binary artifact. NetKit remains separate from Remote Control and contains no Wi-Fi Analyzer.
 - **Live Google Docs Handoff:** **SYNC FAILED** because no Google Docs write/read connector is available in this session; this ledger is not a substitute for the live Drive document.
+
+
+## 2026-10-27 — M69: Canonicalize the reserved ZIP checksum sidecar consistently
+
+- **Scope:** NetKit PR #7 only; branch `automation/netkit-zip-stall-guard-20261023`. PR #6 source and `main` untouched.
+- **Finding:** M68 changed archive-path collision keys to NFC + invariant uppercase, but the pre-reserved `NetKit-SHA256SUMS.txt` key was still stored using lowercase. A mixed-case user file such as `netkit-sha256sums.TXT` could therefore evade the reserved-sidecar collision guard.
+- **Production fix:** reserve the checksum sidecar using the same NFC + `Locale.ROOT` uppercase canonicalization as normal archive paths. The existing regression explicitly supplies `netkit-sha256sums.TXT` and expects rejection when checksum-manifest output is enabled.
+- **Source/test head:** `f6fdf5463903da41078a5bd0b0f9e1380c60be1b`.
+- **Exact-head CI:** [run 40505012196](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40505012196) — **SUCCESS**. Static checks, Kotlin/JVM HTTPS/session/SAF ZIP suite and persistent transfer-queue tests passed. Log confirms `PASS: paged ZIP, nested folders, path/quotas, incremental checksum budget, invalid pagination, transient zero-read recovery, Windows-safe names/collisions and cancellation`.
+- **Android compile gate:** [run 40505012142](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40505012142) — **SUCCESS** for `:app:compileDebugKotlin` and `:app:processDebugResources`. This run did **not** assemble or upload an APK; it is compile evidence only.
+- **APK / device acceptance:** **NOT TESTED / NOT BUILT**. Real Windows extraction, SAF provider behavior on Xiaomi Pad 5, FTP/SFTP interoperability, hotspot capability and Liquid UI acceptance remain open.
+- **Integration:** PR #7 remains **DRAFT / mergeable=false** with base `feature/netkit-reliability-20261023`; its base SHA mismatch against PR #6's current head remains unresolved. No base retarget, rebase, cherry-pick, merge, force-push or `main` write.
+- **Safety:** no dependency, paid API, secret or artifact added; NetKit remains LAN/file-transfer only, with no Wi-Fi Analyzer.
+- **Live Google Docs Handoff:** **SYNC FAILED**; no authorized Google Docs write/read connector was available. This ledger does not replace the live Drive document.
