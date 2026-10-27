@@ -39,21 +39,24 @@ private fun isSafeTransferReference(value: String): Boolean {
     if (value.isBlank() || value.length > MAX_TRANSFER_REFERENCE_LENGTH) return false
     var index = 0
     while (index < value.length) {
-        val c = value[index]
-        if (Character.isHighSurrogate(c)) {
+        val current = value[index]
+        // Validate UTF-16 first, then inspect the complete Unicode code point.
+        // The previous char-wise loop skipped all policy checks for valid
+        // supplementary pairs, allowing invisible Unicode Tag characters through.
+        if (Character.isHighSurrogate(current)) {
             if (index + 1 >= value.length || !Character.isLowSurrogate(value[index + 1])) return false
-            index += 2
-            continue
+        } else if (Character.isLowSurrogate(current)) {
+            return false
         }
-        if (Character.isLowSurrogate(c)) return false
-        val code = c.code
-        if (code <= 0x1f || code in 0x7f..0x9f ||
-            code == 0xfffd || code == 0x00ad || code == 0x034f ||
-            code == 0x061c || code == 0x180e ||
-            (code == 0x200b || code in 0x200e..0x200f) || code in 0x2028..0x202e ||
-            code in 0x2060..0x206f || code == 0xfeff ||
-            code in 0xfff9..0xfffb) return false
-        index++
+        val codePoint = Character.codePointAt(value, index)
+        index += Character.charCount(codePoint)
+        if (codePoint < 0x20 || codePoint in 0x7f..0x9f ||
+            codePoint == 0xfffd || codePoint == 0x00ad || codePoint == 0x034f ||
+            codePoint == 0x061c || codePoint == 0x180e ||
+            codePoint == 0x200b || codePoint in 0x200e..0x200f ||
+            codePoint in 0x2028..0x202e || codePoint in 0x2060..0x206f ||
+            codePoint == 0xfeff || codePoint in 0xfff9..0xfffb ||
+            codePoint in 0xe0000..0xe007f) return false
     }
     return true
 }
