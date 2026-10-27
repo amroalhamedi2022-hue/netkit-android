@@ -2,6 +2,15 @@ package com.netkit.local.share
 
 import java.util.Locale
 
+/** Reject invalid or oversized declared lengths before any SAF side effects. */
+internal object UploadLengthPolicy {
+    fun check(length: Long, maximum: Long) {
+        require(maximum > 0L) { "Invalid upload ceiling" }
+        require(length >= 0L) { "Invalid upload length" }
+        require(length <= maximum) { "Upload exceeds configured limit" }
+    }
+}
+
 /**
  * Browser-supplied names and folder paths are untrusted, even with a valid
  * share token. Never pass raw browser paths to SAF or an OS filesystem.
