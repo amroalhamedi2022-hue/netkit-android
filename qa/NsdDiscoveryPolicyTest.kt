@@ -49,5 +49,19 @@ fun main() {
     check(runCatching { NsdResolveLedger(resolveTimeoutMillis = 0) }.isFailure)
     check(runCatching { NsdResolveLedger(resolveTimeoutMillis = 300_001) }.isFailure)
 
+    // A broken clock must invalidate every old ticket instead of extending
+    // their lifetime or letting a late resolve callback resurrect a peer.
+    var rollbackNow = 10_000L
+    val rollback = NsdResolveLedger(maxPending = 2, nowNanos = { rollbackNow })
+    val beforeRollback = rollback.begin("NetKit-clock") ?: error("resolve rejected")
+    rollbackNow = 9_000L
+    check(!rollback.isCurrent("NetKit-clock", beforeRollback))
+    check(!rollback.finish("NetKit-clock", beforeRollback))
+    check(rollback.size == 0)
+    rollbackNow = 10_000L
+    val afterRollback = rollback.begin("NetKit-clock") ?: error("resolve did not recover after reset")
+    check(afterRollback != beforeRollback)
+    check(rollback.finish("NetKit-clock", afterRollback))
+
     println("PASS: exact NetKit DNS-SD type, bounded resolves and stale callback rejection")
 }
