@@ -417,8 +417,8 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - Added a regression in `qa/DirectoryArchiveTest.kt` on branch `automation/netkit-zip-stall-guard-20261023`, commit `80746e67bd0b076f1124df5cad735d828ac4f440`.
 - The test waits until a deliberately non-conforming SAF-like stream enters the bounded zero-read sleep, interrupts the worker, and asserts prompt termination, `InterruptedIOException`, restored interrupt status, and stream closure.
 - CI: **PASS** on exact source/test SHA `80746e67bd0b076f1124df5cad735d828ac4f440`: [M15 targeted Android compile run 40595030492](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40595030492) and [development source-QA run 40595030473](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40595030473) both succeeded. M15 passed the ZIP archive lease-boundary JVM regression plus `:app:compileDebugKotlin` and `:app:processDebugResources`; source-QA passed static checks, Kotlin/JVM transport/SAF/ZIP/session tests, and persistent transfer-queue tests. The verified-build and device-test-build jobs were **SKIPPED**.
-- APK/build: **NOT BUILT**; this milestone is a focused JVM cancellation regression. Android compile result remains **NOT VERIFIED**.
+- APK/build: **NOT BUILT**; this milestone is a focused JVM cancellation regression. Targeted Android Kotlin/resource compilation: **PASS**; APK packaging was skipped.
 - Device acceptance: **NOT TESTED** on Xiaomi Pad 5 or a real SAF provider.
-- Remaining gates: confirm both workflow results on this exact commit, then run a large-folder ZIP/cancel trial with a real SAF provider and Windows browser.
+- Remaining gates: run a large-folder ZIP/cancel trial with a real SAF provider on Xiaomi Pad 5 and a Windows browser; CI does not imply device acceptance.
 
 - Live Google Docs handoff: **SYNC FAILED** — no authorized Google Docs/Drive connector is available in this run; this GitHub ledger is not a substitute for the live Drive document.
