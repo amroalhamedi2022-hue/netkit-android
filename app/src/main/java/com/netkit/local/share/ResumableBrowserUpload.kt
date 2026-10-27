@@ -23,7 +23,8 @@ internal class ResumableBrowserUpload(
     private val storage: ShareStorage,
     private val consentEpoch: () -> Long,
     private val allowed: () -> Boolean,
-    private val clockMillis: () -> Long = { System.nanoTime() / 1_000_000L }
+    private val clockMillis: () -> Long = { System.nanoTime() / 1_000_000L },
+    private val deletePart: (File) -> Boolean = { it.delete() }
 ) : AutoCloseable {
     companion object {
         const val MAX_CHUNK = 1024 * 1024
@@ -89,6 +90,17 @@ internal class ResumableBrowserUpload(
             "Upload clock became unreliable; restart the share"
         )
 
+    /** Do not forget a retired upload while its private bytes still exist. */
+    private fun deletePartOrThrow(part: File, message: String) {
+        if (!part.exists()) return
+        val deleted = try {
+            deletePart(part)
+        } catch (failure: Exception) {
+            throw IOException(message, failure)
+        }
+        if (!deleted && part.exists()) throw IOException(message)
+    }
+
     init { check(directory.isDirectory || directory.mkdirs()) { "Cannot create private upload cache" } }
 
     fun status(id: String): Status? {
@@ -103,9 +115,10 @@ internal class ResumableBrowserUpload(
                     return Status(session.received, session.total, true)
                 }
                 if (!valid(session)) {
+                    session.invalid = true
                     retireIdLocked(id)
+                    deletePartOrThrow(session.part, "Could not discard invalid upload staging")
                     sessions.remove(id)
-                    session.part.delete()
                     return null
                 }
                 // A status-only poll must not extend the private disk staging TTL.
@@ -131,9 +144,7 @@ internal class ResumableBrowserUpload(
                 if (session.committed) return false
                 session.invalid = true
                 retireIdLocked(id)
-                if (session.part.exists() && !session.part.delete()) {
-                    throw IOException("Could not discard cancelled upload staging")
-                }
+                deletePartOrThrow(session.part, "Could not discard cancelled upload staging")
                 sessions.remove(id)
                 return true
             }
@@ -361,7 +372,7 @@ internal class ResumableBrowserUpload(
                     // Retire expired/invalid IDs for this share lifetime so delayed
                     // offset-zero requests cannot publish a second copy.
                     retireIdLocked(entry.key)
-                    session.part.delete()
+                    deletePartOrThrow(session.part, "Could not discard expired or invalid upload staging")
                     iterator.remove()
                 }
             }
@@ -373,7 +384,7 @@ internal class ResumableBrowserUpload(
         // succeeded but before the queue records the completed transaction.
         synchronized(commitLock) { closed = true }
         synchronized(lock) {
-            sessions.values.forEach { synchronized(it) { it.part.delete() } }
+            sessions.values.forEach { synchronized(it) { deletePart(it.part) } }
             sessions.clear()
             cancelledIds.clear()
         }
