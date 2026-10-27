@@ -251,7 +251,8 @@ fun main(args: Array<String>) {
         check(timed.sessionRemainingMillis == 0L)
     }
     println("PASS: HTTPS session expiration rejects expired bearer token")
-// An HTTPS share lease must also govern an upload already in progress. A body
+
+    // An HTTPS share lease must also govern an upload already in progress. A body
     // that stalls across expiry is denied and never reaches the storage commit point.
     TransferHttpEngine(
         serverSsl.serverSocketFactory, store,
@@ -264,10 +265,10 @@ fun main(args: Array<String>) {
             val name = "expired-mid-upload.bin"
             val first = ByteArray(64 * 1024) { (it % 251).toByte() }
             val second = ByteArray(64 * 1024) { ((it + 7) % 251).toByte() }
-            val headers = "POST /s/${timedUpload.token}/upload HTTP/1.1\\r\\n" +
-                "Host: localhost\\r\\nContent-Length: ${first.size + second.size}\\r\\n" +
-                "X-File-Name: ${java.net.URLEncoder.encode(name, "UTF-8")}\\r\\n" +
-                "Content-Type: application/octet-stream\\r\\n\\r\\n"
+            val headers = "POST /s/${timedUpload.token}/upload HTTP/1.1\r\n" +
+                "Host: localhost\r\nContent-Length: ${first.size + second.size}\r\n" +
+                "X-File-Name: ${java.net.URLEncoder.encode(name, "UTF-8")}\r\n" +
+                "Content-Type: application/octet-stream\r\n\r\n"
             it.outputStream.write(headers.toByteArray(StandardCharsets.US_ASCII))
             it.outputStream.write(first)
             it.outputStream.flush()
