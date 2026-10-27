@@ -119,6 +119,18 @@ internal object StreamReadGuard {
     }
 }
 
+/**
+ * Read one positive chunk from a request body with a declared Content-Length.
+ * EOF before that length is an upload failure, not a byte count to pass to OutputStream.write.
+ */
+internal fun readRequiredUploadChunk(input: InputStream, buffer: ByteArray, length: Int): Int {
+    require(length > 0) { "Upload read length must be positive" }
+    val count = StreamReadGuard.read(input, buffer, 0, length)
+    if (count < 0) throw java.io.EOFException("Connection closed before complete upload")
+    check(count > 0) { "Upload stream made no progress" }
+    return count
+}
+
 interface ShareStorage {
     fun items(): List<ShareItem>
     fun open(id: String): SharedStream?
