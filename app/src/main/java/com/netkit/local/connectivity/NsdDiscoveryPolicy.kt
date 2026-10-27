@@ -10,33 +10,48 @@ object NsdDiscoveryPolicy {
 }
 
 /** Deduplicates concurrent DNS-SD resolves and rejects stale callbacks after loss/stop. */
-class NsdResolveLedger(private val maxPending: Int = 128) {
-    private val pending = LinkedHashMap<String, Long>()
+class NsdResolveLedger(
+    private val maxPending: Int = 128,
+    private val resolveTimeoutMillis: Long = 15_000,
+    private val nowNanos: () -> Long = System::nanoTime
+) {
+    private data class PendingResolve(val ticket: Long, val startedAtNanos: Long)
+    private val pending = LinkedHashMap<String, PendingResolve>()
     private var nextTicket = 0L
+    private val timeoutNanos = resolveTimeoutMillis * 1_000_000L
 
     init {
         require(maxPending in 1..4096) { "Invalid pending resolve limit" }
+        require(resolveTimeoutMillis in 1..300_000) { "Invalid DNS-SD resolve timeout" }
     }
 
-    val size: Int get() = pending.size
+    val size: Int get() = synchronized(this) {
+        purgeExpired(nowNanos())
+        pending.size
+    }
 
     @Synchronized
     fun begin(serviceName: String): Long? {
+        val now = nowNanos()
+        purgeExpired(now)
         if (serviceName.isBlank() || serviceName in pending || pending.size >= maxPending) {
             return null
         }
         val ticket = allocateTicket()
-        pending[serviceName] = ticket
+        pending[serviceName] = PendingResolve(ticket, now)
         return ticket
     }
 
     @Synchronized
-    fun isCurrent(serviceName: String, ticket: Long): Boolean =
-        pending[serviceName] == ticket
+    fun isCurrent(serviceName: String, ticket: Long): Boolean {
+        purgeExpired(nowNanos())
+        return pending[serviceName]?.ticket == ticket
+    }
 
     @Synchronized
     fun finish(serviceName: String, ticket: Long): Boolean {
-        if (pending[serviceName] != ticket) return false
+        purgeExpired(nowNanos())
+        if (pending[serviceName]?.ticket != ticket) return false
         pending.remove(serviceName)
         return true
     }
@@ -51,10 +66,17 @@ class NsdResolveLedger(private val maxPending: Int = 128) {
         pending.clear()
     }
 
+    private fun purgeExpired(now: Long) {
+        // resolveService normally calls back, but OEM/network failures must not
+        // pin a slot forever. A timed-out ticket is invalidated, so a late
+        // callback cannot consume a newer resolve for the same service name.
+        pending.entries.removeAll { (_, entry) -> now - entry.startedAtNanos >= timeoutNanos }
+    }
+
     private fun allocateTicket(): Long {
         repeat(maxPending + 1) {
             nextTicket = if (nextTicket == Long.MAX_VALUE) 1L else nextTicket + 1L
-            if (nextTicket !in pending.values) return nextTicket
+            if (pending.values.none { it.ticket == nextTicket }) return nextTicket
         }
         error("Unable to allocate a unique DNS-SD resolve ticket")
     }
