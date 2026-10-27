@@ -22,7 +22,13 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
     }
     fun setMaxBrowserUploadMiB(size: Int) {
         require(size in listOf(512, 2048, 16384)) { "Unsupported limit" }
-        transferSettings.edit().putInt("max_upload_mib", size).apply()
+        if (size == maxBrowserUploadMiB) return
+        // The upload ceiling is part of consent for staged browser uploads.
+        // Changing it invalidates old session epochs, so an in-flight upload
+        // cannot later resume under a limit the user has replaced.
+        uploadConsent.change {
+            transferSettings.edit().putInt("max_upload_mib", size).apply()
+        }
     }
     override fun maxUploadSize(): Long = maxBrowserUploadMiB.toLong() * 1024 * 1024
     val sharedDescription: String get() = directoryBrowser.description
