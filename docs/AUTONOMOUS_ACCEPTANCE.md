@@ -312,3 +312,12 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Observed job-step evidence:** static source checks, Kotlin/JVM transport + SAF ZIP/session tests, and persistent transfer queue tests all completed successfully. The log explicitly reports `PASS: concurrent upload name reservations, Unicode NFC/case aliases, scoped trees, collision, rollback` and all subsequent queue assertions passed.
 - **Gate:** targeted source tests **PASS** from job logs. The run/job summary endpoint still reports `source-qa` as `in_progress` despite all returned steps, including cleanup, being marked successful; therefore the overall workflow conclusion is **NOT FINALIZED / NOT VERIFIED** until GitHub closes the job. Package jobs were correctly skipped; no APK was built.
 - **Device gate:** **NOT TESTED** — real SAF-provider behavior and Windows filesystem interoperability still require hardware/host acceptance.
+ 
+## 2026-10-27 — PR #6 / PR #7 integration checkpoint
+
+- **PR #6 current head:** `08d97ad2d10eaf5600d08e801f0e894c3039d906`, base `main` at `3c3324f686e69295c76a50725340a392c2047f1f`; PR remains Draft.
+- **PR #6 source gate:** [run 40514768663](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40514768663), `source-qa` **PASS**; `verified-build` and `device-test-build` **SKIPPED**. Run-level API still reports in-progress, so the overall workflow conclusion is not asserted here.
+- **PR #7 current source/test head:** `c66b3f55f91a6579d3b0295674d15a4c55cd98eb`; [run 40516697448](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40516697448) logs show static checks, JVM transport/SAF ZIP/session suite and transfer-queue tests all completed successfully. The run/job summary remains stale at `source-qa: in_progress`; overall run conclusion is **NOT FINALIZED**.
+- **Integration blocker:** PR #7 base SHA is still `6a971514906d6194709e4b3de8fa10bdc55d0dc6`, which does not match PR #6's current head `08d97ad2d10eaf5600d08e801f0e894c3039d906`. Do not retarget, rebase, cherry-pick or merge automatically. Review commit ancestry and the intended dependency boundary before resolving this separately.
+- **Package/device:** no APK built by these source-only runs; real Xiaomi Pad 5 and Windows acceptance remains **NOT TESTED**.
+- No `main` write, merge, force-push, new dependency or secret.
