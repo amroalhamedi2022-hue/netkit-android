@@ -290,7 +290,7 @@ fun main() {
                 zip.closeEntry()
             }
         }
-        check(info.entries == 3 && unzipped.size == 4)
+        check(info.entries == 4 && unzipped.size == 4)
         check(unzipped["alpha.bin"]!!.contentEquals(payloads["a"]!!))
         check(unzipped["مجلد/بيانات.bin"]!!.contentEquals(payloads["b"]!!))
         fun hash(data: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
@@ -307,6 +307,23 @@ fun main() {
         }.exceptionOrNull()
         check(quotaFailure is IllegalStateException &&
             quotaFailure.message == "Archive byte budget exceeded")
+        // The checksum sidecar consumes one of the actual ZIP-entry quota slots.
+        var quotaOpenCalls = 0
+        val oneFile = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(if (folderId == "root") listOf(ArchiveFile("only", "only.bin", false)) else emptyList(), null)
+            override fun open(fileId: String): InputStream? {
+                quotaOpenCalls++
+                return ByteArrayInputStream(byteArrayOf(1))
+            }
+        }
+        val entryQuotaFailure = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", oneFile, it, maximumEntries = 1, includeChecksums = true)
+            }
+        }.exceptionOrNull()
+        check(entryQuotaFailure is IllegalStateException && entryQuotaFailure.message == "Too many archive entries")
+        check(quotaOpenCalls == 0) { "Entry quota was enforced only after reading SAF content" }
         val collision = object : ArchiveDirectorySource {
             override fun list(folderId: String, offset: Int, limit: Int) =
                 ArchivePage(listOf(ArchiveFile("a", "netkit-sha256sums.TXT", false)), null)

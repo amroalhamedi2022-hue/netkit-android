@@ -62,6 +62,8 @@ object DirectoryArchive {
         require(maximumEntries in 1..100_000)
         require(maximumBytes > 0)
         require(maximumChecksumManifestBytes in 1..(64 * 1024 * 1024))
+        // Reserve a ZIP-entry slot for the optional checksum sidecar before reading SAF data.
+        val sourceEntryLimit = maximumEntries - (if (includeChecksums) 1 else 0)
         val visited = HashSet<String>()
         val paths = HashSet<String>()
         // Optional checksum sidecar is reserved before visiting any untrusted SAF name.
@@ -156,7 +158,7 @@ object DirectoryArchive {
                     ensureActive()
                     validateDocumentId(child.id)
                     entries++
-                    check(entries <= maximumEntries) { "Too many archive entries" }
+                    check(entries <= sourceEntryLimit) { "Too many archive entries" }
                     val segment = safeSegment(child.name)
                     val path = prefix + segment + if (child.folder) "/" else ""
                     // ZIP may be extracted on case-insensitive Windows filesystems. Reject
@@ -240,12 +242,14 @@ object DirectoryArchive {
             check(manifest.size <= maximumChecksumManifestBytes) { "Archive checksum manifest too large" }
             check(manifest.size.toLong() <= maximumBytes - bytes) { "Archive byte budget exceeded" }
             ensureActive()
+            check(entries < maximumEntries) { "Too many archive entries" }
             zip.putNextEntry(ZipEntry(checksumName))
             zip.write(manifest)
             zip.closeEntry()
+            entries++
             bytes += manifest.size
         }
-        // Entries count includes only original SAF nodes; the optional sidecar is extra.
+        // Report actual ZIP entries, including the optional checksum sidecar.
         return ArchiveResult(entries, bytes)
     }
 }
