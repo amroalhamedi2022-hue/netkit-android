@@ -28,7 +28,9 @@ fun main() {
     check(UploadPathPolicy.validName("family-👨‍👩‍👧.png"))
     check(UploadPathPolicy.validName("می‌خواهم.txt"))
     for (bad in listOf("invoice\u00ad.pdf", "name\u034f.txt", "name\u180e.txt",
-        "name\u200b.txt", "name\u2060.txt", "name\uDB40\uDC20.txt")) {
+        "name\u200b.txt", "name\u200e.txt", "name\u200f.txt",
+        "name\u2060.txt", "name\u2061.txt", "name\u2065.txt",
+        "name\uDB40\uDC20.txt")) {
         check(!UploadPathPolicy.validName(bad)) { "Accepted invisible filename: $bad" }
         check(runCatching { UploadPathPolicy.folders("Shared/$bad", bad) }.isFailure)
     }
