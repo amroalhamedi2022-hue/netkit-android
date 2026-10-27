@@ -63,5 +63,40 @@ fun main() {
     check(afterRollback != beforeRollback)
     check(rollback.finish("NetKit-clock", afterRollback))
 
-    println("PASS: exact NetKit DNS-SD type, bounded resolves and stale callback rejection")
+    // Concurrent service-found/service-lost/stop callbacks must not race the
+    // LinkedHashMap used by the resolve ledger. Invalidation and clear can be
+    // invoked by different Android NSD callback threads.
+    val concurrent = NsdResolveLedger(maxPending = 128)
+    val start = java.util.concurrent.CountDownLatch(1)
+    val done = java.util.concurrent.CountDownLatch(8)
+    val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+    repeat(8) { worker ->
+        Thread {
+            try {
+                start.await()
+                repeat(2_000) { iteration ->
+                    val name = "worker-$worker-$iteration"
+                    val ticket = concurrent.begin(name)
+                    if (ticket != null) {
+                        if ((worker + iteration) % 2 == 0) concurrent.invalidate(name)
+                        else concurrent.finish(name, ticket)
+                    }
+                    if (iteration % 29 == 0) concurrent.clear()
+                    check(concurrent.size <= 128) { "Concurrent resolve cap exceeded" }
+                }
+            } catch (problem: Throwable) {
+                failure.compareAndSet(null, problem)
+            } finally {
+                done.countDown()
+            }
+        }.start()
+    }
+    start.countDown()
+    check(done.await(15, java.util.concurrent.TimeUnit.SECONDS)) {
+        "Concurrent DNS-SD ledger workers did not terminate"
+    }
+    failure.get()?.let { throw IllegalStateException("Concurrent DNS-SD ledger failure", it) }
+    check(concurrent.size <= 128)
+
+    println("PASS: exact NetKit DNS-SD type, bounded resolves and stale callback and concurrent invalidation rejection")
 }

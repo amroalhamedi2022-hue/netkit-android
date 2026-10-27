@@ -75,6 +75,7 @@ class NsdResolveLedger(
     }
 
     @Synchronized
+    @Synchronized
     fun invalidate(serviceName: String) {
         pending.remove(serviceName)
     }
