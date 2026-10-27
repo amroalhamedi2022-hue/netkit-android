@@ -8,11 +8,21 @@ import java.io.IOException
  * without trusting ambiguous LIST output or accepting malformed lengths.
  */
 object FtpSizePolicy {
-    private val positive = Regex("213[ \t]+([0-9]{1,19})")
+    private val positive = Regex("213[ \\t]+([0-9]{1,19})")
 
     fun parseReply(reply: String?): Long? {
         if (reply == null) return null
-        val line = reply.trimEnd('\r', '\n')
+        // Accept a single complete CRLF (FTP) or LF (legacy/test-server) terminator.
+        // trimEnd('', '\n') is too permissive: it silently accepts multiple lines
+        // and a lone CR, so a malformed/multiline reply can masquerade as one SIZE.
+        val line = when {
+            reply.endsWith("\r\n") -> reply.dropLast(2)
+            reply.endsWith("\n") -> reply.dropLast(1)
+            else -> reply
+        }
+        if ('\r' in line || '\n' in line) {
+            throw IOException("Malformed FTP SIZE response framing")
+        }
         if (!line.startsWith("213")) return null
         val match = positive.matchEntire(line)
             ?: throw IOException("Malformed FTP SIZE response")
