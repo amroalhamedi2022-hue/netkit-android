@@ -384,11 +384,23 @@ internal class ResumableBrowserUpload(
         // succeeded but before the queue records the completed transaction.
         synchronized(commitLock) { closed = true }
         synchronized(lock) {
-            sessions.values.forEach { synchronized(it) { deletePart(it.part) } }
+            // Do not drop the registry/tombstones until every private staging file
+            // and the cache directory are actually gone. If deletion fails, leave
+            // the closed manager's records intact so a later close() can retry.
+            sessions.values.forEach { session ->
+                synchronized(session) {
+                    deletePartOrThrow(
+                        session.part,
+                        "Could not discard upload staging during share shutdown"
+                    )
+                }
+            }
+            if (directory.exists() && !directory.deleteRecursively() && directory.exists()) {
+                throw IOException("Could not remove private upload staging directory")
+            }
             sessions.clear()
             cancelledIds.clear()
         }
-        directory.deleteRecursively()
     }
 
     private fun sha256(file: File): String {
