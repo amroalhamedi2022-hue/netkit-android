@@ -149,3 +149,5 @@ No merge, no main changes, no new dependency or paid API.
 - **Device acceptance:** **NOT TESTED** — Xiaomi Pad 5 SAF provider truncation, Windows browser upload interruption, FTP/SFTP interoperability, hotspot behavior and Liquid UI acceptance remain open.
 - **Safety/integration:** no new dependency, paid API, secret or binary artifact; no merge, rebase, cherry-pick, force-push, base retarget or `main` write. NetKit remains separate from Remote Control and has no Wi-Fi Analyzer.
 - **Live Google Docs Handoff:** **SYNC FAILED** until an authorized Google Docs write/read connector is available; this repository checkpoint is not a substitute for the live Drive document.
+
+- **Targeted package decision:** this documentation commit carries the workflow's explicit `[device-test-build]` marker solely to compile the AndroidShareStorage integration and publish a temporary debug APK plus SHA-256 evidence for the planned Xiaomi Pad 5/Windows browser early-EOF acceptance. This is an engineering test artifact, not a release or a claim of device acceptance.
