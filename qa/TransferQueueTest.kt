@@ -23,6 +23,14 @@ fun main() {
                 check(runCatching { queue.add(bad, "peer/a", 1) }.exceptionOrNull() is IllegalArgumentException)
                 check(runCatching { queue.add("content://safe/a", bad, 1) }.exceptionOrNull() is IllegalArgumentException)
             }
+            // Supplementary code points must pass through Unicode policy checks too.
+            // U+E0061 is a Unicode Tag character; ordinary emoji remain supported below.
+            val tagCharacter = String(Character.toChars(0xE0061))
+            val taggedReferences = listOf("content://safe/${tagCharacter}name", "peer/${tagCharacter}name")
+            taggedReferences.forEach { bad ->
+                check(runCatching { queue.add(bad, "peer/a", 1) }.exceptionOrNull() is IllegalArgumentException)
+                check(runCatching { queue.add("content://safe/a", bad, 1) }.exceptionOrNull() is IllegalArgumentException)
+            }
             val arabic = queue.add("content://safe/ملف", "peer/ملف", 1)
             check(arabic.source.endsWith("ملف") && arabic.destination.endsWith("ملف"))
             check(queue.cancel(arabic.id)?.state == TransferState.CANCELLED)
