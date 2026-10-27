@@ -25,5 +25,29 @@ fun main() {
     check(ledger.size == 0)
     check(!ledger.finish("NetKit-C", c2)) { "late callback survived discovery stop" }
 
+    // An NSD implementation that never invokes a callback must not pin
+    // one of the bounded resolve slots forever.
+    var nowNanos = 0L
+    val timed = NsdResolveLedger(
+        maxPending = 1,
+        resolveTimeoutMillis = 100,
+        nowNanos = { nowNanos }
+    )
+    val stale = timed.begin("NetKit-stalled") ?: error("initial resolve rejected")
+    nowNanos = 99_000_000L
+    check(timed.size == 1) { "resolve expired before its deadline" }
+    nowNanos = 100_000_000L
+    val fresh = timed.begin("NetKit-stalled") ?: error("expired resolve kept the slot")
+    check(fresh != stale)
+    check(!timed.finish("NetKit-stalled", stale)) {
+        "late callback from an expired resolve consumed the replacement ticket"
+    }
+    check(timed.isCurrent("NetKit-stalled", fresh))
+    nowNanos += 100_000_000L
+    check(!timed.finish("NetKit-stalled", fresh)) { "expired resolve was accepted" }
+    check(timed.size == 0)
+    check(runCatching { NsdResolveLedger(resolveTimeoutMillis = 0) }.isFailure)
+    check(runCatching { NsdResolveLedger(resolveTimeoutMillis = 300_001) }.isFailure)
+
     println("PASS: exact NetKit DNS-SD type, bounded resolves and stale callback rejection")
 }
