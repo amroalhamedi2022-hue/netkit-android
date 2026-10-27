@@ -6,6 +6,10 @@ import java.util.zip.ZipInputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.io.InterruptedIOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
@@ -43,6 +47,34 @@ private fun testStreamReadGuard() {
     val failure = runCatching { StreamReadGuard.read(stalled, buffer, 0, buffer.size) }.exceptionOrNull()
     check(failure is IOException) { "A permanently stalled stream must fail with IOException" }
     check(attempts == 33) { "Expected 33 bounded attempts, got $attempts" }
+
+    // Cancellation must interrupt the backoff rather than wait for all 32 retries.
+    val enteredRead = CountDownLatch(1)
+    val result = AtomicReference<Throwable?>()
+    val interruptPreserved = AtomicReference(false)
+    val interruptible = object : InputStream() {
+        override fun read(): Int = -1
+        override fun read(buffer: ByteArray, start: Int, length: Int): Int {
+            enteredRead.countDown()
+            return 0
+        }
+    }
+    val worker = Thread {
+        try {
+            StreamReadGuard.read(interruptible, buffer, 0, buffer.size)
+            result.set(AssertionError("Interrupted stream unexpectedly completed"))
+        } catch (failure: Throwable) {
+            result.set(failure)
+            interruptPreserved.set(Thread.currentThread().isInterrupted)
+        }
+    }
+    worker.start()
+    check(enteredRead.await(1, TimeUnit.SECONDS)) { "Worker never entered the stalled stream" }
+    worker.interrupt()
+    worker.join(1_000)
+    check(!worker.isAlive) { "Interrupted SAF read did not stop promptly" }
+    check(result.get() is InterruptedIOException) { "Expected InterruptedIOException, got ${result.get()}" }
+    check(interruptPreserved.get()) { "Interrupted status was not preserved" }
 }
 
 
