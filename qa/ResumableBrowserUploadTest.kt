@@ -443,6 +443,39 @@ fun main() {
     cacheStage.close()
     check(!cacheRoot.exists())
 
+    // M62: a backwards clock retires every partial upload; later recovery
+    // must not revive the old ID or admit a fresh upload in the same share.
+    val clockRoot = File(System.getProperty("java.io.tmpdir"),
+        "netkit-clock-rollback-" + UUID.randomUUID())
+    check(clockRoot.mkdirs())
+    val clockStore = FakeBrowserStorage()
+    val clockNow = java.util.concurrent.atomic.AtomicLong(1_000L)
+    val clockStage = ResumableBrowserUpload(clockRoot, clockStore,
+        { clockStore.epoch }, { clockStore.enabled }, { clockNow.get() })
+    val clockId = id()
+    clockStage.append(clockId, "clock-rollback.bin", emptyList(), 3, 0, 1, null,
+        ByteArrayInputStream(byteArrayOf(1)))
+    check(File(clockRoot, "$clockId.part").readBytes().contentEquals(byteArrayOf(1)))
+    clockNow.set(900L)
+    check(clockStage.status(clockId) == null) {
+        "Clock rollback must invalidate an existing partial upload"
+    }
+    check(!File(clockRoot, "$clockId.part").exists()) {
+        "Clock rollback must remove private partial bytes"
+    }
+    clockNow.set(2_000L)
+    expectFailure {
+        clockStage.append(clockId, "clock-rollback.bin", emptyList(), 3, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(2)))
+    }
+    expectFailure {
+        clockStage.append(id(), "new-after-clock-failure.bin", emptyList(), 1, 0, 1, null,
+            ByteArrayInputStream(byteArrayOf(3)))
+    }
+    check(clockStore.saved.isEmpty()) { "Clock failure must never publish staged data" }
+    clockStage.close()
+    check(!clockRoot.exists())
+
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
     println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, explicit cancellation and replay guard, empty, duplicate commit")

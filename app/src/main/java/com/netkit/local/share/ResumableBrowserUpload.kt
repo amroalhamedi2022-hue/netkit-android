@@ -61,6 +61,33 @@ internal class ResumableBrowserUpload(
     private val cancelledIds = LinkedHashSet<String>()
     private var newSessionAdmissionClosed = false
     @Volatile private var closed = false
+    // A clock regression must not extend private staging TTLs or revive retired IDs.
+    private val clockLock = Any()
+    @Volatile private var clockFailedClosed = false
+    private var lastClockMillis: Long? = null
+
+    private fun readClockMillis(): Long? = synchronized(clockLock) {
+        if (clockFailedClosed) return@synchronized null
+        val now = try {
+            clockMillis()
+        } catch (_: RuntimeException) {
+            clockFailedClosed = true
+            return@synchronized null
+        }
+        val previous = lastClockMillis
+        if (previous != null && now < previous) {
+            // Keep the failure sticky. Recovering time must not revive an old upload ID.
+            clockFailedClosed = true
+            return@synchronized null
+        }
+        lastClockMillis = now
+        now
+    }
+
+    private fun requireClockMillis(): Long =
+        readClockMillis() ?: throw InvalidSession(
+            "Upload clock became unreliable; restart the share"
+        )
 
     init { check(directory.isDirectory || directory.mkdirs()) { "Cannot create private upload cache" } }
 
@@ -171,6 +198,9 @@ internal class ResumableBrowserUpload(
         val session = synchronized(lock) {
             cleanupLocked()
             if (closed) throw InvalidSession("Share session is closed")
+            if (clockFailedClosed) {
+                throw InvalidSession("Upload clock became unreliable; restart the share")
+            }
             if (cancelledIds.contains(id)) {
                 throw InvalidSession("Retired upload ID cannot be resumed")
             }
@@ -196,7 +226,7 @@ internal class ResumableBrowserUpload(
                     throw InvalidSession("Upload ID safety limit reached; restart the share before starting another upload")
                 }
                 val created = Session(name, folders.toList(), total, expectedSha?.lowercase(),
-                    epoch, File(directory, "$id.part"), clockMillis())
+                    epoch, File(directory, "$id.part"), requireClockMillis())
                 check(!created.part.exists()) { "Stale upload part collision" }
                 sessions[id] = created
                 created
@@ -241,7 +271,7 @@ internal class ResumableBrowserUpload(
                             output.write(buffer, 0, count)
                             remaining -= count
                             // Active slow transfers must not expire while bytes keep arriving.
-                            session.touched = clockMillis()
+                            session.touched = requireClockMillis()
                         }
                     } catch (failure: Throwable) {
                         primaryFailure = failure
@@ -297,9 +327,10 @@ internal class ResumableBrowserUpload(
                     // happen immediately after the atomic rename. Reporting failure here
                     // would leave a saved file while encouraging a duplicate retry.
                     session.committed = true
-                    // A slow SAF provider can take longer than the idle TTL to publish.
-                    // Start the completed-result replay window only after commit succeeds.
-                    session.touched = clockMillis()
+                    // Do not turn a successful SAF publication into a failed response
+                    // if the clock fails after the commit boundary. Cleanup will retire
+                    // the ID and block duplicate publication on the next request.
+                    session.touched = readClockMillis() ?: session.touched
                     session.part.delete()
                 }
             }
@@ -308,20 +339,27 @@ internal class ResumableBrowserUpload(
     }
 
     private fun valid(session: Session): Boolean =
-        !closed && !session.invalid && allowed() && consentEpoch() == session.epoch
+        !closed && !clockFailedClosed && !session.invalid &&
+            allowed() && consentEpoch() == session.epoch
 
     private fun cleanupLocked() {
+        // Observe even with an empty registry so a broken clock cannot admit a new upload.
+        readClockMillis()
         val iterator = sessions.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
             val session = entry.value
             synchronized(session) {
-                // Recheck under the session lock: an append may have advanced the
-                // activity timestamp while cleanup waited for that append to finish.
-                // Retire expired/invalid IDs for the rest of this share lifetime so
-                // delayed offset-zero requests cannot create a second publication.
-                if (clockMillis() - session.touched > TTL_MILLIS ||
+                // Sample after acquiring the session lock: a stalled append may block
+                // cleanup beyond TTL, or the clock may fail while cleanup waits.
+                val now = readClockMillis()
+                val clockInvalid = now == null || clockFailedClosed
+                if (clockInvalid ||
+                    (now != null && now - session.touched > TTL_MILLIS) ||
                     (!session.committed && !valid(session))) {
+                    session.invalid = true
+                    // Retire expired/invalid IDs for this share lifetime so delayed
+                    // offset-zero requests cannot publish a second copy.
                     retireIdLocked(entry.key)
                     session.part.delete()
                     iterator.remove()
