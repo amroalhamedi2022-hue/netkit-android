@@ -455,7 +455,58 @@ fun main() {
         }.exceptionOrNull()
         check(error is IllegalStateException && error.message == "Invalid archive pagination loop")
     }
-    println("PASS: paged ZIP, nested folders, path/quotas, incremental checksum budget, invalid pagination, transient zero-read recovery, Windows-safe names/collisions and cancellation")
+    run {
+        // A stalled SAF provider must remain promptly cancellable while the
+        // bounded backoff is sleeping, and the provider stream must be closed.
+        val firstZeroRead = java.util.concurrent.CountDownLatch(1)
+        val workerDone = java.util.concurrent.CountDownLatch(1)
+        val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        val interruptRestored = java.util.concurrent.atomic.AtomicBoolean(false)
+        val stalled = object : InputStream() {
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                firstZeroRead.countDown()
+                return 0
+            }
+            override fun close() { closed.set(true) }
+        }
+        val source = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("cancel-stalled", "cancel.bin", false)), null)
+            override fun open(fileId: String): InputStream = stalled
+        }
+        val worker = Thread {
+            try {
+                ZipOutputStream(ByteArrayOutputStream()).use {
+                    DirectoryArchive.write("root", source, it)
+                }
+            } catch (error: Throwable) {
+                failure.set(error)
+                interruptRestored.set(Thread.currentThread().isInterrupted)
+            } finally {
+                workerDone.countDown()
+            }
+        }
+        worker.start()
+        check(firstZeroRead.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+        while (worker.state != Thread.State.TIMED_WAITING && System.nanoTime() < deadline) {
+            Thread.yield()
+        }
+        check(worker.state == Thread.State.TIMED_WAITING) {
+            "ZIP worker did not enter the interruptible zero-read backoff"
+        }
+        worker.interrupt()
+        check(workerDone.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+            "ZIP worker did not stop after backoff interruption"
+        }
+        check(failure.get() is java.io.InterruptedIOException &&
+            failure.get()?.message == "Folder ZIP export cancelled")
+        check(interruptRestored.get()) { "ZIP worker lost its interrupt status" }
+        check(closed.get()) { "Stalled SAF stream was not closed after cancellation" }
+    }
+    println("PASS: paged ZIP, nested folders, path/quotas, incremental checksum budget, invalid pagination, transient zero-read recovery, Windows-safe names/collisions and cancellation during zero-read backoff")
 
     run {
         // A provider must not skip an offset and silently omit files from an otherwise
