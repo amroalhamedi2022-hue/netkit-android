@@ -202,6 +202,21 @@ fun main() {
         }.exceptionOrNull()
         check(unsafeDirectSave is IllegalArgumentException)
 
+        val boundaryTask = queue.add("content://safe/error-boundary", "peer/error-boundary", 1)
+        check(queue.begin(boundaryTask.id) != null)
+        val exactBoundary = "x".repeat(198) + "👋"
+        val exactBoundaryError = queue.fail(boundaryTask.id, exactBoundary)!!.error
+        check(exactBoundaryError == exactBoundary && exactBoundaryError.length == 200)
+        check(!Character.isSurrogate(exactBoundaryError.last()))
+        check(FileTransferJournal(file).load().single { it.id == boundaryTask.id }.error == exactBoundary)
+
+        val overflowBoundaryTask = queue.add("content://safe/error-overflow", "peer/error-overflow", 1)
+        check(queue.begin(overflowBoundaryTask.id) != null)
+        val overflowBoundaryError = queue.fail(overflowBoundaryTask.id, "x".repeat(199) + "👋")!!.error
+        check(overflowBoundaryError == "x".repeat(199))
+        check(!overflowBoundaryError.any { Character.isSurrogate(it) })
+        check(FileTransferJournal(file).load().single { it.id == overflowBoundaryTask.id }.error == "x".repeat(199))
+
         println("PASS: durable queue, confirmed offsets, corruption rejection, size bounds, retry and recovery")
     } finally { dir.deleteRecursively() }
 }
