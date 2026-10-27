@@ -321,3 +321,10 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Integration blocker:** PR #7 base SHA is still `6a971514906d6194709e4b3de8fa10bdc55d0dc6`, which does not match PR #6's current head `08d97ad2d10eaf5600d08e801f0e894c3039d906`. Do not retarget, rebase, cherry-pick or merge automatically. Review commit ancestry and the intended dependency boundary before resolving this separately.
 - **Package/device:** no APK built by these source-only runs; real Xiaomi Pad 5 and Windows acceptance remains **NOT TESTED**.
 - No `main` write, merge, force-push, new dependency or secret.
+
+## 2026-10-27 — M70 CI closure
+
+- **Final exact-head run:** [40516697448](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40516697448) is now **completed / success** for source/test head `c66b3f55f91a6579d3b0295674d15a4c55cd98eb`.
+- Check-run API confirms `source-qa: success`; `verified-build` and `device-test-build` were **skipped** as intended. This closes the earlier stale/in-progress summary note above.
+- **Acceptance:** Unicode NFC/case-alias name reservation JVM regression **PASS**. Android APK and device acceptance remain **NOT TESTED / NOT BUILT**.
+- PR #7 remains Draft / mergeable=false; PR #6 remains a separate branch. No integration action or `main` write.
