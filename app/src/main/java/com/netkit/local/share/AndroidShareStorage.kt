@@ -139,7 +139,10 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
             }
         }
         val scope = folders.joinToString("/")
-        val reservedName = uploadNames.reserve(fileName, scope) { folder.findFile(it) != null }
+        // Reservation identity includes the selected SAF tree, not only its relative path.
+        // A slow upload in tree A must not force a needless "(2)" name in tree B.
+        val reservationScope = uploadReservationScope(treeUri.toString(), folders)
+        val reservedName = uploadNames.reserve(fileName, reservationScope) { folder.findFile(it) != null }
         var temp: DocumentFile? = null
         var completed = false
         val digest = if (expectedSha256 != null) MessageDigest.getInstance("SHA-256") else null
@@ -182,14 +185,14 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                     reservedName, fileName,
                     exists = { folder.findFile(it) != null },
                     rename = { currentTemp.renameTo(it) },
-                    scope = scope
+                    scope = reservationScope
                 )
             }
             completed = true
             return if (scope.isEmpty()) finalName else "$scope/$finalName"
         } finally {
             if (!completed) runCatching { temp?.delete() }
-            uploadNames.release(reservedName, scope)
+            uploadNames.release(reservedName, reservationScope)
         }
     }
 }
