@@ -102,6 +102,9 @@ echo 'NetKit JVM transport & reliability QA passed.'
 # DNS-SD must accept only the exact NetKit service type and bound/deduplicate async resolves.
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/NsdDiscoveryPolicy.kt" "$ROOT/qa/NsdDiscoveryPolicyTest.kt" -include-runtime -d "$TEMP_DIR/nsd-discovery-policy.jar"
 java -jar "$TEMP_DIR/nsd-discovery-policy.jar"
+# Late Android DNS-SD registration callbacks must not revive a stopped or superseded advertisement.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/AdvertisementEpoch.kt" "$ROOT/qa/AdvertisementEpochTest.kt" -include-runtime -d "$TEMP_DIR/nsd-advertisement-epoch.jar"
+java -jar "$TEMP_DIR/nsd-advertisement-epoch.jar"
 # Android NSD discovery owns a short-lived multicast lock; test its lease lifecycle without a device.
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/MulticastLockLease.kt" "$ROOT/qa/MulticastLockLeaseTest.kt" -include-runtime -d "$TEMP_DIR/multicast-lock.jar"
 java -jar "$TEMP_DIR/multicast-lock.jar"
