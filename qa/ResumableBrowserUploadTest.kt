@@ -476,6 +476,36 @@ fun main() {
     clockStage.close()
     check(!clockRoot.exists())
 
+    // M64: the final activity timestamp must use the same monotonic guard as
+    // session creation and chunk progress. A zero-byte upload has no body read
+    // to expose a clock rollback, so regression at this boundary must fail closed.
+    val finalClockRoot = File(System.getProperty("java.io.tmpdir"),
+        "netkit-final-clock-rollback-" + UUID.randomUUID())
+    check(finalClockRoot.mkdirs())
+    val finalClockStore = FakeBrowserStorage()
+    val finalClockReads = java.util.concurrent.atomic.AtomicInteger()
+    val finalClockStage = ResumableBrowserUpload(finalClockRoot, finalClockStore,
+        { finalClockStore.epoch }, { finalClockStore.enabled }) {
+        when (finalClockReads.getAndIncrement()) {
+            0 -> 1_000L // cleanup observes the initial clock
+            1 -> 1_000L // newly created session records the same clock
+            else -> 999L // old implementation accepted this unguarded final read
+        }
+    }
+    expectFailure {
+        finalClockStage.append(id(), "empty-clock-rollback.bin", emptyList(),
+            0, 0, 0, null, ByteArrayInputStream(byteArrayOf()))
+    }
+    check(finalClockStore.saved.isEmpty()) {
+        "Clock rollback at the final zero-byte upload boundary must never publish"
+    }
+    expectFailure {
+        finalClockStage.append(id(), "new-after-final-clock-failure.bin", emptyList(),
+            0, 0, 0, null, ByteArrayInputStream(byteArrayOf()))
+    }
+    finalClockStage.close()
+    check(!finalClockRoot.exists())
+
     stage.close()
     check(!root.exists()) { "Stop share must clean private session staging" }
     println("ResumableBrowserUploadTest PASS: offset, integrity, consent, expiry, polling TTL, zero-progress rejection, long SAF commit, resumed progress, active slow transfer, lock-wait expiry, explicit cancellation and replay guard, empty, duplicate commit")
