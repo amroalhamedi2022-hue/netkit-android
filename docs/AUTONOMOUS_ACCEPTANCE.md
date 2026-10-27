@@ -388,3 +388,18 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Build decision:** Android package jobs were skipped intentionally. This is a stream-cancellation/performance regression with a JVM-level acceptance test; no APK/EXE is justified in this batch.
 - **Device acceptance:** **NOT TESTED** on Xiaomi Pad 5 or Windows browser. Real SAF provider timing, nested ZIP and Android↔Windows transfer remain open.
 - **Scope/security:** no dependency or license change, no Wi-Fi Analyzer or Remote Control feature, no credentials/secrets, no paid API. PR #7 remains Draft and unmerged; its feature-base mismatch remains a separate integration gate.
+
+## 2026-10-27 — M78: Keep browser-upload names compatible with Windows ZIP extraction
+
+- **Scope:** NetKit PR #7 only, branch `automation/netkit-zip-stall-guard-20261023`. PR #6 and `main` untouched.
+- **Finding:** `DirectoryArchive.safeSegment` already rejects Windows console device aliases `CONIN$` and `CONOUT$`, but `UploadPathPolicy.validName` accepted them. A browser upload could therefore create a SAF file that later makes a recursive portable ZIP export fail.
+- **Fix:** browser upload validation now rejects `CONIN$` / `CONOUT$` case-insensitively, including stems with spaces before the extension, and trims both trailing spaces and dots when evaluating the device stem.
+- **Regression:** `qa/UploadPathPolicyTest.kt` covers `CONIN$.txt`, `CONOUT$.txt`, lowercase aliases, `CONIN$ .txt`, `CONOUT$ .txt`, `CON .txt` and `COM1 .log`, including destination-folder validation.
+- **Source commit:** [ecab0c4c1adcbe6f2d6a56cbb322e57d4254f891](https://github.com/amroalhamedi2022-hue/netkit-android/commit/ecab0c4c1adcbe6f2d6a56cbb322e57d4254f891).
+- **Test commit / current source-test head before this ledger update:** [348af306bbc51a45f4497218859b0ca4bb856ea3](https://github.com/amroalhamedi2022-hue/netkit-android/commit/348af306bbc51a45f4497218859b0ca4bb856ea3).
+- **PASS — targeted local policy smoke:** Kotlin compiler + JVM smoke rejected all 7 reserved-name cases and retained 4 ordinary names. This validates the stem rule, not the complete repository test suite.
+- **CI:** **NOT VERIFIED** on the new head. The connected status endpoint returned no status contexts, and the available workflow-run helper only lists PR-triggered runs; do not infer success from prior M77 CI.
+- **APK/build:** **NOT BUILT**; the change is a portable-name validation regression covered by JVM source tests. No new artifact or SHA-256 exists.
+- **Device acceptance:** **NOT TESTED** on Xiaomi Pad 5; SAF provider and browser-to-device transfer remain open.
+- **Safety:** no new dependencies, paid APIs, secrets, Wi-Fi Analyzer, merge, rebase/retarget, force-push or `main` write. PR #7 remains Draft with the existing base/head mismatch.
+- **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Docs write/read connector is available in this run; this ledger is not a substitute for the live Drive document.
