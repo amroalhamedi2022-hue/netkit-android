@@ -119,5 +119,7 @@ BUILD SUCCESSFUL in 55s
 
 - Source/test SHA: `06064aa41ccc7bdb6d7d02e7835c47dc00ea5a51`.
 - Exact-source JVM/static QA: **PASS**, run [40638530563](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40638530563).
-- Targeted Android compile/Debug APK job requested to validate the Android SAF rename/delete integration; artifact and SHA evidence pending at this checkpoint.
+- Targeted Android compile/Debug APK: **PASS**, run [40639270677](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40639270677), exact build head `1291171e261d7ce2d9c61d722d27cb82a2fda8b5`.
+- Artifact [12795230533](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40639270677/artifacts/12795230533), ZIP SHA-256 `e70048aa96ca0bbc168db188033c5af0801432af66caf08a3d9f92b3b9964d44`.
+- APK SHA-256 `f6199f20b12690be3f6d0b55a969cada6e5404c2fadb4c2ff1541214c4eaaba1`; independently recalculated and matched the packaged checksum.
 - Real SAF provider/device acceptance: **NOT TESTED**.
