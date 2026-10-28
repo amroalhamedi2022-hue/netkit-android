@@ -585,3 +585,16 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Android compile/APK:** NOT BUILT. Live NSD callback behavior on Xiaomi Pad 5: NOT TESTED.
 - **Remaining gates:** exact-head source QA, Android build when warranted by device acceptance, live NSD stop/restart and stale callback trials, and the existing PR #7 stacked-base review.
 - **Live Google Docs Handoff:** SYNC FAILED; no authorized Docs write/read connector is available in this run. This repository ledger does not replace the live Drive document.
+
+
+## M103 — 2026-10-28 — Disk-spooled ZIP checksum manifest (PR #7)
+
+- **Scope:** automation/netkit-zip-stall-guard-20261023 only; PR #6 and main unchanged.
+- **Production change:** optional SHA-256 manifest lines are now written to a bounded temporary spool rather than retained as a UTF-16 StringBuilder and then duplicated into a UTF-8 byte array. The spool enforces the existing manifest-byte limit, copies to the ZIP in bounded chunks with cancellation/lease checks, and attempts cleanup on success or failure.
+- **Source commit:** https://github.com/amroalhamedi2022-hue/netkit-android/commit/9a8fcfad54e11851f428a22234819d7ea30d54b9
+- **Regression commit / source-test head:** https://github.com/amroalhamedi2022-hue/netkit-android/commit/b1349f0655038803ebc758d9ecd795e98e99ac6e. Test covers exact byte round-trip, quota rejection, and temporary-file cleanup.
+- **Exact-head CI:** NOT VERIFIED. The available GitHub connector returns no push-triggered workflow run for this isolated branch; no CI pass is claimed. Local full JVM QA: NOT TESTED in this runtime because the repository could not be cloned into the local test environment.
+- **Android compile/APK:** NOT BUILT; no package was needed for this source-level memory-boundary change.
+- **Device acceptance:** NOT TESTED — large folder export with checksums on Xiaomi Pad 5, low-memory behavior, SAF providers, and Windows extraction.
+- **Security:** no new dependency, paid API, credential, or privilege; checksum sidecar remains integrity metadata, not authentication. PR #7 remains Draft/unmergeable due to its base relationship; no merge or main write.
+- **Live Google Docs handoff:** SYNC FAILED until a permitted Docs write/read connector is available; this ledger is not a replacement for the live Drive document.
