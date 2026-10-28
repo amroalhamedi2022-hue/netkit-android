@@ -40,18 +40,27 @@ class PeerDiscovery(context: Context) {
             override fun onServiceFound(service: NsdServiceInfo) {
                 if (!discoveryEpoch.isCurrent(generation)) return
                 if (!service.serviceType.startsWith("_netkit._tcp")) return
-                manager.resolveService(service, object : NsdManager.ResolveListener {
-                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
-                    override fun onServiceResolved(info: NsdServiceInfo) {
-                        // NSD resolution is asynchronous and can finish after stop()/restart().
-                        // A stale callback must never repopulate the current device list.
-                        if (!discoveryEpoch.isCurrent(generation)) return
-                        val ip = info.host?.hostAddress ?: return
-                        val peer = Peer(info.serviceName, ip, info.port)
-                        found.removeAll { it.name == peer.name }
-                        found.add(peer)
-                    }
-                })
+                runCatching {
+                    manager.resolveService(service, object : NsdManager.ResolveListener {
+                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
+                        override fun onServiceResolved(info: NsdServiceInfo) {
+                            // NSD resolution is asynchronous and can finish after stop/restart.
+                            // A stale callback must never repopulate the current device list.
+                            if (!discoveryEpoch.isCurrent(generation)) return
+                            val host = info.host
+                            if (!LanPeerAddressPolicy.isAllowed(host)) {
+                                // Do not retain an older allowed address for the same service
+                                // after it resolves to an out-of-scope address.
+                                found.removeAll { it.name == info.serviceName }
+                                return
+                            }
+                            val ip = host?.hostAddress ?: return
+                            val peer = Peer(info.serviceName, ip, info.port)
+                            found.removeAll { it.name == peer.name }
+                            found.add(peer)
+                        }
+                    })
+                }
             }
         }
         callback = listener

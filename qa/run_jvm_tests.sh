@@ -37,6 +37,11 @@ kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/DiscoveryEpoch.kt
   "$ROOT/qa/DiscoveryEpochTest.kt" -include-runtime -d "$TEMP_DIR/discovery-epoch.jar"
 java -jar "$TEMP_DIR/discovery-epoch.jar"
 
+# Resolved NSD peer addresses must be local-scoped; this is filtering, not peer authentication.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/LanPeerAddressPolicy.kt" \
+  "$ROOT/qa/LanPeerAddressPolicyTest.kt" -include-runtime -d "$TEMP_DIR/lan-peer-address.jar"
+java -jar "$TEMP_DIR/lan-peer-address.jar"
+
 # SAF publication must roll back the provider's returned URI if the session expires during rename.
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/GuardedPublication.kt" \
   "$ROOT/qa/GuardedPublicationTest.kt" -include-runtime -d "$TEMP_DIR/guarded-publication.jar"
