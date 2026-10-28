@@ -113,3 +113,11 @@ gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions
 BUILD SUCCESSFUL in 55s
 28 actionable tasks: 11 executed, 17 up-to-date
 ~~~
+
+
+## 2026-10-28 — M88 SAF publication rollback guard
+
+- Source/test SHA: `06064aa41ccc7bdb6d7d02e7835c47dc00ea5a51`.
+- Exact-source JVM/static QA: **PASS**, run [40638530563](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40638530563).
+- Targeted Android compile/Debug APK job requested to validate the Android SAF rename/delete integration; artifact and SHA evidence pending at this checkpoint.
+- Real SAF provider/device acceptance: **NOT TESTED**.

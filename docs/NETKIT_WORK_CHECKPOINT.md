@@ -189,3 +189,15 @@ No merge, no main changes, no new dependency or paid API.
 - **NOT TESTED:** real Xiaomi Pad 5 stop/restart while NSD resolution is pending, IPv4/IPv6 discovery on actual LAN, and two-device pairing/transfer. This is a debug acceptance package, not a release.
 - **Safety/branch gate:** no dependency, paid API, secret, root, merge or `main` write. Discovery remains sightings only, not authentication.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs write/read connector was available in this run.
+
+
+## 2026-10-28 — M88 SAF upload publication rollback on session expiry
+
+- **Source/test SHA:** `06064aa41ccc7bdb6d7d02e7835c47dc00ea5a51`.
+- **Functional fix:** browser uploads now use the URI returned by `DocumentsContract.renameDocument`. If the HTTPS share lease becomes invalid after rename, rollback targets that exact post-rename URI rather than the stale temporary `DocumentFile` URI. If the SAF provider refuses rollback, the operation raises an explicit I/O failure and preserves both the rollback and authorization failures; it does not claim cleanup succeeded.
+- **Regression coverage:** `qa/GuardedPublicationTest.kt` covers successful publication, expiry before publication, expiry immediately after rename with exact-URI rollback, provider rollback failure, and rename failure. The test is part of `qa/run_jvm_tests.sh`.
+- **PASS — exact source/test CI:** [run 40638530563](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40638530563). Static checks, Kotlin/JVM HTTPS/SAF/ZIP/session tests, the new publication regression, and persistent transfer-queue tests passed.
+- **Targeted Android build:** requested by this checkpoint commit because the fix uses Android `DocumentsContract` rename/delete behavior and needs an installable package for SAF-provider acceptance. The resulting Debug APK is a test artifact only, not a release. Build/Artifact SHA evidence will be appended after CI finishes.
+- **Device acceptance:** **NOT TESTED** — still requires Xiaomi Pad 5 with a user-selected SAF destination and a controlled share-expiry/rollback scenario. Compile success alone is not provider/device acceptance.
+- **Safety:** no dependency, paid API, secret, root, merge, or `main` write. Browser upload remains opt-in and the temporary share lease remains authoritative.
+- **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs write/read connector is available in this run.
