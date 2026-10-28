@@ -26,6 +26,13 @@ fun main() {
     rejects { VerifiedResumePrefix.verify(ByteArrayInputStream(byteArrayOf(1, 2)), ByteArrayInputStream(byteArrayOf(1)), 2) }
     rejects { VerifiedResumePrefix.verify(ByteArrayInputStream(byteArrayOf(1, 2)), ByteArrayInputStream(byteArrayOf(9)), 1) }
     rejects { VerifiedResumePrefix.verify(ByteArrayInputStream(byteArrayOf(1, 2)), ByteArrayInputStream(byteArrayOf(1, 2)), 1) }
+    // A custom or broken provider must not claim more bytes than requested.
+    fun oversizedRead(): InputStream = object : InputStream() {
+        override fun read(): Int = -1
+        override fun read(b: ByteArray, off: Int, len: Int): Int = len + 1
+    }
+    rejects { VerifiedResumePrefix.verify(ByteArrayInputStream(payload), oversizedRead(), 1) }
+    rejects { VerifiedResumePrefix.verify(oversizedRead(), ByteArrayInputStream(payload.copyOf(1)), 1) }
     // Transient zero-length reads are tolerated without corrupting alignment.
     val flaky = object : ByteArrayInputStream(payload.copyOf(5)) {
         var zeros = 2
