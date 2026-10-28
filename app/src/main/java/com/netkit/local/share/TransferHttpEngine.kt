@@ -39,6 +39,12 @@ interface DirectoryShareStorage {
 class UploadHashMismatchException : IllegalStateException("Upload SHA-256 does not match")
 class UploadPermissionRevokedException : IllegalStateException("Browser upload consent revoked")
 
+/** HTTP numeric fields are ASCII decimal; Long.parseLong also accepts a leading plus sign. */
+internal fun parseUnsignedDecimal(value: String?): Long? {
+    if (value.isNullOrEmpty() || value.any { it !in '0'..'9' }) return null
+    return value.toLongOrNull()
+}
+
 interface ShareStorage {
     fun items(): List<ShareItem>
     fun open(id: String): SharedStream?
@@ -221,6 +227,10 @@ class TransferHttpEngine(
                     // Large file transfers have their own idle budget; only
                     // request headers are constrained by the short absolute timer.
                     socket.soTimeout = 90_000
+                    val contentLength = headers["content-length"]
+                    if (contentLength != null && parseUnsignedDecimal(contentLength) == null) {
+                        return fail(out, 400, "Invalid Content-Length")
+                    }
                     if (headers.containsKey("transfer-encoding")) {
                         return fail(out, 400, "Transfer-Encoding is not supported")
                     }
@@ -532,13 +542,13 @@ class TransferHttpEngine(
         val a = spec.substring(0, dash)
         val b = spec.substring(dash + 1)
         if (a.isEmpty()) {
-            val suffix = b.toLongOrNull() ?: return null
+            val suffix = parseUnsignedDecimal(b) ?: return null
             if (suffix <= 0L) return null
             return (size - minOf(size, suffix))..(size - 1L)
         }
-        val begin = a.toLongOrNull() ?: return null
+        val begin = parseUnsignedDecimal(a) ?: return null
         if (begin < 0L || begin >= size) return null
-        val finish = if (b.isEmpty()) size - 1L else (b.toLongOrNull() ?: return null)
+        val finish = if (b.isEmpty()) size - 1L else (parseUnsignedDecimal(b) ?: return null)
         if (finish < begin) return null
         return begin..minOf(finish, size - 1L)
     }
@@ -576,9 +586,9 @@ class TransferHttpEngine(
     private fun uploadChunk(input: InputStream, out: OutputStream, h: Map<String, String>) {
         if (!storage.canUpload()) return fail(out, 403, "Browser uploads disabled")
         val staged = resumable ?: return fail(out, 501, "Resumable uploads unavailable")
-        val length = h["content-length"]?.toLongOrNull() ?: return fail(out, 400, "Chunk Content-Length required")
-        val total = h["x-upload-total"]?.toLongOrNull() ?: return fail(out, 400, "Upload total required")
-        val offset = h["x-upload-offset"]?.toLongOrNull() ?: return fail(out, 400, "Upload offset required")
+        val length = parseUnsignedDecimal(h["content-length"]) ?: return fail(out, 400, "Chunk Content-Length required")
+        val total = parseUnsignedDecimal(h["x-upload-total"]) ?: return fail(out, 400, "Upload total required")
+        val offset = parseUnsignedDecimal(h["x-upload-offset"]) ?: return fail(out, 400, "Upload offset required")
         val id = h["x-upload-id"] ?: return fail(out, 400, "Upload ID required")
         val raw = h["x-file-name"] ?: return fail(out, 400, "Missing file name")
         val name = try { URLDecoder.decode(raw, "UTF-8") }
@@ -622,7 +632,7 @@ class TransferHttpEngine(
     private fun upload(input: InputStream, out: OutputStream, h: Map<String,String>) {
         if (!storage.canUpload()) return fail(out, 409, "Choose upload folder on Android first")
         if (h["transfer-encoding"] != null) return fail(out, 400, "Chunked uploads not supported")
-        val length = h["content-length"]?.toLongOrNull() ?: return fail(out, 400, "Content-Length required")
+        val length = parseUnsignedDecimal(h["content-length"]) ?: return fail(out, 400, "Content-Length required")
         if (length < 0 || length > minOf(MAX_UPLOAD, storage.maxUploadSize())) return fail(out, 413, "Unsupported file size")
         val raw = h["x-file-name"] ?: return fail(out, 400, "Missing file name")
         val name = try { URLDecoder.decode(raw, "UTF-8") } catch (_: Exception) { return fail(out, 400, "Invalid filename") }

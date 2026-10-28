@@ -17,6 +17,12 @@ import javax.net.ssl.*
 
 /** TEST ONLY. The trust-all verifier MUST NEVER be imported into the Android app. */
 fun main(args: Array<String>) {
+    check(parseUnsignedDecimal("0") == 0L)
+    check(parseUnsignedDecimal("00042") == 42L)
+    for (invalid in listOf("", "+1", "-0", "0x10", "1.0", " 1", "1 ", "9223372036854775808")) {
+        check(parseUnsignedDecimal(invalid) == null) { "Accepted non-canonical HTTP decimal: $invalid" }
+    }
+    check(parseUnsignedDecimal(null) == null)
     // Read guard is shared by HTTPS full/Range downloads and SAF browser uploads.
     // A transient zero read must preserve bytes; an endlessly stalled provider
     // must not monopolize a TLS worker or leave a .part upload spinning.
@@ -269,6 +275,16 @@ fun main(args: Array<String>) {
                 return socket.inputStream.bufferedReader().readLine().orEmpty()
             }
         }
+        fun rawRequestStatus(method: String, target: String, fields: String, body: ByteArray = byteArrayOf()): String {
+            (clientSsl.socketFactory.createSocket("127.0.0.1", engine.port) as SSLSocket).use { socket ->
+                socket.soTimeout = 5_000
+                val requestText = "$method $target HTTP/1.1\r\nHost: localhost\r\n" + fields + "\r\n"
+                socket.outputStream.write(requestText.toByteArray(Charsets.ISO_8859_1))
+                if (body.isNotEmpty()) socket.outputStream.write(body)
+                socket.outputStream.flush()
+                return socket.inputStream.bufferedReader().readLine().orEmpty()
+            }
+        }
         check(rawHeaderStatus("X-Test: safe\r\n").contains("200"))
         // Strict CRLF prevents ambiguous request framing across HTTP parsers.
         check(rawHeaderStatus("X-Test: bare-LF\n").contains("400"))
@@ -283,11 +299,24 @@ fun main(args: Array<String>) {
             "X-Test: okay\r\n folded\r\n", // obsolete line folding
             "X-Test: bad\u0001value\r\n",
             "Content-Length: 0\r\nTransfer-Encoding: chunked\r\n",
+            "Content-Length: +0\r\n",
+            "Content-Length: -0\r\n",
+            "Content-Length: 0x0\r\n",
+            "Content-Length: 9223372036854775808\r\n",
             "Content-Length: 0\r\ncontent-length: 0\r\n"
         )) {
             check(rawHeaderStatus(badHeaders).contains("400")) {
                 "Unsafe HTTP headers accepted: ${badHeaders.toByteArray().contentToString()}"
             }
+        }
+        val strictUploadId = "0123456789abcdef0123456789abcdef"
+        for (fields in listOf(
+            "Content-Length: 1\r\nX-Upload-ID: $strictUploadId\r\nX-File-Name: strict.bin\r\nX-Upload-Total: +1\r\nX-Upload-Offset: 0\r\n",
+            "Content-Length: 1\r\nX-Upload-ID: $strictUploadId\r\nX-File-Name: strict.bin\r\nX-Upload-Total: 1\r\nX-Upload-Offset: +0\r\n",
+            "Content-Length: +1\r\nX-Upload-ID: $strictUploadId\r\nX-File-Name: strict.bin\r\nX-Upload-Total: 1\r\nX-Upload-Offset: 0\r\n"
+        )) {
+            val status = rawRequestStatus("POST", "/s/${engine.token}/upload-chunk", fields, byteArrayOf(7))
+            check(status.contains("400")) { "Non-decimal resumable-upload framing accepted: $fields ($status)" }
         }
         // Browse parameters are security-sensitive SAF selectors. Malformed
         // encodings, duplicates and bad offsets must return HTTP 400 instead
@@ -366,6 +395,9 @@ fun main(args: Array<String>) {
         check(lastContentRange == "bytes */${initial.size}")
         check(request(root + "/file/$itemId", range = "bytes=8-3").first == 416)
         check(request(root + "/file/$itemId", range = "bytes=0-2,5-7").first == 416)
+        check(request(root + "/file/$itemId", range = "bytes=+1-2").first == 416)
+        check(request(root + "/file/$itemId", range = "bytes=0-+2").first == 416)
+        check(request(root + "/file/$itemId", range = "bytes=-+5").first == 416)
         check(request(root + "/file/$itemId", range = "bytes=-0").first == 416)
         check(request(root + "/file/$itemId", range = "bytes=0-").first == 206)
         val unknownDl = request(root + "/file/$unknownId")
