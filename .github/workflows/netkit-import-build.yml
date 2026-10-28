@@ -12,6 +12,8 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradlew'
+      - 'docs/NETKIT_WORK_CHECKPOINT.md'
+      - 'CI_BUILD_STATUS.md'
   pull_request:
     branches: [main, feature/netkit-pro-delivery-m1-m5, feature/netkit-reliability-20261023]
     paths:
@@ -23,6 +25,8 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradlew'
+      - 'docs/NETKIT_WORK_CHECKPOINT.md'
+      - 'CI_BUILD_STATUS.md'
   workflow_dispatch:
     inputs:
       release_approved:
@@ -68,7 +72,7 @@ jobs:
           kotlinc app/src/main/java/com/netkit/local/transfer/TransferQueue.kt qa/TransferQueueTest.kt -include-runtime -d "$RUNNER_TEMP/transfer-queue.jar"
           java -jar "$RUNNER_TEMP/transfer-queue.jar" "$RUNNER_TEMP"
 
-  # Explicit one-off package for testing the PR #6 SAF destination-restoration fix on hardware.
+  # Explicit one-off package for testing the PR #6 SAF publication-rollback fix on hardware.
   # This is a debug acceptance build, not a final release.
   device-test-build:
     if: github.event_name == 'push' && contains(github.event.head_commit.message, '[device-test-build]')
@@ -98,7 +102,7 @@ jobs:
           fi
           echo "81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
           chmod +x gradlew
-      - name: Build Android debug APK for PR #6 SAF device acceptance
+      - name: Build Android debug APK for PR #6 SAF publication-rollback acceptance
         run: ./gradlew --no-daemon :app:assembleDebug --stacktrace
       - name: Android lint
         run: ./gradlew --no-daemon :app:lintDebug --stacktrace
