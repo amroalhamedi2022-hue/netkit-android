@@ -55,3 +55,14 @@
 8. If no real Pad 5 is available to an automation, label device gate clearly and advance another verifiable code task rather than claiming completion.
 
 **Important:** a successful CI APK is a build gate, not product completeness. Continue until every user requirement is implemented and independently rechecked.
+
+## M84 follow-up — 2026-10-28 — checksum-manifest budget preflight
+
+- Source change: `DirectoryArchive.write` reserves the exact UTF-8 size of each checksum manifest line before opening the corresponding SAF stream. Requests that cannot fit the manifest budget fail before content I/O. The final line length is checked against the reserved cost.
+- Regression: `qa/DirectoryArchiveTest.kt` asserts that an undersized manifest quota returns `Archive checksum manifest too large` with zero calls to `ArchiveDirectorySource.open`.
+- Exact source/test evidence: [source commit 1d556eb5](https://github.com/amroalhamedi2022-hue/netkit-android/commit/1d556eb59d7089f2d4a6198735648ec3ed6c8edd), [test head cc847af7](https://github.com/amroalhamedi2022-hue/netkit-android/commit/cc847af7514a6d0a3585615bb75c252038a05bad).
+- Source QA **PASS**: [run 40612079262](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40612079262). Android Kotlin/resource compile **PASS** without APK: [run 40612079361](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40612079361).
+- Existing warning remains: `ResumableBrowserUpload.kt:369` reports `now != null` as always true. Not changed in this milestone.
+- The M83 discovery-only debug APK is a separate prior source SHA (`0d1aa2eb...`), package `com.netkit.local.devicetest`; it is not the M84 source and is not a release. Artifact ZIP digest and expiry are recorded in `docs/AUTONOMOUS_ACCEPTANCE.md`.
+- Device acceptance remains NOT TESTED: Xiaomi Pad 5 DNS-SD/multicast lifecycle, SAF folder export and Android↔Windows browser interoperability.
+- Live Google Docs handoff remains **SYNC FAILED** because this run has no authorized Docs write/read connector; do not treat this checkpoint as a replacement for that document.
