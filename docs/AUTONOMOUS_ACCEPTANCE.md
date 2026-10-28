@@ -461,3 +461,13 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Artifact ZIP SHA-256 (independently recomputed; matches GitHub artifact digest):** `b347b9f6157a73f5847d3eb53b0d34e3437444f23e35cd1ff0ddbccaf7085ffd`.
 - **NOT TESTED:** real Xiaomi Pad 5 IPv6-only/dual-stack dashboard behavior and second-device reachability. Build success is not device acceptance.
 - **Remaining:** verify IPv6 address visibility/reachability on device; continue native trusted pairing and Android↔Android transfer; keep PR #6 separate and unchanged; no merge.
+
+## M87 — 2026-10-28 — DNS-SD result/lifecycle serialization
+
+- **Source/test head:** `4fc7e636afe768ba4f90f58e59ffbb2a4687aafe`.
+- **PASS — CI source QA:** [run 40633577419](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40633577419), including static checks, Kotlin/JVM transport + SAF ZIP + session tests, persistent queue state-machine tests and the new `DiscoveryStateGateTest.kt`.
+- **PASS — Android compile/resource validation:** [run 40633577423](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40633577423). No APK was built for this source-only race fix.
+- **NOT TESTED:** real Xiaomi Pad 5 DNS-SD service-lost/stop/restart races, multicast reception on OEM firmware, and Android↔Android peer discovery/transfer.
+- **Safety/change control:** PR #7 remains Draft and unmergeable; PR #6 untouched. No merge, no `main` write, no secrets, paid APIs, new dependencies, root or Wi-Fi Analyzer.
+- **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs write/read connector was available. Keep the existing live Drive document as the required handoff target.
+
