@@ -78,9 +78,9 @@ fun main() {
         // Folder aliases must share a reservation scope even when a SAF provider
         // normalizes Unicode or treats case as equivalent.
         val folderScopeNfc = uploadReservationScope(
-            "content://provider/tree/alpha", listOf("caf\\u00e9", "Reports"))
+            "content://provider/tree/alpha", listOf("caf\u00e9", "Reports"))
         val folderScopeAlias = uploadReservationScope(
-            "content://provider/tree/alpha", listOf("cafe\\u0301", "REPORTS"))
+            "content://provider/tree/alpha", listOf("cafe\u0301", "REPORTS"))
         check(folderScopeNfc == folderScopeAlias)
         val folderScopedReservations = UploadNameReservations()
         check(folderScopedReservations.reserve("notes.txt", scope = folderScopeNfc) { false } == "notes.txt")
