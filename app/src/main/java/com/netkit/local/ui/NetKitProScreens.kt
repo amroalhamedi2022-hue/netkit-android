@@ -91,7 +91,7 @@ internal fun ProDashboard(core: NetKitCore, network: String, addresses: List<Str
         Text("◉  اتصالك الحالي",color=p.aqua,fontWeight=FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(status, color=p.ink,fontSize=17.sp)
-        MutedText(addresses.joinToString("   •   ").ifBlank { "بدون عنوان IPv4 محلي" })
+        MutedText(addresses.joinToString("   •   ").ifBlank { "بدون عنوان محلي" })
     }
 }
 @Composable private fun ActiveGlass(core:NetKitCore,p:Palette,openShare:()->Unit,modifier:Modifier=Modifier) {
