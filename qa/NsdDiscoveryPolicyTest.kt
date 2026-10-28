@@ -7,6 +7,13 @@ fun main() {
     check(!NsdDiscoveryPolicy.isNetKitServiceType("_other._tcp"))
     check(!NsdDiscoveryPolicy.isNetKitServiceType("_netkit._tcp.."))
 
+    check(NsdDiscoveryPolicy.isValidPort(1))
+    check(NsdDiscoveryPolicy.isValidPort(443))
+    check(NsdDiscoveryPolicy.isValidPort(65535))
+    for (invalidPort in listOf(Int.MIN_VALUE, -1, 0, 65536, Int.MAX_VALUE)) {
+        check(!NsdDiscoveryPolicy.isValidPort(invalidPort)) { "Invalid NSD port was accepted: $invalidPort" }
+    }
+
     check(NsdDiscoveryPolicy.isSafeAdvertisement("_netkit._tcp.", "NetKit-Device"))
     check(NsdDiscoveryPolicy.isSafeAdvertisement("_NETKIT._TCP", "جهاز أندرويد"))
     check(!NsdDiscoveryPolicy.isSafeAdvertisement("_other._tcp.", "NetKit-Device"))
