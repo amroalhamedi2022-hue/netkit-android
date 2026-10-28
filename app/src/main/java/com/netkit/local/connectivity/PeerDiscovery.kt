@@ -21,6 +21,8 @@ class PeerDiscovery(context: Context) {
     // Reuse the tested bounded resolve ledger, idempotent multicast lease and
     // advertisement generation fence rather than duplicating their state machines.
     private val resolveLedger = NsdResolveLedger()
+    private val discoveryGate = DiscoveryStateGate()
+    private var discoveryEpoch: Long? = null
     private val advertisementEpoch = AdvertisementEpoch()
     private var registrationEpoch: Long? = null
     private var callback: NsdManager.DiscoveryListener? = null
@@ -55,53 +57,73 @@ class PeerDiscovery(context: Context) {
     }
 
     fun start() {
-        if (callback != null) return
-        found.clear()
-        discoveryWarning.value = null
-        resolveLedger.clear()
-        acquireMulticastLease()
+        var epoch = 0L
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) = Unit
 
             override fun onDiscoveryStopped(serviceType: String) {
-                // If Android stops discovery unexpectedly, invalidate outstanding
-                // resolve callbacks rather than letting them repopulate a dead scan.
-                if (callback === this) {
-                    callback = null
-                    resolveLedger.clear()
-                    found.clear()
-                    discoveryWarning.value = "توقف اكتشاف الأجهزة من النظام. أعد المحاولة."
-                    releaseMulticastLease()
+                // Serialize stop with in-flight resolve publication. A stale listener
+                // must never clear a newer scan or release its multicast lease.
+                val stopped = discoveryGate.stop(epoch) {
+                    if (callback !== this) false else {
+                        callback = null
+                        discoveryEpoch = null
+                        resolveLedger.clear()
+                        found.clear()
+                        discoveryWarning.value = "توقف اكتشاف الأجهزة من النظام. أعد المحاولة."
+                        true
+                    }
                 }
+                if (stopped) releaseMulticastLease()
             }
 
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                discoveryWarning.value = "تعذر بدء اكتشاف الأجهزة (رمز $errorCode)."
-                stop()
+                val stopped = discoveryGate.stop(epoch) {
+                    if (callback !== this) false else {
+                        callback = null
+                        discoveryEpoch = null
+                        resolveLedger.clear()
+                        found.clear()
+                        discoveryWarning.value = "تعذر بدء اكتشاف الأجهزة (رمز $errorCode)."
+                        true
+                    }
+                }
+                if (stopped) releaseMulticastLease()
             }
 
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                discoveryWarning.value = "تعذر إيقاف اكتشاف الأجهزة بالكامل (رمز $errorCode)."
+                discoveryGate.runIfActive(epoch) {
+                    if (callback === this) {
+                        discoveryWarning.value = "تعذر إيقاف اكتشاف الأجهزة بالكامل (رمز $errorCode)."
+                    }
+                }
             }
 
             override fun onServiceLost(service: NsdServiceInfo) {
-                if (callback !== this) return
-                resolveLedger.invalidate(service.serviceName)
-                found.removeAll { it.name == service.serviceName }
+                discoveryGate.runIfActive(epoch) {
+                    if (callback === this) {
+                        resolveLedger.invalidate(service.serviceName)
+                        found.removeAll { it.name == service.serviceName }
+                    }
+                }
             }
 
             @Suppress("DEPRECATION")
             override fun onServiceFound(service: NsdServiceInfo) {
-                if (callback !== this || !NsdDiscoveryPolicy.isNetKitServiceType(service.serviceType)) return
+                if (!NsdDiscoveryPolicy.isNetKitServiceType(service.serviceType)) return
                 val serviceName = service.serviceName
-                val ticket = resolveLedger.begin(serviceName) ?: return
+                val discoveryListener = this
+                val ticket = discoveryGate.withActive(epoch) {
+                    if (callback === discoveryListener) resolveLedger.begin(serviceName) else null
+                } ?: return
                 val resolveListener = object : NsdManager.ResolveListener {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                        resolveLedger.finish(serviceName, ticket)
+                        discoveryGate.runIfActive(epoch) {
+                            if (callback === discoveryListener) resolveLedger.finish(serviceName, ticket)
+                        }
                     }
 
                     override fun onServiceResolved(info: NsdServiceInfo) {
-                        if (!resolveLedger.isCurrent(serviceName, ticket)) return
                         val host = info.host
                         if (info.serviceName != serviceName ||
                             !NsdDiscoveryPolicy.isNetKitServiceType(info.serviceType) ||
@@ -109,30 +131,61 @@ class PeerDiscovery(context: Context) {
                             host == null ||
                             !PeerAddressPolicy.isLocalPeer(host)
                         ) {
-                            resolveLedger.finish(serviceName, ticket)
+                            discoveryGate.runIfActive(epoch) {
+                                if (callback === discoveryListener) resolveLedger.finish(serviceName, ticket)
+                            }
                             return
                         }
-                        if (!resolveLedger.finish(serviceName, ticket)) return
                         val peer = Peer(info.serviceName, host.hostAddress, info.port)
-                        found.removeAll {
-                            it.name == peer.name && it.address == peer.address && it.port == peer.port
+                        discoveryGate.runIfActive(epoch) {
+                            if (callback !== discoveryListener || !resolveLedger.isCurrent(serviceName, ticket)) {
+                                return@runIfActive
+                            }
+                            if (!resolveLedger.finish(serviceName, ticket)) return@runIfActive
+                            found.removeAll {
+                                it.name == peer.name && it.address == peer.address && it.port == peer.port
+                            }
+                            found.add(peer)
                         }
-                        found.add(peer)
                     }
                 }
                 runCatching { manager.resolveService(service, resolveListener) }
-                    .onFailure { resolveLedger.finish(serviceName, ticket) }
+                    .onFailure {
+                        discoveryGate.runIfActive(epoch) {
+                            if (callback === discoveryListener) resolveLedger.finish(serviceName, ticket)
+                        }
+                    }
             }
         }
-        callback = listener
-        runCatching {
-            manager.discoverServices("_netkit._tcp.", NsdManager.PROTOCOL_DNS_SD, listener)
-        }.onFailure {
+        val startedEpoch = discoveryGate.begin { token ->
+            epoch = token
+            callback = listener
+            discoveryEpoch = token
+            found.clear()
+            discoveryWarning.value = null
+            resolveLedger.clear()
+        } ?: return
+        acquireMulticastLease()
+        var startFailure: Throwable? = null
+        discoveryGate.runIfActive(startedEpoch) {
             if (callback === listener) {
-                callback = null
-                resolveLedger.clear()
-                found.clear()
+                runCatching {
+                    manager.discoverServices("_netkit._tcp.", NsdManager.PROTOCOL_DNS_SD, listener)
+                }.onFailure { failure ->
+                    startFailure = failure
+                    discoveryGate.stop(startedEpoch) {
+                        if (callback !== listener) false else {
+                            callback = null
+                            discoveryEpoch = null
+                            resolveLedger.clear()
+                            found.clear()
+                            true
+                        }
+                    }
+                }
             }
+        }
+        startFailure?.let {
             discoveryWarning.value = "تعذر بدء اكتشاف الأجهزة: ${it.localizedMessage.orEmpty()}"
             releaseMulticastLease()
         }
@@ -200,11 +253,15 @@ class PeerDiscovery(context: Context) {
     }
 
     fun stop() {
-        val active = callback
-        callback = null
-        resolveLedger.clear()
+        var active: NsdManager.DiscoveryListener? = null
+        discoveryGate.stopCurrent {
+            active = callback
+            callback = null
+            discoveryEpoch = null
+            resolveLedger.clear()
+            found.clear()
+        }
         active?.let { runCatching { manager.stopServiceDiscovery(it) } }
-        found.clear()
         releaseMulticastLease()
     }
 

@@ -80,6 +80,9 @@ assert (root / 'app/src/main/java/com/netkit/local/share/DirectoryArchive.kt').i
 assert 'MANAGE_EXTERNAL_STORAGE' in (root / 'app/src/main/AndroidManifest.xml').read_text()
 assert 'PeerDiscovery' in (root / 'app/src/main/java/com/netkit/local/app/NetKitCore.kt').read_text()
 peer_discovery = (root / 'app/src/main/java/com/netkit/local/connectivity/PeerDiscovery.kt').read_text()
+assert 'DiscoveryStateGate' in peer_discovery and 'discoveryGate.runIfActive(epoch)' in peer_discovery, \
+    'DNS-SD peer publication must be serialized with stop/service-lost callbacks'
+assert (root / 'app/src/main/java/com/netkit/local/connectivity/DiscoveryStateGate.kt').is_file()
 assert 'createMulticastLock("NetKitPeerDiscovery")' in peer_discovery
 assert 'multicastLease.acquire()' in peer_discovery and 'multicastLease.release()' in peer_discovery
 assert 'fun begin(' in (root / 'app/src/main/java/com/netkit/local/transfer/TransferQueue.kt').read_text()

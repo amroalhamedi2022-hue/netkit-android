@@ -108,4 +108,7 @@ java -jar "$TEMP_DIR/nsd-advertisement-epoch.jar"
 # Android NSD discovery owns a short-lived multicast lock; test its lease lifecycle without a device.
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/MulticastLockLease.kt" "$ROOT/qa/MulticastLockLeaseTest.kt" -include-runtime -d "$TEMP_DIR/multicast-lock.jar"
 java -jar "$TEMP_DIR/multicast-lock.jar"
+# Serialize NSD service-lost/stop callbacks with asynchronous peer publication.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/DiscoveryStateGate.kt" "$ROOT/qa/DiscoveryStateGateTest.kt" -include-runtime -d "$TEMP_DIR/nsd-state-gate.jar"
+java -jar "$TEMP_DIR/nsd-state-gate.jar"
 
