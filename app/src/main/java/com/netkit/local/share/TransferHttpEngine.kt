@@ -196,7 +196,8 @@ class TransferHttpEngine(
     private val progress: (Long, Long) -> Unit = { _, _ -> },
     sessionLifetimeMillis: Long = 30L * 60 * 1000,
     private val headerTimeoutMillis: Int = 10_000,
-    private val bodyTimeoutMillis: Int = 90_000
+    private val bodyTimeoutMillis: Int = 90_000,
+    private val nowNanos: () -> Long = System::nanoTime
 ) : AutoCloseable {
     init {
         require(headerTimeoutMillis in 1..120_000) { "Header timeout must be between 1 ms and 120 s" }
@@ -207,7 +208,7 @@ class TransferHttpEngine(
     private val secret = ByteArray(24).also(rng::nextBytes)
     val token: String = Base64.getUrlEncoder().withoutPadding().encodeToString(secret)
     private val prefix = "/s/$token"
-    private val lease = SessionLease(sessionLifetimeMillis)
+    private val lease = SessionLease(sessionLifetimeMillis, nowNanos)
     val sessionRemainingMillis: Long get() = lease.remainingMillis()
     private val pool = ThreadPoolExecutor(
         4, 4, 0, TimeUnit.SECONDS, ArrayBlockingQueue(12),
@@ -402,6 +403,11 @@ class TransferHttpEngine(
         response(out, 200, """{"entries":[$content],"nextOffset":$next,"enabled":true}""", "application/json; charset=utf-8")
     }
 
+    /** Fail closed if a transfer outlives the share token that authorized it. */
+    private fun ensureLeaseActiveForStreaming() {
+        if (!lease.isValid()) throw IOException("Sharing session expired during transfer")
+    }
+
     /** Stream the authorized folder tree as ZIP without staging a copy on Android. */
     private fun downloadArchive(out: OutputStream, id: String) {
         val store = storage as? DirectoryShareStorage ?: return fail(out, 404, "Folder sharing unavailable")
@@ -417,6 +423,7 @@ class TransferHttpEngine(
         }
         val name = if (id == "root") "NetKit-shared-storage.zip" else "NetKit-folder.zip"
         val encoded = URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+        if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
         head(out, 200, "application/zip", null,
             mapOf("Content-Disposition" to "attachment; filename*=UTF-8''$encoded"))
         val framed = object : OutputStream() {
@@ -424,6 +431,7 @@ class TransferHttpEngine(
             override fun write(byte: Int) = write(byteArrayOf(byte.toByte()), 0, 1)
             override fun write(bytes: ByteArray, offset: Int, count: Int) {
                 if (count <= 0) return
+                ensureLeaseActiveForStreaming()
                 check(!finished)
                 out.write((count.toString(16) + "\r\n").toByteArray(StandardCharsets.US_ASCII))
                 out.write(bytes, offset, count)
@@ -434,6 +442,7 @@ class TransferHttpEngine(
             override fun close() = Unit
             fun finishResponse() {
                 if (!finished) {
+                    ensureLeaseActiveForStreaming()
                     finished = true
                     out.write("0\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
                 }
@@ -441,7 +450,7 @@ class TransferHttpEngine(
         }
         ZipOutputStream(framed).use { zip ->
             zip.setLevel(Deflater.BEST_SPEED)
-            DirectoryArchive.write(id, provider, zip)
+            DirectoryArchive.write(id, provider, zip, checkActive = { ensureLeaseActiveForStreaming() })
         }
         framed.finishResponse()
     }
@@ -461,9 +470,11 @@ class TransferHttpEngine(
         val source = (if (folderMode) directory?.openDirectoryItem(id) else storage.open(id))
             ?: return fail(out, 404, "File unavailable")
         source.stream.use { input ->
+            if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
             val total = source.length?.takeIf { it >= 0L }
             val filename = URLEncoder.encode(item.name, "UTF-8").replace("+", "%20")
             val extra = mapOf("Content-Disposition" to "attachment; filename*=UTF-8''$filename")
+            if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
             if (total != null) {
                 val range = if (rangeHeader != null) parseSingleRange(rangeHeader, total) else null
                 if (rangeHeader != null && range == null) {
@@ -475,6 +486,7 @@ class TransferHttpEngine(
                 val last = range?.last ?: (total - 1L)
                 // Don't advertise successful partial content before we can actually skip to it.
                 if (first > 0L && !discardExactly(input, first)) return fail(out, 500, "File became shorter")
+                if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
                 val count = if (range != null) last - first + 1 else total
                 val rangeHeaders = if (range != null)
                     mapOf("Content-Range" to "bytes $first-$last/$total", "Accept-Ranges" to "bytes")
@@ -483,8 +495,10 @@ class TransferHttpEngine(
                 var remaining = count
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
+                    ensureLeaseActiveForStreaming()
                     val n = StreamReadGuard.read(input, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) break // Client detects a truncated Content-Length.
+                    ensureLeaseActiveForStreaming()
                     if (n == 0) continue
                     out.write(buffer, 0, n)
                     remaining -= n
@@ -493,12 +507,15 @@ class TransferHttpEngine(
                 head(out, 200, "application/octet-stream", null, extra)
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
+                    ensureLeaseActiveForStreaming()
                     val n = StreamReadGuard.read(input, buffer, 0, buffer.size)
                     if (n < 0) break
+                    ensureLeaseActiveForStreaming()
                     if (n == 0) continue
                     out.write("${n.toString(16)}\r\n".toByteArray(StandardCharsets.US_ASCII))
                     out.write(buffer, 0, n); out.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
                 }
+                ensureLeaseActiveForStreaming()
                 out.write("0\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
             }
         }
