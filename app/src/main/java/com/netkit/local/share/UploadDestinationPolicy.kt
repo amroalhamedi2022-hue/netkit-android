@@ -20,4 +20,13 @@ internal object UploadDestinationPolicy {
             hasWritePermission &&
             isDirectory &&
             canWrite
+
+    /** Flags newly acquired by this selection; existing grants must not be revoked. */
+    fun newlyGranted(previous: PersistedGrantFlags, current: PersistedGrantFlags) =
+        PersistedGrantFlags(
+            read = current.read && !previous.read,
+            write = current.write && !previous.write
+        )
 }
+
+internal data class PersistedGrantFlags(val read: Boolean, val write: Boolean)

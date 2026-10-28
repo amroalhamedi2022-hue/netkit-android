@@ -45,4 +45,9 @@ kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/FailedUploadStageCleanup
   "$ROOT/qa/FailedUploadStageCleanupTest.kt" -include-runtime -d "$TEMP_DIR/upload-stage-cleanup.jar"
 java -jar "$TEMP_DIR/upload-stage-cleanup.jar"
 
+# SAF upload destination grants must roll back only newly acquired permission bits.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/UploadDestinationPolicy.kt" \
+  "$ROOT/qa/UploadDestinationPolicyTest.kt" -include-runtime -d "$TEMP_DIR/upload-destination-policy.jar"
+java -jar "$TEMP_DIR/upload-destination-policy.jar"
+
 echo 'NetKit JVM transport & reliability QA passed.'

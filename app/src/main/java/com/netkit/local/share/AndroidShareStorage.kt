@@ -55,25 +55,56 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
             documents[id] = Pair(uri, ShareItem(id, name, size))
         }
     }
+    /**
+     * Snapshot only persisted flags so a failed selection can roll back permission
+     * bits it added without revoking grants that already existed for this URI.
+     */
+    private fun persistedGrantFlags(uri: Uri): PersistedGrantFlags? = runCatching {
+        context.contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }?.let {
+            PersistedGrantFlags(it.isReadPermission, it.isWritePermission)
+        } ?: PersistedGrantFlags(read = false, write = false)
+    }.getOrNull()
+
     @Synchronized fun setUploadTree(uri: Uri) {
         val folder = DocumentFile.fromTreeUri(context, uri)
             ?: error("لا يمكن فتح مجلد الاستقبال المحدد")
         require(folder.isDirectory && folder.canWrite()) {
             "مجلد الاستقبال لا يسمح بكتابة الملفات"
         }
-        context.contentResolver.takePersistableUriPermission(
-            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        )
-        val grant = context.contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }
-        check(UploadDestinationPolicy.canRestore(
-            uri.toString(), grant?.uri?.toString(),
-            grant?.isReadPermission == true, grant?.isWritePermission == true,
-            folder.isDirectory, folder.canWrite()
-        )) { "تعذّر الاحتفاظ بصلاحية مجلد الاستقبال بعد إغلاق التطبيق" }
-        check(uploadDestinationSettings.edit().putString("tree_uri", uri.toString()).commit()) {
-            "تعذّر حفظ مجلد الاستقبال"
+        val previousGrant = persistedGrantFlags(uri)
+            ?: error("تعذّر التحقق من صلاحيات مجلد الاستقبال")
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            val grant = context.contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }
+            val flags = persistedGrantFlags(uri)
+                ?: error("تعذّر التحقق من صلاحيات مجلد الاستقبال بعد الحفظ")
+            check(UploadDestinationPolicy.canRestore(
+                uri.toString(), grant?.uri?.toString(),
+                flags.read, flags.write, folder.isDirectory, folder.canWrite()
+            )) { "تعذّر الاحتفاظ بصلاحية مجلد الاستقبال بعد إغلاق التطبيق" }
+            check(uploadDestinationSettings.edit().putString("tree_uri", uri.toString()).commit()) {
+                "تعذّر حفظ مجلد الاستقبال"
+            }
+            uploadTree = uri
+        } catch (failure: Throwable) {
+            // Roll back only flags newly granted by this selection attempt.
+            // Keep pre-existing read/write permission bits intact.
+            val currentGrant = persistedGrantFlags(uri)
+            if (currentGrant != null) {
+                val added = UploadDestinationPolicy.newlyGranted(previousGrant, currentGrant)
+                val releaseFlags =
+                    (if (added.read) Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
+                    (if (added.write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
+                if (releaseFlags != 0) {
+                    runCatching {
+                        context.contentResolver.releasePersistableUriPermission(uri, releaseFlags)
+                    }
+                }
+            }
+            throw failure
         }
-        uploadTree = uri
     }
 
     private fun restoreUploadTree(): Uri? {
