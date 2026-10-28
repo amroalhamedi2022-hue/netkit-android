@@ -120,4 +120,4 @@
 - **CI:** **NOT VERIFIED** at handoff write time. The configured [NetKit source QA workflow](https://github.com/amroalhamedi2022-hue/netkit-android/actions/workflows/netkit-import-build.yml) and [targeted Android compile workflow](https://github.com/amroalhamedi2022-hue/netkit-android/actions/workflows/netkit-m15-compile.yml) were inspected, but the available status/run query returned no checks for this push head. No CI PASS is claimed.
 - **Build/device:** no APK built. Android compile result **NOT VERIFIED**; Xiaomi Pad 5 DNS-SD rejection of malicious labels and real peer discovery **NOT TESTED**.
 - **PR gate:** PR #7 remains Draft and unmergeable due to its stale stacked base. No rebase, retarget, merge, or automatic branch mixing. No new dependency, paid API, secret, root, Wi-Fi Analyzer, or Remote Control code.
-- **Live Google Docs handoff:** to be synchronized and read back separately after this repository batch.
+- **Live Google Docs handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector is exposed in this runtime; this repository ledger is not a substitute for the existing live Drive document.
