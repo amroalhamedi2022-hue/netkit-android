@@ -290,3 +290,15 @@ The initial PR #6 M89 DNS-SD address-policy patch and its pure-JVM test were **r
 - **Artifact ZIP SHA-256:** `450e2c402b92d55e46dd3a86fd3a632c367b293924e3342cd7cbd367658d13b2`; matched GitHub artifact metadata and local recomputation.
 - **Package identity:** `com.netkit.local`, version `0.6.0-alpha`, versionCode `6`, target SDK `35`. Lint passed with 54 warnings and 4 hints in the report; these are not treated as zero warnings.
 - **Device acceptance: NOT TESTED** — this is a debug test package, not a release or proof of real SAF-provider behavior. Install and test failed destination selection/rollback and process restart on Xiaomi Pad 5 before accepting the feature.
+
+
+## M100 — Preserve a saved SAF destination across temporary provider outages (2026-10-28)
+
+- **Scope:** NetKit PR #6 only, branch `feature/netkit-reliability-20261023`. PR #7 and `main` were not changed.
+- **Production:** split exact persisted read/write grant identity from current provider usability. Startup no longer deletes a saved destination merely because a removable/cloud-backed DocumentsProvider is temporarily unavailable or the grant query cannot be completed. A known-missing or mismatched persisted grant still clears the stale selection. Upload remains disabled while the provider is unavailable/read-only; the UI reports temporary unavailability instead of falsely claiming the grant expired.
+- **Files:** `UploadDestinationPolicy.kt`, `AndroidShareStorage.kt`.
+- **Regression:** `qa/UploadDestinationPolicyTest.kt` verifies grant identity independently from directory usability while preserving the writable-directory requirement for actual restore/use.
+- **Source/test commits:** production `365c0d5aff0b5ead39c9e697b3ef4a433f5aff45`; current source/test head `2c2bbe93c8309b0c0a03c16e8702f28bc5d733e6`.
+- **Exact-head CI:** **PASS**, run [40717832492](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40717832492). The `source-qa` job passed static checks, Kotlin/JVM transport/SAF ZIP/session tests, and transfer-queue state-machine tests. Android build jobs were skipped by design; no APK/artifact was produced in this run.
+- **Acceptance:** policy/JVM CI **PASS**; Android compile/APK **NOT BUILT** for this narrowly scoped fix; real provider removal/reconnection and Xiaomi Pad 5 behavior **NOT TESTED**.
+- **Safety:** no new dependency, no new permission, no secret, no paid API, no merge or `main` write. Browser upload remains opt-in. This change does not implement FTP/SFTP server roles or close any hardware acceptance gate.
