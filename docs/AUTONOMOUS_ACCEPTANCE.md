@@ -503,3 +503,14 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - Invalid NSD ports are rejected before registration and after resolution; locally generated service labels are validated before registration. Boundary tests and static production-wiring checks passed.
 - **NOT BUILT:** APK. **NOT TESTED:** live Android NSD and Xiaomi Pad 5.
 - PR #7 remains Draft/unmergeable on its own branch; PR #6 and `main` untouched. Live Google Docs sync remains **SYNC FAILED** because no authorized Docs write/read connector is available.
+
+## 2026-10-28 — M94 — DNS-SD unregistration failure visibility (PR #7)
+
+- **Functional source:** [aea992b8f425f7455c8e291d289243998d8937d6](https://github.com/amroalhamedi2022-hue/netkit-android/commit/aea992b8f425f7455c8e291d289243998d8937d6); test setup finalized in [00ae09ec86355acc8ea5e5fd82afa35c1ce64d48](https://github.com/amroalhamedi2022-hue/netkit-android/commit/00ae09ec86355acc8ea5e5fd82afa35c1ce64d48), branch `automation/netkit-zip-stall-guard-20261023`.
+- **Finding:** `stopAdvertising()` invalidated the advertisement epoch before `unregisterService()`; `onUnregistrationFailed()` then gated its warning on that now-invalid epoch, silently hiding a failed stop that could leave the device advertised.
+- **Fix:** `AdvertisementEpoch` now separates active-registration fencing from bounded pending-stop tickets. Late unregistration callbacks can report failure without reviving an old registration or clearing a newer one. Synchronous unregister exceptions also produce a visible warning that the service may remain on LAN.
+- **PASS — isolated Kotlin/JVM state-machine harness:** compiled and ran the updated epoch/pending-stop behavior; stale completion does not clear the next active generation.
+- **CI: NOT VERIFIED:** the available connector does not expose push-event run listing; do not infer a CI pass. Workflow page: [NetKit Android development validation](https://github.com/amroalhamedi2022-hue/netkit-android/actions/workflows/netkit-import-build.yml).
+- **Android compile/APK: NOT BUILT / NOT TESTED** in this batch. Real Android NSD stop-failure behavior and Xiaomi Pad 5 acceptance remain **NOT TESTED**.
+- PR #6 and `main` untouched; no merge, new dependency, paid API, secret, root, permission bypass, or Wi-Fi Analyzer. PR #7 remains Draft and stacked-base mergeability remains unresolved.
+- Live Google Docs Handoff: **SYNC FAILED** — no authorized Docs write/read connector is available in this runtime; this ledger is supplementary, not a replacement.
