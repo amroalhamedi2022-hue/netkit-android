@@ -68,9 +68,6 @@ assert 'PeerDiscovery' in (root / 'app/src/main/java/com/netkit/local/app/NetKit
 assert 'fun begin(' in (root / 'app/src/main/java/com/netkit/local/transfer/TransferQueue.kt').read_text()
 assert 'NetKitProApp' in main
 assert 'RemoteFileClient' in (root / 'app/src/main/java/com/netkit/local/ui/NetKitProScreens.kt').read_text()
-peer_discovery = (root / 'app/src/main/java/com/netkit/local/connectivity/PeerDiscovery.kt').read_text()
-assert 'LanPeerAddressPolicy.isAllowed(host)' in peer_discovery
-assert (root / 'app/src/main/java/com/netkit/local/connectivity/LanPeerAddressPolicy.kt').is_file()
 script = re.search(r'<script>(.*?)</script>', engine, re.S)
 assert script, 'Missing embedded browser JS'
 if shutil.which('node'):

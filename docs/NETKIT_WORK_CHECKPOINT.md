@@ -218,3 +218,8 @@ No merge, no main changes, no new dependency or paid API.
 - **Device acceptance:** NOT TESTED — Xiaomi Pad 5 must still discover legitimate IPv4/IPv6 LAN peers, reject out-of-scope addresses, and verify stop/restart behavior on a real LAN.
 - **Safety:** no new dependency, paid API, secret, root, permission bypass, merge or `main` write. PR #7 remains separate and unchanged.
 - **Live Google Docs Handoff:** SYNC FAILED — no authorized Google Docs write/read connector is available in this run; this checkpoint is not a substitute for the live Drive document.
+
+
+### M89 branch-scope correction — 2026-10-28
+
+The initial PR #6 M89 DNS-SD address-policy patch and its pure-JVM test were **reverted before handoff** after inspecting the latest stacked PR #7 source. PR #7 already contains `PeerAddressPolicy`, `NsdDiscoveryPolicy`, bounded `NsdResolveLedger`, and the serialized `PeerDiscovery` lifecycle. Keeping a second equivalent policy in PR #6 would create duplicate security logic across the stack. The refinement is being applied to the existing policy on PR #7 instead; PR #6 remains on its own branch and no merge/rebase or `main` write is performed. The earlier M89 source QA run on `824b4fb` remains historical evidence only and does not represent the current PR #6 source. Live Google Docs Handoff remains **SYNC FAILED** because no authorized Docs write/read connector is available.
