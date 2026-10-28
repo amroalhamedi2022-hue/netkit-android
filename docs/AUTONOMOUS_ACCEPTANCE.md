@@ -483,3 +483,14 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Branch/merge gate:** PR #7 remains Draft and `mergeable=false` because its stacked base SHA is stale (`6a971514...`) while PR #6 has advanced. Do not rebase, retarget, merge or combine branches automatically. PR #6 and `main` were not modified by this PR #7 source commit.
 - **Safety:** no dependency, paid API, secret, root, permission bypass, Wi-Fi Analyzer or merge.
 - **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector is available; this GitHub ledger is not a substitute for the existing live Drive document.
+
+## M91 — 2026-10-28 — Reject unsafe DNS-SD labels before peer resolution (PR #7)
+
+- **Scope/branch:** `automation/netkit-zip-stall-guard-20261023` only. PR #6, its source branch, and `main` were not modified.
+- **Functional change:** `NsdDiscoveryPolicy.isSafeAdvertisement(serviceType, serviceName)` now combines exact NetKit service-type validation with `PeerDisplayNamePolicy`. `PeerDiscovery` rejects unsafe labels before starting a resolve and revalidates the resolved label before publishing a peer. Discovery labels remain untrusted and never imply pairing/authentication.
+- **Regression coverage:** added safe Arabic/ordinary labels and rejects for wrong service type, empty/padded names, bidi-control spoofing, non-NFC Unicode, and labels over the 63-byte DNS-SD bound. The JVM harness compiles the display-name policy alongside the discovery policy; static checks assert both production call sites are wired.
+- **Exact latest source/test commit available at recording:** [47770cd50e0da462dade8233ec0da82a80ae089d](https://github.com/amroalhamedi2022-hue/netkit-android/commit/47770cd50e0da462dade8233ec0da82a80ae089d). Earlier production wiring is on the same PR #7 branch.
+- **CI:** **NOT VERIFIED** at handoff write time. The configured [NetKit source QA workflow](https://github.com/amroalhamedi2022-hue/netkit-android/actions/workflows/netkit-import-build.yml) and [targeted Android compile workflow](https://github.com/amroalhamedi2022-hue/netkit-android/actions/workflows/netkit-m15-compile.yml) were inspected, but the available status/run query returned no checks for this push head. No CI PASS is claimed.
+- **Build/device:** no APK built. Android compile result **NOT VERIFIED**; Xiaomi Pad 5 DNS-SD rejection of malicious labels and real peer discovery **NOT TESTED**.
+- **PR gate:** PR #7 remains Draft and unmergeable due to its stale stacked base. No rebase, retarget, merge, or automatic branch mixing. No new dependency, paid API, secret, root, Wi-Fi Analyzer, or Remote Control code.
+- **Live Google Docs handoff:** to be synchronized and read back separately after this repository batch.
