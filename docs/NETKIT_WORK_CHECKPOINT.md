@@ -279,3 +279,14 @@ The initial PR #6 M89 DNS-SD address-policy patch and its pure-JVM test were **r
 
 - **Reason:** M96 changed the Android-specific SAF grant rollback integration in `AndroidShareStorage.kt`; JVM tests cover the rollback policy but do not compile this Android bridge. A single Debug APK assemble/lint/signature check is justified before the Xiaomi Pad 5 provider test.
 - **Scope:** device-test artifact only, not a release. No final/release build requested.
+
+
+### M96 targeted Debug build — completed
+
+- **Exact build head:** `d7591796de19b235145e5fb787f7a12065d89680`.
+- **PASS:** [workflow run 40688943039](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40688943039) completed successfully. Source QA, Android Debug APK assembly, Android lint, signing/identity verification, checksum packaging and artifact upload all passed.
+- **Artifact:** [NetKit PR #6 M96 device-test build](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40688943039) — artifact ID `12816028771`, `NetKit-PR6-device-test-d7591796de19b235145e5fb787f7a12065d89680`, expires 2026-11-04.
+- **APK SHA-256:** `2abb5b9a390ea8a7d0e8f243c11cd706f329db97bb480f289595d53d6f43684e`. Recomputed from the downloaded artifact and matched `dist/SHA256SUMS.txt`.
+- **Artifact ZIP SHA-256:** `450e2c402b92d55e46dd3a86fd3a632c367b293924e3342cd7cbd367658d13b2`; matched GitHub artifact metadata and local recomputation.
+- **Package identity:** `com.netkit.local`, version `0.6.0-alpha`, versionCode `6`, target SDK `35`. Lint passed with 54 warnings and 4 hints in the report; these are not treated as zero warnings.
+- **Device acceptance: NOT TESTED** — this is a debug test package, not a release or proof of real SAF-provider behavior. Install and test failed destination selection/rollback and process restart on Xiaomi Pad 5 before accepting the feature.
