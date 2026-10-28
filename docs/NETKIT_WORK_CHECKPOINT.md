@@ -175,3 +175,17 @@ No merge, no main changes, no new dependency or paid API.
 - **Security boundary:** address classification is defense-in-depth, not peer authentication or proof that a route is physically on the same Wi-Fi. Pairing/consent requirements remain unchanged.
 - **Branch safety:** PR #6 branch only (`feature/netkit-reliability-20261023`); PR #7 remains untouched. No merge, main write, dependency, paid API, secret or permission bypass.
 - **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Docs write/read connector is available in this run; this GitHub checkpoint is not a replacement for the live Drive document.
+
+
+## M87 — 2026-10-28 — Ignore stale NSD resolution callbacks after stop/restart
+
+- **Scope:** PR #6 branch `feature/netkit-reliability-20261023` only. PR #7 and `main` were not changed.
+- **Functional change:** `PeerDiscovery` now tags each discovery session with a monotonically increasing `DiscoveryEpoch`. Stopping discovery invalidates the epoch before calling Android NSD; service-found/lost and asynchronous resolve callbacks check the captured generation before touching the visible peer list. A resolve that completes after stop or restart can no longer repopulate stale peers.
+- **Regression coverage:** new pure-Kotlin `qa/DiscoveryEpochTest.kt` checks start → stop → restart → stop generation behavior without requiring an emulator; `qa/run_jvm_tests.sh` now runs it.
+- **Source/test SHA:** `f75d9ce2b1ff7e495751337b74c9044b3766c171`.
+- **PASS — source QA:** [run 40627613656](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40627613656) — static checks, Kotlin/JVM HTTPS/SAF/ZIP/session/queue checks and the new discovery epoch regression passed.
+- **PASS — targeted Android compile/package:** same run completed `:app:assembleDebug`, `:app:lintDebug`, APK signature verification and `aapt` identity check. Package `com.netkit.local`, version `0.6.0-alpha`.
+- **Device-test artifact:** [artifact 12790625443](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40627613656/artifacts/12790625443), 11,836,293-byte ZIP; GitHub artifact SHA-256 `ca1e6f6f5d72b84ad0539f53201e1aaccff3ae6969127031f6fe6686d3698008`. Extracted APK SHA-256 `d91bd53cfb50b264fd716dba4439dabc43692543aa4d0a56445c65dddd039fca`; independently recalculated after downloading and extracting the artifact and matched `dist/SHA256SUMS.txt`.
+- **NOT TESTED:** real Xiaomi Pad 5 stop/restart while NSD resolution is pending, IPv4/IPv6 discovery on actual LAN, and two-device pairing/transfer. This is a debug acceptance package, not a release.
+- **Safety/branch gate:** no dependency, paid API, secret, root, merge or `main` write. Discovery remains sightings only, not authentication.
+- **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs write/read connector was available in this run.
