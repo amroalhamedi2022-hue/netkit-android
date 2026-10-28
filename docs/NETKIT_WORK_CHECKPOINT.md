@@ -133,3 +133,13 @@
 - **NOT TESTED:** real Android NSD registration, malicious discovery on a live LAN, and Xiaomi Pad 5 acceptance.
 - **PR gate:** PR #7 remains Draft/unmergeable due to its stale stacked base. PR #6 and `main` were not changed; no rebase, retarget, merge, Wi-Fi Analyzer or Remote Control code.
 - **Live Google Docs handoff:** **SYNC FAILED** — this runtime exposes no authorized Google Docs write/read connector; the repository checkpoint is supplementary, not a replacement for the live Drive document.
+
+
+## 2026-10-28 — M97 — malformed InputStream read-count guard
+
+- **Code/test head:** `1fd885e2b1b3a53ceb783b4a293b3daa096508aa`; PR #7 branch `automation/netkit-zip-stall-guard-20261023` only.
+- `StreamReadGuard` and recursive ZIP export now reject read counts other than EOF `-1`, zero, or a positive count within the requested capacity. This prevents malformed SAF streams from being mistaken for EOF or corrupting byte/digest accounting.
+- Regression tests added to `qa/CoreSmokeTest.kt` and `qa/DirectoryArchiveTest.kt` for `-2` and over-length counts; existing transient-zero recovery and bounded-stall tests retained.
+- **Targeted local helper harness: PASS. Full repository CI: NOT VERIFIED** because no exact-head workflow result/status was exposed by the available query. Android compile and Xiaomi Pad 5 provider acceptance: **NOT TESTED**. No APK built for this source-only guard.
+- PR #6 and `main` unchanged; PR #7 remains Draft with its existing stacked-base conflict. No dependency, Wi-Fi Analyzer, paid API, secret, or cross-project code.
+- Live Drive Handoff: **SYNC FAILED** until an authorized Google Docs write/read route is available.
