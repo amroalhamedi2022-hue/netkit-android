@@ -23,8 +23,8 @@ class NetworkStatus(context: Context) {
         NetworkInterface.getNetworkInterfaces().toList()
             .filter { it.isUp && !it.isLoopback }
             .flatMap { it.inetAddresses.toList() }
-            .filter { it is java.net.Inet4Address && it.isSiteLocalAddress }
-            .map { it.hostAddress.orEmpty() }
-            .distinct()
+            // Match discovery's allowlist: RFC1918, IPv4 link-local, IPv6 ULA/link-local.
+            // Global and loopback addresses are not presented as LAN candidates.
+            .let(PeerAddressPolicy::displayableLocalAddresses)
     }.getOrDefault(emptyList())
 }
