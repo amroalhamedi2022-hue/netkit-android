@@ -193,6 +193,36 @@ fun main() {
         val empty = File(dir, "empty.part")
         val emptyDigest = VerifiedDownloadStaging.stage(ByteArrayInputStream(byteArrayOf()), empty, 0)
         VerifiedDownloadStaging.verifyReadback(ByteArrayInputStream(byteArrayOf()), 0, emptyDigest)
+        // Broken SAF/network providers must not return more bytes than requested.
+        fun oversizedRead(): InputStream = object : InputStream() {
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int = len + 1
+        }
+        val oversizedStage = File(dir, "oversized-read.part")
+        val oversizedStageFailure = runCatching {
+            VerifiedDownloadStaging.stage(oversizedRead(), oversizedStage, 1)
+        }.exceptionOrNull()
+        check(oversizedStageFailure is IOException &&
+            oversizedStageFailure.message!!.contains("invalid byte count"))
+        check(oversizedStage.isFile && oversizedStage.length() == 0L)
+        val oversizedOffset = File(dir, "oversized-offset.part")
+        val oversizedOffsetFailure = runCatching {
+            VerifiedDownloadStaging.stageFromOffset({ oversizedRead() }, oversizedOffset, 1)
+        }.exceptionOrNull()
+        check(oversizedOffsetFailure is IOException &&
+            oversizedOffsetFailure.message!!.contains("invalid byte count"))
+        val oversizedReadbackFailure = runCatching {
+            VerifiedDownloadStaging.verifyReadback(oversizedRead(), 1, digest)
+        }.exceptionOrNull()
+        check(oversizedReadbackFailure is IOException &&
+            oversizedReadbackFailure.message!!.contains("invalid byte count"))
+        val oversizedPrefixPart = File(dir, "oversized-prefix.part").apply { writeBytes(byteArrayOf(1)) }
+        val oversizedPrefixFailure = runCatching {
+            VerifiedDownloadStaging.stage(oversizedRead(), oversizedPrefixPart, 2)
+        }.exceptionOrNull()
+        check(oversizedPrefixFailure is IOException &&
+            oversizedPrefixFailure.message!!.contains("invalid byte count"))
+        check(oversizedPrefixPart.length() == 1L)
         val zero = object : InputStream() {
             override fun read() = 0
             override fun read(b: ByteArray, off: Int, len: Int) = 0
