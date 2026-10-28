@@ -100,7 +100,7 @@ object VerifiedDownloadStaging {
             var emptyReads = 0
             while (received < expectedBytes) {
                 val wanted = minOf(BLOCK.toLong(), expectedBytes - received).toInt()
-                val count = remote.read(buffer, 0, wanted)
+                val count = checkedReadCount(remote.read(buffer, 0, wanted), wanted, "Remote download stream")
                 if (count < 0) throw IOException("Remote download ended before expected length")
                 if (count == 0) {
                     if (++emptyReads >= 32) throw IOException("Remote download stalled after 32 empty reads")
@@ -170,7 +170,7 @@ object VerifiedDownloadStaging {
                 var emptyReads = 0
                 while (received < expectedBytes) {
                     val wanted = minOf(BLOCK.toLong(), expectedBytes - received).toInt()
-                    val n = remote.read(buffer, 0, wanted)
+                    val n = checkedReadCount(remote.read(buffer, 0, wanted), wanted, "Remote offset stream")
                     if (n < 0) throw IOException("Remote offset stream ended early")
                     if (n == 0) {
                         if (++emptyReads >= 32) throw IOException("Remote offset stream stalled")
@@ -200,7 +200,8 @@ object VerifiedDownloadStaging {
         var count = 0L
         var zeros = 0
         while (count < expectedBytes) {
-            val n = remote.read(buffer, 0, minOf(BLOCK.toLong(), expectedBytes - count).toInt())
+            val wanted = minOf(BLOCK.toLong(), expectedBytes - count).toInt()
+            val n = checkedReadCount(remote.read(buffer, 0, wanted), wanted, "Remote readback stream")
             if (n < 0) throw IOException("Remote readback was truncated")
             if (n == 0) {
                 if (++zeros >= 32) throw IOException("Remote readback stalled")
@@ -223,7 +224,7 @@ object VerifiedDownloadStaging {
         var emptyReads = 0
         FileInputStream(part).use { input ->
             while (true) {
-                val n = input.read(buffer)
+                val n = checkedReadCount(input.read(buffer), buffer.size, "Staged file verification")
                 if (n < 0) break
                 if (n == 0) {
                     if (++emptyReads >= 32) throw IOException("Staged file read stalled")
@@ -271,7 +272,7 @@ object VerifiedDownloadStaging {
             output().use { destination ->
                 FileInputStream(part).use { input ->
                     while (true) {
-                        val n = input.read(buffer)
+                        val n = checkedReadCount(input.read(buffer), buffer.size, "Staged file publish")
                         if (n < 0) break
                         if (n == 0) {
                             if (++emptyReads >= 32) throw IOException("Staged file read stalled during publish")
@@ -308,11 +309,20 @@ object VerifiedDownloadStaging {
         part.delete()
     }
 
+    /** Fail closed if a broken/custom InputStream violates the read(byte[],off,len) contract. */
+    private fun checkedReadCount(count: Int, requested: Int, source: String): Int {
+        if (count < -1 || count > requested) {
+            throw IOException("$source returned invalid byte count $count for request $requested")
+        }
+        return count
+    }
+
     private fun readExactly(input: InputStream, buffer: ByteArray, size: Int) {
         var offset = 0
         var zeros = 0
         while (offset < size) {
-            val n = input.read(buffer, offset, size - offset)
+            val requested = size - offset
+            val n = checkedReadCount(input.read(buffer, offset, requested), requested, "Resume prefix stream")
             if (n < 0) throw IOException("Remote or local prefix was truncated")
             if (n == 0) {
                 if (++zeros >= 32) throw IOException("Prefix comparison stalled")
