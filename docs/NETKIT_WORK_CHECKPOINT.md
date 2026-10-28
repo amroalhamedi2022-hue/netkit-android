@@ -248,3 +248,16 @@ The initial PR #6 M89 DNS-SD address-policy patch and its pure-JVM test were **r
 - **Build/device:** no APK built; this cleanup-policy fix has deterministic JVM coverage. Android Gradle compile and real SAF-provider behavior remain **NOT TESTED** in this batch; Xiaomi Pad 5 acceptance remains open.
 - **Safety/change control:** no dependency, paid API, secret, root, permission bypass, Wi-Fi Analyzer, merge, rebase, force-push or `main` write. PR #6 remains Draft; PR #7 remains separate.
 - **Live Google Docs handoff:** **SYNC FAILED** — this runtime has no authorized Google Docs write/read connector. This checkpoint is supplementary and does not replace the existing live Drive document.
+
+## 2026-10-28 — M95 SAF upload-destination grant rollback
+
+- **Functional source commit:** `4f13ecdce6e5b4d7c1a72d9ba9183770545ca679`.
+- **Follow-up QA cleanup:** `7bc2f2515b249dd818d4d793b83fe99b370c6f34` removes a duplicate invocation of the already-existing `UploadDestinationPolicyTest`; the gate now runs once.
+- **Behavior:** selecting a SAF upload destination snapshots existing persisted read/write grants. If persistable-grant validation or the SharedPreferences commit fails, NetKit releases only permission bits added by this attempt, preserves pre-existing bits, and leaves the previous in-memory destination unchanged. No broad storage permission or bypass was added.
+- **Regression coverage:** `UploadDestinationPolicy.newlyGranted` covers new read/write grants, preserving a pre-existing read grant, and no-op rollback when both flags already existed. Wired into `qa/run_jvm_tests.sh`.
+- **PASS — exact-source QA:** [push run 40680764471](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40680764471) and [PR check 40680771304](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40680771304) both passed on `7bc2f2515b249dd818d4d793b83fe99b370c6f34`. Static checks, transport/HTTPS/SAF/ZIP/session/queue tests passed; the destination-policy regression ran once.
+- **Targeted build reason:** request a single debug APK compile/lint check for the new Android SAF permission-rollback path. This is a device-test build only, not a release; artifact SHA and build result will be appended after CI finishes.
+- **Device acceptance:** **NOT TESTED** — Xiaomi Pad 5 still needs a provider-backed test proving failed selection does not leak newly persisted grants and successful selection survives process restart.
+- **Safety/change control:** no new dependency, paid API, secret, root, Wi-Fi Analyzer, merge, rebase, force-push or `main` write. PR #6 remains Draft; PR #7 remains separate.
+- **Live Google Docs handoff:** **SYNC FAILED** — this runtime still has no authorized Google Docs write/read connector; this checkpoint is supplementary only.
+
