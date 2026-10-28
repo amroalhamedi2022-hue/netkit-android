@@ -129,7 +129,7 @@ class PeerDiscovery(context: Context) {
                         val host = info.host
                         if (info.serviceName != serviceName ||
                             !NsdDiscoveryPolicy.isSafeAdvertisement(info.serviceType, info.serviceName) ||
-                            info.port !in 1..65535 ||
+                            !NsdDiscoveryPolicy.isValidPort(info.port) ||
                             host == null ||
                             !PeerAddressPolicy.isLocalPeer(host)
                         ) {
