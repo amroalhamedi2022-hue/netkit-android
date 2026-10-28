@@ -16,4 +16,13 @@ object PeerAddressPolicy {
             else -> false
         }
     }
+
+    /** Stable dashboard candidates; scope filtering is not proof of reachability. */
+    fun displayableLocalAddresses(addresses: Iterable<InetAddress>): List<String> =
+        addresses.asSequence()
+            .filter { isLocalPeer(it) }
+            .map { it.hostAddress.orEmpty() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
 }
