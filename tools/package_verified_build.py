@@ -17,7 +17,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 APK = ROOT / "app/build/outputs/apk/debug/app-debug.apk"
 OUT = ROOT / "dist"
-APK_NAME = "NetKit_v0.6.0-alpha-debug.apk"
+APK_NAME = "NetKit_v0.6.0-alpha-device-test.apk" if os.environ.get("NETKIT_DEVICE_TEST") == "1" else "NetKit_v0.6.0-alpha-debug.apk"
 SRC_NAME = "NetKit_Android_Source_v0.6-build1.zip"
 EXCLUDE = {".git", ".gradle", ".idea", "__pycache__", "build", "dist"}
 

@@ -99,9 +99,9 @@ jobs:
           echo "81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
           chmod +x gradlew
       - name: Build Android debug APK for device acceptance
-        run: ./gradlew --no-daemon :app:assembleDebug --stacktrace
+        run: ./gradlew --no-daemon -PnetkitDeviceTest=true :app:assembleDebug --stacktrace
       - name: Android lint
-        run: ./gradlew --no-daemon :app:lintDebug --stacktrace
+        run: ./gradlew --no-daemon -PnetkitDeviceTest=true :app:lintDebug --stacktrace
       - name: Verify APK signing and identity
         shell: bash
         run: |
@@ -110,15 +110,17 @@ jobs:
           test -s "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
-          grep -F "package: name='com.netkit.local'" apk-badging.txt
+          grep -F "package: name='com.netkit.local.devicetest'" apk-badging.txt
       - name: Package APK and checksum evidence
+        env:
+          NETKIT_DEVICE_TEST: "1"
         run: python3 tools/package_verified_build.py
       - name: Upload targeted device-test artifact (not a release)
         uses: actions/upload-artifact@v4
         with:
           name: NetKit-device-test-${{ github.sha }}
           path: |
-            dist/NetKit_v0.6.0-alpha-debug.apk
+            dist/NetKit_v0.6.0-alpha-device-test.apk
             dist/NetKit_Android_Source_v0.6-build1.zip
             dist/SHA256SUMS.txt
             apk-badging.txt

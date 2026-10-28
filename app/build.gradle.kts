@@ -3,6 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val netkitDeviceTest = providers.gradleProperty("netkitDeviceTest").orNull == "true"
+
 android {
     namespace = "com.netkit.local"
     compileSdk = 36
@@ -13,7 +16,16 @@ android {
         versionCode = 6
         versionName = "0.6.0-alpha"
     }
-    buildTypes { release { isMinifyEnabled = false } }
+    buildTypes {
+        debug {
+            if (netkitDeviceTest) {
+                // Keep the one-off device-test APK installable alongside the normal app.
+                applicationIdSuffix = ".devicetest"
+                versionNameSuffix = "-device-test"
+            }
+        }
+        release { isMinifyEnabled = false }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
