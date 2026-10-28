@@ -237,3 +237,14 @@ The initial PR #6 M89 DNS-SD address-policy patch and its pure-JVM test were **r
 - **CI correction history:** an earlier run exposed the missing callback parameter in PR #6's older `DirectoryArchive.kt`; the callback was added to this branch, and the final exact-head run above passed. The regression was also adjusted to assert incomplete/no-post-expiry payload rather than depend on one JVM client's specific EOF exception.
 - **Safety:** no new dependency, paid API, secret, root, permission bypass, Wi-Fi Analyzer, merge, rebase, force-push, or `main` write.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Google Docs/Drive write-and-read connector is available in this run; this GitHub checkpoint is not a substitute for the live Drive document.
+
+## M93 — 2026-10-28 — Surface failed SAF upload-stage cleanup (PR #6)
+
+- **Source/test SHA:** `6bd43c121c771dfca624d008762fe2d3c8cd665c` on `feature/netkit-reliability-20261023`; PR #7 and `main` untouched.
+- **Finding:** `AndroidShareStorage.uploadInternal` previously swallowed `DocumentFile.delete()` failures in `finally`. If a SAF provider refused cleanup or returned `false`, a partial hidden `.netkit-*.part` document could remain without the transfer failure reporting that cleanup was unconfirmed.
+- **Fix:** added `FailedUploadStageCleanup`. Failed pre-publication stages now require confirmed deletion. If cleanup fails, the surfaced IOException preserves the original upload failure as its cause and attaches cleanup evidence. Once `renameDocument` returns, `GuardedPublication` remains responsible for rollback of the exact published URI, avoiding a second delete against a stale pre-rename URI.
+- **Regression:** `qa/FailedUploadStageCleanupTest.kt` covers successful cleanup, provider returning false, provider throwing, and preserving the primary session/hash failure. The test is wired into `qa/run_jvm_tests.sh`; `qa/check_static.py` asserts production wiring.
+- **PASS — exact source/test CI:** [run 40665325781](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40665325781). Static source checks, Kotlin/JVM transport/HTTPS/SAF/ZIP/session/queue tests and the new cleanup regression all passed.
+- **Build/device:** no APK built; this cleanup-policy fix has deterministic JVM coverage. Android Gradle compile and real SAF-provider behavior remain **NOT TESTED** in this batch; Xiaomi Pad 5 acceptance remains open.
+- **Safety/change control:** no dependency, paid API, secret, root, permission bypass, Wi-Fi Analyzer, merge, rebase, force-push or `main` write. PR #6 remains Draft; PR #7 remains separate.
+- **Live Google Docs handoff:** **SYNC FAILED** — this runtime has no authorized Google Docs write/read connector. This checkpoint is supplementary and does not replace the existing live Drive document.
