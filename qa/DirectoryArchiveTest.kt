@@ -7,6 +7,30 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 fun main() {
+    run {
+        // The checksum sidecar is streamed from a bounded temporary spool instead
+        // of materializing a second full manifest byte array in the Android heap.
+        val spoolDir = java.io.File.createTempFile("netkit-spool-test-", ".dir")
+        check(spoolDir.delete() && spoolDir.mkdir())
+        val line = ("a".repeat(64) + "  ملف.txt\n").toByteArray(Charsets.UTF_8)
+        val spool = ChecksumManifestSpool.create(line.size.toLong(), spoolDir)
+        try {
+            spool.append(line)
+            check(spool.size == line.size.toLong())
+            val overBudget = runCatching { spool.append(byteArrayOf(1)) }.exceptionOrNull()
+            check(overBudget is IllegalStateException &&
+                overBudget.message == "Archive checksum manifest too large")
+            val copied = ByteArrayOutputStream()
+            spool.copyTo(copied, ByteArray(7)) {}
+            check(copied.toByteArray().contentEquals(line))
+            check(spoolDir.listFiles()?.size == 1) { "Spool should exist until close" }
+        } finally {
+            spool.close()
+        }
+        check(spoolDir.listFiles()?.isEmpty() == true) { "Checksum spool file was not cleaned up" }
+        check(spoolDir.delete())
+    }
+
     check((1..6).map { archiveEmptyReadBackoffMillis(it) } ==
         listOf(1L, 2L, 4L, 8L, 16L, 16L))
     check(runCatching { archiveEmptyReadBackoffMillis(0) }.exceptionOrNull() is IllegalArgumentException)
