@@ -5,13 +5,10 @@ fun main() {
     val first = epochs.begin()
     check(epochs.isCurrent(first))
 
-    // Stop may happen before Android calls onServiceRegistered.
-    epochs.stop(first)
-    check(!epochs.isCurrent(first)) { "A stopped pending registration must be stale" }
-
-    // An explicit stop fences the old advertisement but retains a bounded callback
+    // An explicit stop fences the active advertisement and retains a bounded callback
     // ticket so a later onUnregistrationFailed callback can be surfaced to the user.
-    epochs.requestStop(first)
+    check(epochs.requestStop(first)) { "Active stop request should create a callback ticket" }
+    check(!epochs.isCurrent(first)) { "A stopped registration must be stale" }
     check(!epochs.isCurrent(first))
     check(epochs.isStopPending(first)) { "Stop request must remain observable until callback" }
 
@@ -25,6 +22,12 @@ fun main() {
     check(!epochs.isStopPending(first))
     check(epochs.isCurrent(second)) { "Old unregistration callback cleared the new advertisement" }
     check(!epochs.completeStop(first)) { "A duplicate callback must be idempotently ignored" }
+    check(!epochs.requestStop(first)) {
+        "A late registration callback must not resurrect a completed stop ticket"
+    }
+    check(!epochs.isStopPending(first)) {
+        "Completed stop ticket unexpectedly re-entered the pending ledger"
+    }
 
     epochs.requestStop(second)
     check(!epochs.isCurrent(second))
@@ -49,6 +52,9 @@ fun main() {
         "The newest pending stops must remain tracked"
     }
     check(!bounded.completeStop(issued.first())) { "An evicted ticket must not be resurrected" }
+    check(!bounded.requestStop(issued.first())) {
+        "An evicted stale generation must not be reinserted by a late callback"
+    }
     check(bounded.completeStop(issued.last())) { "Newest stop ticket should still complete" }
 
     // Re-requesting an already-pending stop must not refresh its age. Otherwise
