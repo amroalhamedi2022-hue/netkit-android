@@ -182,6 +182,19 @@ object DirectoryArchive {
                         zip.closeEntry()
                         walk(child.id, path, depth + 1)
                     } else {
+                        // The checksum manifest has a fixed-width digest and path. Reserve
+                        // its UTF-8 budget before opening or reading the SAF document so an
+                        // over-budget request fails early instead of streaming a large file
+                        // and only discovering the manifest limit after its bytes were sent.
+                        val checksumLineBytes = if (includeChecksums) {
+                            64L + 2L + path.toByteArray(Charsets.UTF_8).size.toLong() + 1L
+                        } else 0L
+                        if (includeChecksums) {
+                            check(checksumLineBytes <= maximumChecksumManifestBytes.toLong() - checksumBytes) {
+                                "Archive checksum manifest too large"
+                            }
+                            checksumBytes += checksumLineBytes
+                        }
                         val input = source.open(child.id) ?: error("Shared file became unreadable")
                         val digest = if (includeChecksums) MessageDigest.getInstance("SHA-256") else null
                         input.use {
@@ -220,12 +233,10 @@ object DirectoryArchive {
                         if (digest != null) {
                             val hex = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
                             val line = "$hex  $path\n"
-                            val lineBytes = line.toByteArray(Charsets.UTF_8).size.toLong()
-                            check(lineBytes <= maximumChecksumManifestBytes.toLong() - checksumBytes) {
-                                "Archive checksum manifest too large"
+                            check(line.toByteArray(Charsets.UTF_8).size.toLong() == checksumLineBytes) {
+                                "Archive checksum manifest accounting mismatch"
                             }
                             checksumLines.append(line)
-                            checksumBytes += lineBytes
                         }
                     }
                 }
