@@ -121,3 +121,15 @@
 - **Build/device:** no APK built. Android compile result **NOT VERIFIED**; Xiaomi Pad 5 DNS-SD rejection of malicious labels and real peer discovery **NOT TESTED**.
 - **PR gate:** PR #7 remains Draft and unmergeable due to its stale stacked base. No rebase, retarget, merge, or automatic branch mixing. No new dependency, paid API, secret, root, Wi-Fi Analyzer, or Remote Control code.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector is exposed in this runtime; this repository ledger is not a substitute for the existing live Drive document.
+
+
+## 2026-10-28 — M92 DNS-SD advertisement port guard
+
+- **Source/test head:** `a77fb1153fef2faa0f323bdd68ccc0b8debe941a` on PR #7's existing branch `automation/netkit-zip-stall-guard-20261023`.
+- Centralized NSD port validation in `NsdDiscoveryPolicy.isValidPort` (1–65535). `PeerDiscovery.advertise` now rejects invalid ports before `NsdServiceInfo.setPort`, validates its generated display label before registration, and rejects invalid resolved-service ports through the same policy.
+- Regression tests cover boundary ports and invalid integer extremes; static QA verifies the production guard occurs before registration.
+- **PASS — exact-head source QA:** [run 40657838697](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40657838697). Static checks and the full Kotlin/JVM transport, HTTPS/SAF, ZIP, transfer-queue and DNS-SD suite passed.
+- **PASS — Android compile/resource gate:** [run 40657838802](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40657838802). This was compile-only; no APK was produced.
+- **NOT TESTED:** real Android NSD registration, malicious discovery on a live LAN, and Xiaomi Pad 5 acceptance.
+- **PR gate:** PR #7 remains Draft/unmergeable due to its stale stacked base. PR #6 and `main` were not changed; no rebase, retarget, merge, Wi-Fi Analyzer or Remote Control code.
+- **Live Google Docs handoff:** **SYNC FAILED** — this runtime exposes no authorized Google Docs write/read connector; the repository checkpoint is supplementary, not a replacement for the live Drive document.
