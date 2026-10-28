@@ -223,3 +223,17 @@ No merge, no main changes, no new dependency or paid API.
 ### M89 branch-scope correction — 2026-10-28
 
 The initial PR #6 M89 DNS-SD address-policy patch and its pure-JVM test were **reverted before handoff** after inspecting the latest stacked PR #7 source. PR #7 already contains `PeerAddressPolicy`, `NsdDiscoveryPolicy`, bounded `NsdResolveLedger`, and the serialized `PeerDiscovery` lifecycle. Keeping a second equivalent policy in PR #6 would create duplicate security logic across the stack. The refinement is being applied to the existing policy on PR #7 instead; PR #6 remains on its own branch and no merge/rebase or `main` write is performed. The earlier M89 source QA run on `824b4fb` remains historical evidence only and does not represent the current PR #6 source. Live Google Docs Handoff remains **SYNC FAILED** because no authorized Docs write/read connector is available.
+
+
+## M90 — 2026-10-28 — Enforce share-session expiry during active downloads and recursive ZIP export
+
+- **Scope:** NetKit PR #6 only; branch `feature/netkit-reliability-20261023`. PR #7 and `main` were not modified or retargeted.
+- **Finding:** the HTTPS handler rejected a token after its TTL and guarded active uploads, but a file download or recursive SAF ZIP already in progress did not re-check the lease while reading/writing. A long transfer could therefore continue after the share expired.
+- **Production fix:** `TransferHttpEngine.kt` now checks the monotonic lease before and after every file-stream read, before response headers after range seeking, and before emitting the final chunk terminator. The chunked ZIP output wrapper refuses writes after expiry. `DirectoryArchive.write` now accepts an optional `checkActive` callback and checks it around listing, opening, reading, and completion; defaults preserve existing callers.
+- **Regression:** `qa/CoreSmokeTest.kt` injects a deterministic monotonic clock and expires a lease during a known-length file read and a recursive ZIP's SAF read. It proves the file response emits no payload after expiry and the ZIP cannot yield the complete original file payload.
+- **Final source/test head:** `0f1e786fe2ef58fd923613c9fdff66f1080de779`.
+- **PASS — exact-head CI:** [run 40647604235](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40647604235). Static source checks, Kotlin/JVM HTTPS/SAF/ZIP/session regressions, and persistent transfer-queue state-machine tests all passed. The log explicitly reports: `PASS: active file and recursive ZIP downloads are revoked mid-stream when the share lease expires`.
+- **Build/device:** APK and Android Gradle package jobs were **SKIPPED** intentionally; this is a transport/session regression with deterministic JVM coverage. Android compile/package and real Xiaomi Pad 5 + SAF provider acceptance remain **NOT TESTED** in this batch.
+- **CI correction history:** an earlier run exposed the missing callback parameter in PR #6's older `DirectoryArchive.kt`; the callback was added to this branch, and the final exact-head run above passed. The regression was also adjusted to assert incomplete/no-post-expiry payload rather than depend on one JVM client's specific EOF exception.
+- **Safety:** no new dependency, paid API, secret, root, permission bypass, Wi-Fi Analyzer, merge, rebase, force-push, or `main` write.
+- **Live Google Docs handoff:** **SYNC FAILED** — no authorized Google Docs/Drive write-and-read connector is available in this run; this GitHub checkpoint is not a substitute for the live Drive document.
