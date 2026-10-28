@@ -446,3 +446,18 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Device acceptance:** **NOT TESTED** — Xiaomi Pad 5, real SAF providers, and Android↔Windows browser transfers still need hardware acceptance.
 - **Safety:** no new dependency, paid API, secret or privilege change. PR #6 remains untouched; no merge and no `main` write.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs/Drive write-and-read connector is available in this run.
+
+
+## 2026-10-28 M86 — IPv6 LAN address visibility and targeted device artifact
+
+- **Production source:** `NetworkStatus.localAddresses()` now uses the same address-scope policy as DNS-SD discovery, so the dashboard can display RFC1918 IPv4, IPv4 link-local, IPv6 ULA (`fc00::/7`) and IPv6 link-local candidates. Public/global and loopback addresses remain excluded. The empty-state text now says “no local address” rather than implying IPv4-only support.
+- **Regression:** `PeerAddressPolicyTest.kt` verifies the display helper includes local IPv4, ULA and link-local IPv6 while excluding public IPv4 and loopback.
+- **Commits:** `d6724a30293895e56d42cbfcca47ff87e85b637e`, `577de38b0959216dd91a8ad1074becb53626300b`, `a9092915d857393728b5ccfa0503ca2c6169e319`, `cbb3e7fe8f725cee4b847566dc114650f18400ac`, `d9938d2322999673f420f586b4e59759105ccc66`.
+- **PASS — source QA:** workflow run [40620943177](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40620943177) on exact head `d9938d2322999673f420f586b4e59759105ccc66`; static checks, full Kotlin/JVM transport/SAF/session suite and persistent transfer queue tests succeeded.
+- **PASS — Android package gate:** targeted build and `lintDebug` succeeded; APK signature and package metadata checks passed. The separate targeted Android compile run [40620939455](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40620939455) also succeeded on the same production source files before the final workflow/ledger commits.
+- **Engineering reason for APK:** this one-off debug package is specifically for validating the newly visible IPv6 LAN candidates on hardware; it is not a release build.
+- **Artifact:** [run 40620943177](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40620943177), artifact ID `12787980034`, name `NetKit-LAN-address-device-test-d9938d2322999673f420f586b4e59759105ccc66`.
+- **APK SHA-256 (independently recomputed from downloaded artifact and matching its manifest):** `b77d918cef26de73bfe3df43aa6733ec641c7079dc3a51c13920eed24cdcd433`.
+- **Artifact ZIP SHA-256 (independently recomputed; matches GitHub artifact digest):** `b347b9f6157a73f5847d3eb53b0d34e3437444f23e35cd1ff0ddbccaf7085ffd`.
+- **NOT TESTED:** real Xiaomi Pad 5 IPv6-only/dual-stack dashboard behavior and second-device reachability. Build success is not device acceptance.
+- **Remaining:** verify IPv6 address visibility/reachability on device; continue native trusted pairing and Android↔Android transfer; keep PR #6 separate and unchanged; no merge.
