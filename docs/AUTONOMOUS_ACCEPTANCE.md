@@ -598,3 +598,16 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Device acceptance:** NOT TESTED — large folder export with checksums on Xiaomi Pad 5, low-memory behavior, SAF providers, and Windows extraction.
 - **Security:** no new dependency, paid API, credential, or privilege; checksum sidecar remains integrity metadata, not authentication. PR #7 remains Draft/unmergeable due to its base relationship; no merge or main write.
 - **Live Google Docs handoff:** SYNC FAILED until a permitted Docs write/read connector is available; this ledger is not a replacement for the live Drive document.
+
+
+## M103 final verification update — 2026-10-28
+
+- **Final code/test head verified:** 3ed0e2470ab282ac9bf8f9093f918cf711141e82 (PR #7 branch). This supersedes the interim M103 entry above.
+- **Production change:** checksum sidecar lines are disk-spooled under the caller-supplied app-private cache directory during Android ZIP export; byte budget and lease/cancellation checks remain enforced; spool cleanup is checked on success and budget failure.
+- **Relevant source files:** DirectoryArchive.kt, TransferHttpEngine.kt, AndroidShareStorage.kt; regression coverage in qa/DirectoryArchiveTest.kt.
+- **Source QA — PASS:** https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40746521314 — static checks, Kotlin/JVM transport/SAF/ZIP/session tests, and persistent transfer queue state-machine tests passed. Log includes “PASS: paged ZIP, nested folders, path/quotas, incremental checksum budget...” and the full JVM suite completed successfully.
+- **Android compile gate — PASS:** https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40746521173 — ZIP lease-boundary JVM regression passed; :app:compileDebugKotlin and :app:processDebugResources passed. This workflow explicitly compiles Kotlin/resources without producing an APK.
+- **APK:** NOT BUILT. This was a source-memory/temporary-storage change and the targeted workflow was compile-only.
+- **Device acceptance:** NOT TESTED — Xiaomi Pad 5 low-memory ZIP export, cache pressure, live SAF providers, and Windows extraction still require device acceptance.
+- **PR state:** PR #7 remains Draft/unmergeable because its base relationship is still unresolved; PR #6 remains untouched. No merge or main write.
+- **Live Google Docs handoff:** SYNC FAILED in this run because no authorized Google Docs write/read connector is available. This GitHub ledger does not replace the live Drive handoff.
