@@ -18,6 +18,15 @@ fun main() {
     denied.forEach { ip ->
         check(!PeerAddressPolicy.isLocalPeer(InetAddress.getByName(ip))) { "Accepted nonlocal address: $ip" }
     }
+    val displayable = PeerAddressPolicy.displayableLocalAddresses(
+        listOf("192.168.1.10", "fd12:3456::1", "fe80::1", "8.8.8.8", "::1")
+            .map(InetAddress::getByName)
+    )
+    check(displayable.size == 3) { "Dashboard should show only three local candidates: $displayable" }
+    check(displayable.contains("192.168.1.10"))
+    check(displayable.any { it.startsWith("fd12:3456:") })
+    check(displayable.any { it.startsWith("fe80:") })
+    check(displayable.none { it.contains("8.8.8.8") || it == "::1" })
     val safeNames = listOf(
         "NetKit-Xiaomi Pad 5",
         "جهاز أندرويد",
