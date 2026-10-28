@@ -255,10 +255,12 @@ class PeerDiscovery(context: Context) {
             }
 
             override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {
-                val requestedStop = advertisementEpoch.completeStop(epoch)
-                if (requestedStop || advertisementEpoch.isCurrent(epoch)) {
-                    discoveryWarning.value = "تعذر إيقاف إعلان الجهاز (رمز $errorCode). قد يظل ظاهرًا على الشبكة."
-                }
+                // The platform callback itself is evidence that unregistration failed.
+                // Report it even if a late callback arrives after its bounded ticket was
+                // completed or evicted; never recreate that stale ticket just to warn.
+                advertisementEpoch.completeStop(epoch)
+                discoveryWarning.value =
+                    "تعذر إيقاف إعلان الجهاز (رمز $errorCode). قد يظل ظاهرًا على الشبكة."
             }
         }
         registration = listener
