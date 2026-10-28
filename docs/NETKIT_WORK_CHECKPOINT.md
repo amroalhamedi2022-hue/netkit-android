@@ -77,3 +77,13 @@
 - **Device acceptance:** **NOT TESTED** — Xiaomi Pad 5, real SAF providers, and Android↔Windows browser transfers still need hardware acceptance.
 - **Safety:** no new dependency, paid API, secret or privilege change. PR #6 remains untouched; no merge and no `main` write.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs/Drive write-and-read connector is available in this run.
+
+
+## M86 — 2026-10-28 — IPv6 LAN address visibility (PR #7)
+
+- **Scope:** dashboard address candidates now reuse `PeerAddressPolicy`, displaying RFC1918 IPv4, IPv4 link-local, IPv6 ULA and IPv6 link-local while excluding public/global and loopback addresses. Empty-state wording is no longer IPv4-only.
+- **Tests:** address display policy regression added to `qa/PeerAddressPolicyTest.kt`; source QA passed on exact head `d9938d2322999673f420f586b4e59759105ccc66` in [CI 40620943177](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40620943177).
+- **Build rationale:** a one-off debug APK was justified for IPv6 address display acceptance on hardware, not as a routine build. `:app:assembleDebug`, `lintDebug`, signature and metadata verification all passed; artifact ID `12787980034`.
+- **APK SHA-256:** `b77d918cef26de73bfe3df43aa6733ec641c7079dc3a51c13920eed24cdcd433`. **Artifact ZIP SHA-256:** `b347b9f6157a73f5847d3eb53b0d34e3437444f23e35cd1ff0ddbccaf7085ffd`.
+- **NOT TESTED:** real Xiaomi Pad 5 IPv6-only/dual-stack visibility/reachability; Android↔Android pairing, full transfer resume and FTP/SFTP server acceptance remain open.
+- **PR safety:** PR #7 remains Draft and unmergeable; PR #6 untouched; no merge or main write.
