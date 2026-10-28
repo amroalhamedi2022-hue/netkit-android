@@ -1,6 +1,7 @@
 package com.netkit.local.share
 
 import java.io.InputStream
+import java.io.IOException
 import java.io.InterruptedIOException
 import java.security.MessageDigest
 import java.text.Normalizer
@@ -207,7 +208,14 @@ object DirectoryArchive {
                                 ensureActive()
                                 val read = it.read(buffer)
                                 ensureActive() // Provider reads may outlive the HTTPS lease.
-                                if (read < 0) break
+                                if (read == -1) break
+                                // A broken provider must not be allowed to signal an
+                                // impossible count: treating values below -1 as EOF can
+                                // silently truncate a ZIP, while values above the buffer
+                                // length can corrupt digest/ZIP accounting.
+                                if (read < -1 || read > buffer.size) {
+                                    throw IOException("Shared file provider returned invalid read count: $read")
+                                }
                                 if (read == 0) {
                                     // Some SAF providers return a transient zero; a broken
                                     // provider must not spin forever and monopolize a server worker.
