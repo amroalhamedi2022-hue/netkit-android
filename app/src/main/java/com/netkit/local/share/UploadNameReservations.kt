@@ -4,14 +4,19 @@ import java.text.Normalizer
 import java.util.Locale
 
 /**
- * Build an unambiguous, in-memory namespace for a selected SAF tree and relative folders.
- * Tree URI identity matters: equal folder paths in two user-selected trees are not the same destination.
+ * Build a conservative in-memory namespace for a selected SAF tree and relative folders.
+ * The tree URI stays exact, while folder segments are NFC-normalized and case-folded because
+ * SAF providers differ in Unicode normalization and case behavior.
  */
 internal fun uploadReservationScope(treeUri: String, folders: List<String>): String {
     require(treeUri.isNotBlank()) { "Missing SAF upload tree" }
     return buildString {
         append(treeUri.length).append(':').append(treeUri)
-        folders.forEach { segment -> append('|').append(segment.length).append(':').append(segment) }
+        folders.forEach { segment ->
+            val normalized = Normalizer.normalize(segment, Normalizer.Form.NFC)
+            val folded = Normalizer.normalize(normalized.uppercase(Locale.ROOT), Normalizer.Form.NFC)
+            append('|').append(folded.length).append(':').append(folded)
+        }
     }
 }
 
