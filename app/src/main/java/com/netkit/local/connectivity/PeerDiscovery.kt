@@ -164,8 +164,10 @@ class PeerDiscovery(context: Context) {
             found.clear()
             discoveryWarning.value = null
             resolveLedger.clear()
+            // Acquire under the same lifecycle gate so a concurrent stop cannot
+            // release before acquisition and leave a leaked multicast lock.
+            acquireMulticastLease()
         } ?: return
-        acquireMulticastLease()
         var startFailure: Throwable? = null
         discoveryGate.runIfActive(startedEpoch) {
             if (callback === listener) {
