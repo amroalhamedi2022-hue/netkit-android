@@ -10,7 +10,7 @@ fun main() {
     check(NsdDiscoveryPolicy.isSafeAdvertisement("_netkit._tcp.", "NetKit-Device"))
     check(NsdDiscoveryPolicy.isSafeAdvertisement("_NETKIT._TCP", "جهاز أندرويد"))
     check(!NsdDiscoveryPolicy.isSafeAdvertisement("_other._tcp.", "NetKit-Device"))
-    for (unsafeName in listOf("", " padded ", "Host\\u202Etxt", "Cafe\\u0301", "x".repeat(64))) {
+    for (unsafeName in listOf("", " padded ", "Host\u202Etxt", "Cafe\\u0301", "x".repeat(64))) {
         check(!NsdDiscoveryPolicy.isSafeAdvertisement("_netkit._tcp.", unsafeName)) {
             "Unsafe DNS-SD label reached peer resolution: $unsafeName"
         }
