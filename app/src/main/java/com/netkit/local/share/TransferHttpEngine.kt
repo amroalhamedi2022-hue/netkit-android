@@ -101,7 +101,14 @@ internal object StreamReadGuard {
                 throw InterruptedIOException("Shared stream read cancelled")
             }
             val n = input.read(buffer, offset, length)
-            if (n != 0) return n
+            if (n == -1) return -1
+            // InputStream's contract is -1, zero, or a count no greater than
+            // the requested length. Do not let malformed provider counts look
+            // like EOF or escape into caller buffer/byte accounting.
+            if (n < -1 || n > length) {
+                throw IOException("Shared stream provider returned invalid read count: $n")
+            }
+            if (n > 0) return n
             check(++emptyReads <= 32) { "Shared stream read stalled" }
             // A broken SAF provider can return zero repeatedly. Bounded backoff
             // avoids a hot CPU loop while keeping the retry budget finite.
