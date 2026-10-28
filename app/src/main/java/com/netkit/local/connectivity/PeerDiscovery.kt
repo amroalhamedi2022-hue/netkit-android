@@ -64,7 +64,7 @@ class PeerDiscovery(context: Context) {
             override fun onDiscoveryStopped(serviceType: String) {
                 // Serialize stop with in-flight resolve publication. A stale listener
                 // must never clear a newer scan or release its multicast lease.
-                val stopped = discoveryGate.stop(epoch) {
+                discoveryGate.stop(epoch) {
                     if (callback !== this) false else {
                         callback = null
                         discoveryEpoch = null
@@ -80,7 +80,7 @@ class PeerDiscovery(context: Context) {
             }
 
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                val stopped = discoveryGate.stop(epoch) {
+                discoveryGate.stop(epoch) {
                     if (callback !== this) false else {
                         callback = null
                         discoveryEpoch = null
