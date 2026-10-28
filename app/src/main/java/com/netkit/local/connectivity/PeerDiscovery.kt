@@ -193,10 +193,19 @@ class PeerDiscovery(context: Context) {
 
     fun advertise(port: Int) {
         stopAdvertising()
-        if (port <= 0) return
+        if (!NsdDiscoveryPolicy.isValidPort(port)) {
+            discoveryWarning.value = "منفذ إعلان الجهاز غير صالح."
+            return
+        }
         val epoch = advertisementEpoch.begin()
         registrationEpoch = epoch
         val name = "NetKit-${Build.MODEL.take(16).replace(Regex("[^a-zA-Z0-9_-]"), "-")}"
+        if (!PeerDisplayNamePolicy.isSafeServiceName(name)) {
+            advertisementEpoch.stop(epoch)
+            registrationEpoch = null
+            discoveryWarning.value = "اسم الجهاز غير صالح للإعلان."
+            return
+        }
         val service = NsdServiceInfo().apply {
             serviceName = name
             serviceType = "_netkit._tcp."
