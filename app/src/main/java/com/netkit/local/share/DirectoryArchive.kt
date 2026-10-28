@@ -24,7 +24,8 @@ object DirectoryArchive {
         source: ArchiveDirectorySource,
         zip: ZipOutputStream,
         maximumEntries: Int = 20_000,
-        maximumBytes: Long = 64L * 1024 * 1024 * 1024
+        maximumBytes: Long = 64L * 1024 * 1024 * 1024,
+        checkActive: () -> Unit = {}
     ): ArchiveResult {
         require(maximumEntries in 1..100_000)
         require(maximumBytes > 0)
@@ -42,13 +43,17 @@ object DirectoryArchive {
         }
 
         fun walk(folderId: String, prefix: String, depth: Int) {
+            checkActive()
             require(depth <= 32) { "Directory nesting exceeds safe depth" }
             check(visited.add(folderId)) { "Recursive directory provider cycle" }
             var offset = 0
             do {
+                checkActive()
                 val page = source.list(folderId, offset, 100)
+                checkActive()
                 require(page.files.size <= 100)
                 for (child in page.files) {
+                    checkActive()
                     entries++
                     check(entries <= maximumEntries) { "Too many archive entries" }
                     val segment = safeSegment(child.name)
@@ -59,11 +64,15 @@ object DirectoryArchive {
                         zip.closeEntry()
                         walk(child.id, path, depth + 1)
                     } else {
+                        checkActive()
                         val input = source.open(child.id) ?: error("Shared file became unreadable")
                         input.use {
+                            checkActive()
                             zip.putNextEntry(ZipEntry(path))
                             while (true) {
+                                checkActive()
                                 val read = it.read(buffer)
+                                checkActive()
                                 if (read < 0) break
                                 if (read == 0) continue
                                 bytes += read
@@ -81,6 +90,7 @@ object DirectoryArchive {
         }
 
         walk(rootId, "", 0)
+        checkActive()
         return ArchiveResult(entries, bytes)
     }
 }
