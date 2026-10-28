@@ -194,6 +194,11 @@ object DirectoryArchive {
                             check(checksumLineBytes <= maximumChecksumManifestBytes.toLong() - checksumBytes) {
                                 "Archive checksum manifest too large"
                             }
+                            // The sidecar is part of the same uncompressed-byte budget.
+                            // Reserve each known line before opening the provider stream.
+                            check(checksumLineBytes <= maximumBytes - bytes - checksumBytes) {
+                                "Archive byte budget exceeded"
+                            }
                             checksumBytes += checksumLineBytes
                         }
                         val input = source.open(child.id) ?: error("Shared file became unreadable")
@@ -231,7 +236,12 @@ object DirectoryArchive {
                                     continue
                                 }
                                 consecutiveEmptyReads = 0
-                                check(read.toLong() <= maximumBytes - bytes) { "Archive byte budget exceeded" }
+                                // Keep room for all checksum lines known so far; otherwise
+                                // file bytes could consume the entire budget and force a late
+                                // failure only after a large amount of data has been read.
+                                check(read.toLong() <= maximumBytes - bytes - checksumBytes) {
+                                    "Archive byte budget exceeded"
+                                }
                                 bytes += read
                                 digest?.update(buffer, 0, read)
                                 zip.write(buffer, 0, read)
