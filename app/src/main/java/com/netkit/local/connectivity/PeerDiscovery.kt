@@ -46,11 +46,11 @@ class PeerDiscovery(context: Context) {
                 val ticket = registry.requestResolve(scanGeneration, service.serviceName) ?: return
                 val resolveListener = object : NsdManager.ResolveListener {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                        if (callback === listener) registry.markResolveFailed(ticket)
+                        registry.markResolveFailed(ticket)
                     }
 
                     override fun onServiceResolved(info: NsdServiceInfo) {
-                        if (callback !== listener || !registry.isCurrent(ticket)) return
+                        if (!registry.isCurrent(ticket)) return
                         val host = info.host
                         if (info.serviceName != ticket.serviceName ||
                             !info.serviceType.startsWith("_netkit._tcp") ||
