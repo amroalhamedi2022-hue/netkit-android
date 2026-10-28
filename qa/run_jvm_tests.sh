@@ -41,5 +41,8 @@ java -jar "$TEMP_DIR/discovery-epoch.jar"
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/GuardedPublication.kt" \
   "$ROOT/qa/GuardedPublicationTest.kt" -include-runtime -d "$TEMP_DIR/guarded-publication.jar"
 java -jar "$TEMP_DIR/guarded-publication.jar"
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/FailedUploadStageCleanup.kt" \
+  "$ROOT/qa/FailedUploadStageCleanupTest.kt" -include-runtime -d "$TEMP_DIR/upload-stage-cleanup.jar"
+java -jar "$TEMP_DIR/upload-stage-cleanup.jar"
 
 echo 'NetKit JVM transport & reliability QA passed.'

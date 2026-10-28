@@ -164,6 +164,8 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
         val temp = folder.createFile("application/octet-stream", ".netkit-${UUID.randomUUID()}.part")
             ?: error("Storage provider denied create")
         var completed = false
+        var failure: Throwable? = null
+        var publicationReturned = false
         val digest = if (expectedSha256 != null) MessageDigest.getInstance("SHA-256") else null
         try {
             val stream = context.contentResolver.openOutputStream(temp.uri, "w") ?: error("Cannot open destination")
@@ -197,8 +199,10 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
             GuardedPublication.publish(
                 ensureAuthorized = ensureSessionValid,
                 publish = {
-                    DocumentsContract.renameDocument(context.contentResolver, temp.uri, chosen)
+                    val published = DocumentsContract.renameDocument(context.contentResolver, temp.uri, chosen)
                         ?: throw IOException("Provider cannot finalize this file (rename failed)")
+                    publicationReturned = true
+                    published
                 },
                 rollback = { publishedUri ->
                     if (!DocumentsContract.deleteDocument(context.contentResolver, publishedUri)) {
@@ -208,8 +212,15 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
             )
             completed = true
             return@withLock chosen
+        } catch (transferFailure: Throwable) {
+            failure = transferFailure
+            throw transferFailure
         } finally {
-            if (!completed) runCatching { temp.delete() }
+            // A failed upload must not silently leave its private .part document behind.
+            // After rename returns, GuardedPublication owns rollback of the exact published URI.
+            if (!completed && !publicationReturned) {
+                FailedUploadStageCleanup.onFailure(failure) { temp.delete() }
+            }
         }
     }
     private fun uniqueName(folder: DocumentFile, filename: String): String {

@@ -53,6 +53,8 @@ storage = (root / 'app/src/main/java/com/netkit/local/share/AndroidShareStorage.
 assert 'netkit_upload_destination' in storage
 assert 'takePersistableUriPermission' in storage
 assert 'UploadDestinationPolicy.canRestore' in storage
+assert 'FailedUploadStageCleanup.onFailure(failure)' in storage
+assert (root / 'app/src/main/java/com/netkit/local/share/FailedUploadStageCleanup.kt').is_file()
 assert 'restoreUploadTree()' in storage
 assert 'object UploadDestinationPolicy' in (root / 'app/src/main/java/com/netkit/local/share/UploadDestinationPolicy.kt').read_text()
 engine = (root / 'app/src/main/java/com/netkit/local/share/TransferHttpEngine.kt').read_text()
