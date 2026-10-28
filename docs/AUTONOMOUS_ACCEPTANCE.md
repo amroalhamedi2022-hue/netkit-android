@@ -435,3 +435,14 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Review note:** Kotlin compiler emitted an existing warning in ResumableBrowserUpload.kt:369 (`now != null` condition always true); the suite still passed. This was not changed in M84 and should be cleaned up separately after confirming the nullable-flow intent.
 - **Safety/branching:** PR #7 branch only; PR #6 remains untouched. No merge, main write, new dependency, paid API, secret or Wi-Fi Analyzer.
 - **Live Google Docs handoff:** **SYNC FAILED** in this run; no authorized Docs/Drive write-and-read connector is available. This GitHub ledger does not replace the live Drive handoff.
+
+## M85 — Strict ASCII-decimal HTTP framing and Range parsing (2026-10-28)
+
+- **Production change:** `TransferHttpEngine.kt` now parses `Content-Length`, resumable-upload total/offset, and single-byte-range numbers as ASCII decimal digits only. This rejects values that Kotlin's permissive `toLongOrNull()` path could accept with a leading plus sign, as well as negative, hexadecimal-like, fractional, empty and overflowing values. Invalid `Content-Length` is rejected before route dispatch.
+- **Regression coverage:** `qa/CoreSmokeTest.kt` checks the strict parser directly and against the real TLS request parser, including `Content-Length: +0/-0/0x0/overflow`, malformed resumable-upload offsets/totals, and byte ranges such as `bytes=+1-2` and `bytes=-+5`.
+- **Exact source + test SHA:** `bd04bbf33d0f194f0932fbc8232596310115a1bc`.
+- **CI: PASS** — [run 40615821989](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40615821989). Static source checks, Kotlin/JVM HTTPS transport + SAF ZIP + session tests, and persistent transfer queue tests passed on this exact SHA.
+- **Android compile / APK:** **NOT TESTED / NOT BUILT** in this batch. The change was verified in the shared Kotlin/JVM transport harness; no package was needed for this protocol-parser milestone.
+- **Device acceptance:** **NOT TESTED** — Xiaomi Pad 5, real SAF providers, and Android↔Windows browser transfers still need hardware acceptance.
+- **Safety:** no new dependency, paid API, secret or privilege change. PR #6 remains untouched; no merge and no `main` write.
+- **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs/Drive write-and-read connector is available in this run.
