@@ -494,3 +494,12 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Build/device:** no APK built. Android compile result **NOT VERIFIED**; Xiaomi Pad 5 DNS-SD rejection of malicious labels and real peer discovery **NOT TESTED**.
 - **PR gate:** PR #7 remains Draft and unmergeable due to its stale stacked base. No rebase, retarget, merge, or automatic branch mixing. No new dependency, paid API, secret, root, Wi-Fi Analyzer, or Remote Control code.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector is exposed in this runtime; this repository ledger is not a substitute for the existing live Drive document.
+
+
+## 2026-10-28 — M92 DNS-SD advertisement input validation
+
+- Source/test head: `a77fb1153fef2faa0f323bdd68ccc0b8debe941a`.
+- **PASS:** exact-head source/JVM QA [40657838697](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40657838697); Android compile/resource gate [40657838802](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40657838802).
+- Invalid NSD ports are rejected before registration and after resolution; locally generated service labels are validated before registration. Boundary tests and static production-wiring checks passed.
+- **NOT BUILT:** APK. **NOT TESTED:** live Android NSD and Xiaomi Pad 5.
+- PR #7 remains Draft/unmergeable on its own branch; PR #6 and `main` untouched. Live Google Docs sync remains **SYNC FAILED** because no authorized Docs write/read connector is available.
