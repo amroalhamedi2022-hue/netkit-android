@@ -526,3 +526,12 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Device acceptance: NOT TESTED** — real DNS-SD stop failure and stale-registration callback behavior on Xiaomi Pad 5 remain open.
 - **Safety/change control:** PR #6 and `main` untouched; no merge, dependency, paid API, secret, root, permission bypass or Wi-Fi Analyzer. PR #7 remains Draft and its stacked base is not changed.
 - **Live Google Docs Handoff: SYNC FAILED** — no authorized Docs write/read connector is exposed; this repository ledger is supplementary only.
+
+
+### M96 follow-up — preserve age ordering of pending stop tickets
+
+- **Final source/test head for this follow-up:** `ebc40735f87fe4c70132cc561f73521526328b4b`.
+- Re-requesting a ticket already present in the bounded stop ledger now returns without removing/re-adding it. This prevents a delayed duplicate callback from refreshing an old ticket's age and causing a newer unresolved stop to be evicted first.
+- **Regression:** the test fills all 32 slots, repeats the oldest ticket, adds a 33rd unique ticket, and verifies that the original oldest is evicted while ticket #2 and the newest ticket remain. The source QA job in [run 40689132789](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40689132789) passed on this exact source/test head.
+- **Android compile/device-test build:** the Debug build job in the same run is still **IN PROGRESS** at this checkpoint. The earlier docs-only commit did not trigger the path-filtered build, so the source/test commit carried the explicit `[device-test-build]` marker. Append the final APK SHA/artifact result only after the build/lint/signature/checksum steps finish.
+- **Device acceptance: NOT TESTED** — Xiaomi Pad 5 still needs real NSD failure/stale callback validation.
