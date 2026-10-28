@@ -547,3 +547,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Build/device:** no APK built; this is an input-stream contract regression. Android compile and full repository CI **NOT VERIFIED**; SAF provider behavior on Xiaomi Pad 5 **NOT TESTED**.
 - **Security/change control:** no new dependency, no Wi-Fi Analyzer, no Remote Control code, no merge, no `main` write, no paid API, no secret.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Google Docs/Drive write-and-read connector is available in this runtime; this repository ledger is supplementary only.
+
+## 2026-10-28 — M98: fail-closed stream byte-count validation
+- **Scope:** verified FTP/SFTP download staging, true-offset resume, independent SHA-256 readback, and resume-prefix comparison. No unrelated project or branch was changed.
+- **Production:** `VerifiedDownloadStaging.kt` now rejects any `InputStream.read(byte[], off, len)` result below -1 or above the requested count before writing bytes, updating digest/progress, or advancing the resume offset. This guard is applied to ordinary staging, offset staging, readback, staged-file verification/publication, and prefix reads.
+- **Production:** `VerifiedResumePrefix.kt` rejects malformed read counts instead of trusting an out-of-contract custom SAF/network stream.
+- **Regression tests:** `qa/VerifiedDownloadStagingTest.kt` covers oversized read results in staging, offset staging, readback, and saved-prefix comparison; `qa/VerifiedResumePrefixTest.kt` covers malformed source and remote prefix streams.
+- **Source QA: PASS** on exact PR #7 head `92f19857d2135c630eac9de6a3c9d5ee9459bf1d`, workflow run [40707222701](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40707222701). Static source checks, full portable Kotlin/JVM transport/SAF/session suite, and transfer-queue state-machine suite completed successfully.
+- **Android build:** NOT RUN in this batch; these guards are covered by the portable JVM suite and a new APK was not needed for this source-level acceptance gate.
+- **Real-device / SAF provider acceptance:** NOT TESTED. CI does not prove behavior on Xiaomi Pad 5 or Windows interoperability.
+- **PR state:** #7 remains Draft and based on `feature/netkit-reliability-20261023`; PR #6 and `main` were not modified or merged.
+- **Next:** continue the real SAF/FTP/SFTP interoperability matrix and require a separate targeted Android build only when a device acceptance test needs it.
+
