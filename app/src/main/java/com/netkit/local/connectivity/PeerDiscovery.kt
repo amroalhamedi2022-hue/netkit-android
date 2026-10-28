@@ -3,22 +3,63 @@ package com.netkit.local.connectivity
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import androidx.compose.runtime.mutableStateListOf
 
 /** LAN DNS-SD peer sightings. Discovery is NOT authentication or trusted pairing. */
 class PeerDiscovery(context: Context) {
     data class Peer(val name: String, val address: String, val port: Int)
-    private val manager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val appContext = context.applicationContext
+    private val manager = appContext.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     val found = mutableStateListOf<Peer>()
     private val registry = PeerDiscoveryRegistry()
+    private val multicastLockGuard = Any()
+    private var multicastLeaseHeld = false
+    private lateinit var multicastLease: WifiManager.MulticastLock
     private var callback: NsdManager.DiscoveryListener? = null
     private var registration: NsdManager.RegistrationListener? = null
+
+    /** Hold multicast reception only while DNS-SD discovery is active. */
+    private fun acquireMulticastLease() {
+        val wifi = wifiManager ?: return
+        synchronized(multicastLockGuard) {
+            if (multicastLeaseHeld) return
+            try {
+                if (!this::multicastLease.isInitialized) {
+                    multicastLease = wifi.createMulticastLock("NetKitPeerDiscovery")
+                    multicastLease.setReferenceCounted(false)
+                }
+                if (!multicastLease.isHeld) multicastLease.acquire()
+                multicastLeaseHeld = multicastLease.isHeld
+            } catch (_: Exception) {
+                // Discovery can still run on platforms that reject multicast locks.
+                // If acquisition partially succeeded, release it before reporting no lease.
+                multicastLeaseHeld = runCatching {
+                    this::multicastLease.isInitialized && multicastLease.isHeld
+                }.getOrDefault(false)
+                if (multicastLeaseHeld) runCatching { multicastLease.release() }
+                multicastLeaseHeld = false
+            }
+        }
+    }
+
+    private fun releaseMulticastLease() {
+        synchronized(multicastLockGuard) {
+            if (!multicastLeaseHeld) return
+            runCatching {
+                if (multicastLease.isHeld) multicastLease.release()
+            }
+            multicastLeaseHeld = runCatching { multicastLease.isHeld }.getOrDefault(false)
+        }
+    }
 
     fun start() {
         if (callback != null) return
         found.clear()
         val scanGeneration = registry.beginScan()
+        acquireMulticastLease()
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) = Unit
             override fun onDiscoveryStopped(serviceType: String) {
@@ -28,6 +69,7 @@ class PeerDiscovery(context: Context) {
                     callback = null
                     registry.stop(scanGeneration)
                     found.clear()
+                    releaseMulticastLease()
                 }
             }
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) { stop() }
@@ -82,6 +124,7 @@ class PeerDiscovery(context: Context) {
                 registry.stop(scanGeneration)
                 found.clear()
             }
+            releaseMulticastLease()
         }
     }
 
@@ -116,6 +159,7 @@ class PeerDiscovery(context: Context) {
         registry.stop()
         active?.let { runCatching { manager.stopServiceDiscovery(it) } }
         found.clear()
+        releaseMulticastLease()
     }
 
     fun close() { stop(); stopAdvertising() }
