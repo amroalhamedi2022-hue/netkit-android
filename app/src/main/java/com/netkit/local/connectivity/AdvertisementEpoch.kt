@@ -35,10 +35,14 @@ internal class AdvertisementEpoch {
      */
     @Synchronized
     fun requestStop(token: Long): Boolean {
-        if (active == token) active = null
-        // Repeated callbacks must not refresh an old ticket's age and let it
-        // displace a newer unresolved stop when the bounded ledger fills.
+        // A callback may arrive after its stop ticket was already completed. Do not
+        // resurrect a retired ticket: repeated late callbacks must not consume the
+        // bounded ledger or evict a genuinely pending stop from a newer generation.
         if (token in pendingStops) return false
+        // Only the active generation can create a new stop ticket. Stale generations
+        // may complete an existing ticket, but cannot re-enqueue one after completion.
+        if (active != token) return false
+        active = null
         pendingStops.add(token)
         var evicted = false
         while (pendingStops.size > maxPendingStops) {
