@@ -1,8 +1,12 @@
 package com.netkit.local.share
 
+import java.io.BufferedOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.Locale
@@ -23,6 +27,83 @@ data class ArchiveResult(val entries: Int, val bytes: Long)
 internal fun archiveEmptyReadBackoffMillis(attempt: Int): Long {
     require(attempt > 0) { "Empty-read attempt must be positive" }
     return minOf(16L, (1 shl (attempt - 1).coerceAtMost(4)).toLong())
+}
+
+/**
+ * Bounded disk spool for the optional checksum sidecar.
+ *
+ * Keeping a large manifest as both UTF-16 characters and a UTF-8 byte array
+ * creates a large transient heap spike on Android. This writes checksum lines
+ * to a private temporary file and copies them into the ZIP only after traversal.
+ */
+internal class ChecksumManifestSpool private constructor(
+    private val file: File,
+    private val maximumBytes: Long,
+    private val sink: BufferedOutputStream
+) : AutoCloseable {
+    var size: Long = 0L
+        private set
+    private var finished = false
+    private var closed = false
+
+    fun append(line: ByteArray) {
+        check(!closed && !finished) { "Checksum manifest spool is closed" }
+        check(line.isNotEmpty() && line.size.toLong() <= maximumBytes - size) {
+            "Archive checksum manifest too large"
+        }
+        sink.write(line)
+        size += line.size.toLong()
+    }
+
+    private fun finish() {
+        if (finished) return
+        sink.flush()
+        sink.close()
+        finished = true
+        check(file.length() == size) { "Archive checksum spool size mismatch" }
+    }
+
+    fun copyTo(output: OutputStream, buffer: ByteArray, checkActive: () -> Unit) {
+        require(buffer.isNotEmpty()) { "Checksum copy buffer must not be empty" }
+        finish()
+        file.inputStream().buffered().use { input ->
+            while (true) {
+                checkActive()
+                val count = input.read(buffer)
+                checkActive()
+                if (count == -1) break
+                check(count > 0) { "Checksum spool read stalled" }
+                output.write(buffer, 0, count)
+            }
+        }
+    }
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        runCatching { sink.close() }
+        if (file.exists() && !file.delete()) file.deleteOnExit()
+    }
+
+    companion object {
+        fun create(maximumBytes: Long, directory: File? = null): ChecksumManifestSpool {
+            require(maximumBytes > 0L) { "Checksum manifest limit must be positive" }
+            val file = if (directory == null) {
+                File.createTempFile("netkit-checksums-", ".tmp")
+            } else {
+                require(directory.isDirectory) { "Checksum spool directory must exist" }
+                File.createTempFile("netkit-checksums-", ".tmp", directory)
+            }
+            return try {
+                ChecksumManifestSpool(
+                    file, maximumBytes, BufferedOutputStream(FileOutputStream(file))
+                )
+            } catch (failure: Throwable) {
+                file.delete()
+                throw failure
+            }
+        }
+    }
 }
 
 /**
@@ -73,7 +154,9 @@ object DirectoryArchive {
         val paths = HashSet<String>()
         // Optional checksum sidecar is reserved before visiting any untrusted SAF name.
         // It detects accidental transfer/extraction corruption, not server authenticity.
-        val checksumLines = StringBuilder()
+        val checksumSpool = if (includeChecksums) {
+            ChecksumManifestSpool.create(maximumChecksumManifestBytes.toLong())
+        } else null
         var checksumBytes = 0L
         val checksumName = "NetKit-SHA256SUMS.txt"
         if (includeChecksums) paths.add(Normalizer.normalize(checksumName.uppercase(Locale.ROOT), Normalizer.Form.NFC))
@@ -250,11 +333,11 @@ object DirectoryArchive {
                         }
                         if (digest != null) {
                             val hex = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-                            val line = "$hex  $path\n"
-                            check(line.toByteArray(Charsets.UTF_8).size.toLong() == checksumLineBytes) {
+                            val lineBytes = "$hex  $path\n".toByteArray(Charsets.UTF_8)
+                            check(lineBytes.size.toLong() == checksumLineBytes) {
                                 "Archive checksum manifest accounting mismatch"
                             }
-                            checksumLines.append(line)
+                            checkNotNull(checksumSpool).append(lineBytes)
                         }
                     }
                 }
@@ -273,22 +356,28 @@ object DirectoryArchive {
             } while (offset >= 0)
         }
 
-        walk(rootId, "", 0)
-        ensureActive()
-        if (includeChecksums) {
-            val manifest = checksumLines.toString().toByteArray(Charsets.UTF_8)
-            check(manifest.size.toLong() == checksumBytes) { "Archive checksum manifest size mismatch" }
-            check(manifest.size <= maximumChecksumManifestBytes) { "Archive checksum manifest too large" }
-            check(manifest.size.toLong() <= maximumBytes - bytes) { "Archive byte budget exceeded" }
+        try {
+            walk(rootId, "", 0)
             ensureActive()
-            check(entries < maximumEntries) { "Too many archive entries" }
-            zip.putNextEntry(ZipEntry(checksumName))
-            zip.write(manifest)
-            zip.closeEntry()
-            entries++
-            bytes += manifest.size
+            if (includeChecksums) {
+                val spool = checkNotNull(checksumSpool)
+                check(spool.size == checksumBytes) { "Archive checksum manifest size mismatch" }
+                check(spool.size <= maximumChecksumManifestBytes.toLong()) {
+                    "Archive checksum manifest too large"
+                }
+                check(spool.size <= maximumBytes - bytes) { "Archive byte budget exceeded" }
+                ensureActive()
+                check(entries < maximumEntries) { "Too many archive entries" }
+                zip.putNextEntry(ZipEntry(checksumName))
+                spool.copyTo(zip, buffer, ::ensureActive)
+                zip.closeEntry()
+                entries++
+                bytes += spool.size
+            }
+            // Report actual ZIP entries, including the optional checksum sidecar.
+            return ArchiveResult(entries, bytes)
+        } finally {
+            checksumSpool?.close()
         }
-        // Report actual ZIP entries, including the optional checksum sidecar.
-        return ArchiveResult(entries, bytes)
     }
 }
