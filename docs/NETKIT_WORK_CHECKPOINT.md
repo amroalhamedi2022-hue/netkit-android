@@ -273,3 +273,9 @@ The initial PR #6 M89 DNS-SD address-policy patch and its pure-JVM test were **r
 - **Device acceptance: NOT TESTED** — Xiaomi Pad 5 still needs a real SAF provider test for failed selection, grant rollback, and process restart.
 - **Safety/change control:** PR #7 and `main` untouched; no merge, new dependency, paid API, secret, root, permission bypass, or Wi-Fi Analyzer.
 - **Live Google Docs Handoff: SYNC FAILED** — no authorized Docs write/read connector is exposed in this runtime; this GitHub checkpoint is supplementary only.
+
+
+### M96 targeted Android compile request
+
+- **Reason:** M96 changed the Android-specific SAF grant rollback integration in `AndroidShareStorage.kt`; JVM tests cover the rollback policy but do not compile this Android bridge. A single Debug APK assemble/lint/signature check is justified before the Xiaomi Pad 5 provider test.
+- **Scope:** device-test artifact only, not a release. No final/release build requested.
