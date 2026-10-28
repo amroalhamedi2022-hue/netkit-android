@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
+import java.io.IOException
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.UUID
@@ -189,11 +191,21 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
                 val actual = digest.digest().joinToString("") { "%02x".format(it) }
                 if (!actual.equals(expectedSha256, ignoreCase = true)) throw UploadHashMismatchException()
             }
-            ensureSessionValid()
-            if (!temp.renameTo(chosen)) error("Provider cannot finalize this file (rename failed)")
-            // If the lease expires during a provider rename, leave completed=false so
-            // the same DocumentFile handle is deleted in finally rather than published.
-            ensureSessionValid()
+            // SAF rename may return a new document URI. If authorization expires
+            // during publication, rollback must delete that exact published URI;
+            // the pre-rename temp handle may no longer identify the document.
+            GuardedPublication.publish(
+                ensureAuthorized = ensureSessionValid,
+                publish = {
+                    DocumentsContract.renameDocument(context.contentResolver, temp.uri, chosen)
+                        ?: throw IOException("Provider cannot finalize this file (rename failed)")
+                },
+                rollback = { publishedUri ->
+                    if (!DocumentsContract.deleteDocument(context.contentResolver, publishedUri)) {
+                        throw IOException("Provider refused rollback after share session expiry")
+                    }
+                }
+            )
             completed = true
             return@withLock chosen
         } finally {
