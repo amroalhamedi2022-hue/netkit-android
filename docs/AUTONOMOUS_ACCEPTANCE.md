@@ -571,3 +571,17 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Targeted Android compile: PASS**, run [40727418628](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40727418628). The job ran the ZIP archive lease-boundary regression and compiled Android Kotlin/resources **without producing an APK**; this was an integration-compile gate for the production archive change, not a routine package build.
 - **Device acceptance:** NOT TESTED on Xiaomi Pad 5; SAF-provider and Windows ZIP-extraction interoperability remain open. No APK artifact, merge, main write, dependency, paid API, secret, Wi-Fi Analyzer, or Remote Control code.
 - **Live Google Docs handoff:** SYNC FAILED in this runtime; repository ledger is not a replacement for the live Drive document.
+
+
+## M102 — Prevent resurrection of retired DNS-SD stop tickets (2026-10-28)
+
+- **Scope:** PR #7 branch `automation/netkit-zip-stall-guard-20261023` only. PR #6 and `main` untouched.
+- **Finding:** a late `onServiceRegistered` callback could call `requestStop` after a prior unregistration callback had already completed the ticket, re-inserting an obsolete generation into the bounded pending-stop ledger. Repeated stale callbacks could consume the cap and evict genuinely pending stops.
+- **Fix:** `AdvertisementEpoch.requestStop` now creates a ticket only for the currently active generation or preserves an already-pending ticket. Completed/evicted stale generations cannot be re-enqueued. `PeerDiscovery.onUnregistrationFailed` now always surfaces the platform's actual failure, even if its ticket is already retired, without recreating that ticket.
+- **Source commits:** [1d7a8d6](https://github.com/amroalhamedi2022-hue/netkit-android/commit/1d7a8d6e0c69fcbf373856c72de197eb23309de7), [ca9cb8c](https://github.com/amroalhamedi2022-hue/netkit-android/commit/ca9cb8cdd3fd94fb6c683411b97a3f37357e6f86).
+- **Regression commits:** [b2b9c53](https://github.com/amroalhamedi2022-hue/netkit-android/commit/b2b9c534ae025611daf294147919c63074550bb6), [6f9a211](https://github.com/amroalhamedi2022-hue/netkit-android/commit/6f9a21182b988c4cc47a78ade6bb4dba2d416b84).
+- **Local focused Kotlin/JVM harness:** PASS for active-stop fencing, old-ticket completion, duplicate completion, completed/evicted-ticket non-resurrection, and bounded-ledger eviction. This is not a substitute for the full repository QA job.
+- **Exact-head CI:** NOT VERIFIED from this runtime; the available GitHub workflow-run connector exposes PR-triggered runs but not the branch push run for this isolated Draft branch. No CI pass is claimed.
+- **Android compile/APK:** NOT BUILT. Live NSD callback behavior on Xiaomi Pad 5: NOT TESTED.
+- **Remaining gates:** exact-head source QA, Android build when warranted by device acceptance, live NSD stop/restart and stale callback trials, and the existing PR #7 stacked-base review.
+- **Live Google Docs Handoff:** SYNC FAILED; no authorized Docs write/read connector is available in this run. This repository ledger does not replace the live Drive document.
