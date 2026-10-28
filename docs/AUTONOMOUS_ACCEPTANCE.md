@@ -559,3 +559,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **PR state:** #7 remains Draft and based on `feature/netkit-reliability-20261023`; PR #6 and `main` were not modified or merged.
 - **Next:** continue the real SAF/FTP/SFTP interoperability matrix and require a separate targeted Android build only when a device acceptance test needs it.
 
+
+
+## 2026-10-28 — M101 — checksum sidecar shares the ZIP byte quota
+
+- **Scope/branch:** PR #7 only; `automation/netkit-zip-stall-guard-20261023`. PR #6, `main`, and the stacked base were not changed.
+- **Production:** `DirectoryArchive.write` now reserves each known SHA-256 manifest line against the same uncompressed-byte budget before opening that SAF document, and reserves those known manifest bytes while validating each file-stream read. This prevents a file from consuming the budget already needed by its checksum sidecar and avoids reading the full file before discovering a known per-file quota conflict.
+- **Regression tests:** `qa/DirectoryArchiveTest.kt` covers a manifest line that cannot fit before `open()`, and a metered 200-byte stream with a 178-byte combined budget (78-byte checksum line + 100-byte data allowance), which must stop at the first over-budget read.
+- **Production commit:** [`53da2a3`](https://github.com/amroalhamedi2022-hue/netkit-android/commit/53da2a30eac56901fe3a0314be16d8d76474cf4d). **Final source/test head:** [`63e2eb1`](https://github.com/amroalhamedi2022-hue/netkit-android/commit/63e2eb184740121de8873fbbb67b88364a8e0404).
+- **Source CI: PASS**, run [40727418609](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40727418609): static checks, Kotlin/JVM transport/SAF ZIP/session suite, and persistent transfer-queue tests all passed on the exact final source/test head.
+- **Targeted Android compile: PASS**, run [40727418628](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40727418628). The job ran the ZIP archive lease-boundary regression and compiled Android Kotlin/resources **without producing an APK**; this was an integration-compile gate for the production archive change, not a routine package build.
+- **Device acceptance:** NOT TESTED on Xiaomi Pad 5; SAF-provider and Windows ZIP-extraction interoperability remain open. No APK artifact, merge, main write, dependency, paid API, secret, Wi-Fi Analyzer, or Remote Control code.
+- **Live Google Docs handoff:** SYNC FAILED in this runtime; repository ledger is not a replacement for the live Drive document.
