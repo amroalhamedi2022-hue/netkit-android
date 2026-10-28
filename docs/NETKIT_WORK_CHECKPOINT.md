@@ -100,3 +100,13 @@
 - **PR safety:** PR #7 remains Draft and unmergeable against its current base; PR #6 was not changed. No merge, no `main` write, no new dependency, no paid API, no secret or privilege change. No Wi-Fi Analyzer or Remote Control added.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector is available in this run; this checkpoint is not a replacement for the live Drive document.
 
+
+
+## M89 — 2026-10-28 — IPv4-mapped IPv6 peer-policy consistency
+
+- The address-policy refinement is kept on PR #7 because this branch already owns `PeerAddressPolicy` and the expanded DNS-SD lifecycle; the parallel policy prototype on PR #6 was reverted to avoid duplicate security logic.
+- Source/test head: `1ede85bd05d8d6580201171c10d2f7de671c8991`; exact source QA PASS: [40645811813](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40645811813).
+- Added explicit 16-byte IPv4-mapped `Inet6Address` tests. Private and link-local mapped values follow the same IPv4 allowlist; public, loopback and CGNAT mapped values are denied. Existing IPv6 ULA/link-local support is preserved.
+- No APK/build/device acceptance claimed. Real Pad 5 DNS-SD acceptance remains NOT TESTED.
+- PR #7 is still Draft/unmergeable due to stale stacked base SHA `6a971514...`; no rebase/retarget/merge was attempted. PR #6 and `main` remain separate.
+- Live Google Docs Handoff: SYNC FAILED because no authorized Docs write/read connector is available.

@@ -471,3 +471,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Safety/change control:** PR #7 remains Draft and unmergeable; PR #6 untouched. No merge, no `main` write, no secrets, paid APIs, new dependencies, root or Wi-Fi Analyzer.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs write/read connector was available. Keep the existing live Drive document as the required handoff target.
 
+
+
+## M89 — 2026-10-28 — Normalize IPv4-mapped IPv6 peer scope (PR #7)
+
+- **Source/test SHA:** `1ede85bd05d8d6580201171c10d2f7de671c8991` on `automation/netkit-zip-stall-guard-20261023`.
+- **Functional change:** the existing `PeerAddressPolicy` now applies one identical narrow IPv4 allowlist to both four-byte `Inet4Address` values and sixteen-byte IPv4-mapped `Inet6Address` values. Explicit any-local, loopback and multicast rejection remains fail-closed. IPv6 ULA (`fc00::/7`) and link-local (`fe80::/10`) are unchanged. This policy remains address-scope filtering only, not peer authentication or proof that a route stays on Wi-Fi.
+- **Regression:** `qa/PeerAddressPolicyTest.kt` constructs actual 16-byte mapped values directly, then proves private/link-local mapped IPv4 is accepted while public, loopback and CGNAT/shared-space mapped IPv4 is rejected. Existing IPv4/IPv6 boundaries and display-name checks remain.
+- **PASS — exact-source CI:** [run 40645811813](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40645811813). Static source checks and all existing Kotlin/JVM transport, SAF, ZIP, queue, NSD policy/ledger, advertisement epoch, multicast lease and serialized discovery regressions passed. Log evidence: `PASS: NetKit NSD address and display-name policies`.
+- **Build/device:** Android `device-test-build` and `verified-build` jobs were **SKIPPED** on this source-only policy change. No APK was built. Xiaomi Pad 5 mapped-address/dual-stack DNS-SD behavior and second-device discovery remain **NOT TESTED**.
+- **Branch/merge gate:** PR #7 remains Draft and `mergeable=false` because its stacked base SHA is stale (`6a971514...`) while PR #6 has advanced. Do not rebase, retarget, merge or combine branches automatically. PR #6 and `main` were not modified by this PR #7 source commit.
+- **Safety:** no dependency, paid API, secret, root, permission bypass, Wi-Fi Analyzer or merge.
+- **Live Google Docs Handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector is available; this GitHub ledger is not a substitute for the existing live Drive document.
