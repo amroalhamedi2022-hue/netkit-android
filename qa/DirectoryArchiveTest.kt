@@ -339,6 +339,34 @@ fun main() {
         }.exceptionOrNull() is IllegalArgumentException)
     }
     run {
+        // Malformed InputStream counts must fail as I/O errors, not produce a
+        // valid-looking truncated ZIP or reach digest/write with invalid bounds.
+        for (invalidKind in listOf(-2, 1)) {
+            var closed = false
+            val malformed = object : ArchiveDirectorySource {
+                override fun list(folderId: String, offset: Int, limit: Int) =
+                    ArchivePage(listOf(ArchiveFile("bad-read", "bad-read.bin", false)), null)
+                override fun open(fileId: String): InputStream = object : InputStream() {
+                    override fun read(): Int = -1
+                    override fun read(b: ByteArray, off: Int, len: Int): Int =
+                        if (invalidKind == -2) -2 else len + 1
+                    override fun close() { closed = true }
+                }
+            }
+            val error = runCatching {
+                ZipOutputStream(ByteArrayOutputStream()).use {
+                    DirectoryArchive.write("root", malformed, it)
+                }
+            }.exceptionOrNull()
+            val expectedCount = if (invalidKind == -2) "-2" else "65537"
+            check(error is java.io.IOException &&
+                error.message == "Shared file provider returned invalid read count: $expectedCount") {
+                "Invalid archive read count $invalidKind was not rejected: $error"
+            }
+            check(closed) { "Malformed provider stream was not closed" }
+        }
+    }
+    run {
         // Stopping the HTTPS server interrupts its active worker. A provider
         // must not be queried once that worker has already been cancelled.
         var listings = 0
