@@ -1,11 +1,23 @@
 package com.netkit.local.share
 
 /**
- * Pure acceptance policy for restoring a browser-upload destination after process restart.
- * A saved URI is not authority by itself: the exact URI must still have persisted read/write
- * grants and must still resolve to a writable directory.
+ * Pure policy for restoring a browser-upload destination after process restart.
+ * A saved URI is not authority by itself: the exact URI must still have persisted
+ * read/write grants. A provider can be temporarily unavailable even while those
+ * grants remain valid, so grant validity is deliberately separate from usability.
  */
 internal object UploadDestinationPolicy {
+    fun hasPersistedGrant(
+        savedUri: String?,
+        persistedGrantUri: String?,
+        hasReadPermission: Boolean,
+        hasWritePermission: Boolean,
+    ): Boolean =
+        !savedUri.isNullOrBlank() &&
+            savedUri == persistedGrantUri &&
+            hasReadPermission &&
+            hasWritePermission
+
     fun canRestore(
         savedUri: String?,
         persistedGrantUri: String?,
@@ -14,10 +26,7 @@ internal object UploadDestinationPolicy {
         isDirectory: Boolean,
         canWrite: Boolean,
     ): Boolean =
-        !savedUri.isNullOrBlank() &&
-            savedUri == persistedGrantUri &&
-            hasReadPermission &&
-            hasWritePermission &&
+        hasPersistedGrant(savedUri, persistedGrantUri, hasReadPermission, hasWritePermission) &&
             isDirectory &&
             canWrite
 
