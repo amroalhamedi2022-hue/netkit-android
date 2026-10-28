@@ -8,6 +8,9 @@ object NsdDiscoveryPolicy {
     fun isNetKitServiceType(value: String): Boolean =
         value.removeSuffix(".").equals("_netkit._tcp", ignoreCase = true)
 
+    /** NSD ports must be valid before calling NsdServiceInfo.setPort(). */
+    fun isValidPort(port: Int): Boolean = port in 1..65535
+
     /** Reject unsafe DNS-SD labels before resolve and again before publishing a peer. */
     fun isSafeAdvertisement(serviceType: String, serviceName: String): Boolean =
         isNetKitServiceType(serviceType) && PeerDisplayNamePolicy.isSafeServiceName(serviceName)
