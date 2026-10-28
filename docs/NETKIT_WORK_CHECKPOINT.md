@@ -66,3 +66,14 @@
 - The M83 discovery-only debug APK is a separate prior source SHA (`0d1aa2eb...`), package `com.netkit.local.devicetest`; it is not the M84 source and is not a release. Downloaded artifact ZIP SHA-256 `48d680e5b239e849200c8088fcd8a2f43b08b571bf90155436c93f9b50f6f5a4`; extracted APK SHA-256 `3b5b3ec90438d39a3f29a050ceaf058a2daee45418d456ea98642399cdeb7b48`. Artifact expiry and direct link are recorded in `docs/AUTONOMOUS_ACCEPTANCE.md`.
 - Device acceptance remains NOT TESTED: Xiaomi Pad 5 DNS-SD/multicast lifecycle, SAF folder export and Android↔Windows browser interoperability.
 - Live Google Docs handoff remains **SYNC FAILED** because this run has no authorized Docs write/read connector; do not treat this checkpoint as a replacement for that document.
+
+## M85 — Strict ASCII-decimal HTTP framing and Range parsing (2026-10-28)
+
+- **Production change:** `TransferHttpEngine.kt` now parses `Content-Length`, resumable-upload total/offset, and single-byte-range numbers as ASCII decimal digits only. This rejects values that Kotlin's permissive `toLongOrNull()` path could accept with a leading plus sign, as well as negative, hexadecimal-like, fractional, empty and overflowing values. Invalid `Content-Length` is rejected before route dispatch.
+- **Regression coverage:** `qa/CoreSmokeTest.kt` checks the strict parser directly and against the real TLS request parser, including `Content-Length: +0/-0/0x0/overflow`, malformed resumable-upload offsets/totals, and byte ranges such as `bytes=+1-2` and `bytes=-+5`.
+- **Exact source + test SHA:** `bd04bbf33d0f194f0932fbc8232596310115a1bc`.
+- **CI: PASS** — [run 40615821989](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40615821989). Static source checks, Kotlin/JVM HTTPS transport + SAF ZIP + session tests, and persistent transfer queue tests passed on this exact SHA.
+- **Android compile / APK:** **NOT TESTED / NOT BUILT** in this batch. The change was verified in the shared Kotlin/JVM transport harness; no package was needed for this protocol-parser milestone.
+- **Device acceptance:** **NOT TESTED** — Xiaomi Pad 5, real SAF providers, and Android↔Windows browser transfers still need hardware acceptance.
+- **Safety:** no new dependency, paid API, secret or privilege change. PR #6 remains untouched; no merge and no `main` write.
+- **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs/Drive write-and-read connector is available in this run.
