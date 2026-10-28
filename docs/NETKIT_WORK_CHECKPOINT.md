@@ -261,3 +261,15 @@ The initial PR #6 M89 DNS-SD address-policy patch and its pure-JVM test were **r
 - **Safety/change control:** no new dependency, paid API, secret, root, Wi-Fi Analyzer, merge, rebase, force-push or `main` write. PR #6 remains Draft; PR #7 remains separate.
 - **Live Google Docs handoff:** **SYNC FAILED** — this runtime still has no authorized Google Docs write/read connector; this checkpoint is supplementary only.
 
+
+
+## 2026-10-28 — M96 — Make SAF destination-grant rollback failure observable (PR #6)
+
+- **Source/test head:** `94f3a2e5fcdec0dff1521320b9972a65cfef8b7e`.
+- **Finding:** destination selection correctly attempted to release only newly acquired SAF read/write grant bits after validation or preference-commit failure, but `runCatching` silently discarded provider/security exceptions and did not verify that the new bits were actually gone.
+- **Fix:** added `FailedUploadGrantRollback`; the Android path now re-reads the persisted grant set, releases only bits added by this selection attempt, verifies those bits are absent, and preserves the original selection failure as the cause if rollback cannot be confirmed. Added a JVM regression for successful rollback and surfaced provider/lookup failures; wired it into `qa/run_jvm_tests.sh`.
+- **PASS — exact-source QA:** [push run 40688227316](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40688227316) and [PR run 40688236337](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40688236337) both passed on the source/test head above. The log includes `PASS: SAF destination grant rollback preserves primary failure and surfaces cleanup failure`.
+- **Build decision:** no new APK for this source-only failure-reporting fix. Prior targeted PR #6 Debug build [run 40681002301](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40681002301) succeeded on the earlier M95 head `70844f7b481c3bb8cfcdad6bce4586426bad4a2a`; artifact [12812374373](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40681002301/artifacts/12812374373) has GitHub ZIP digest `sha256:9e600a6afda84d294e97861b432dce81a4afa6292e7049f58c5fd868267de416`. **That artifact does not contain M96** and is only a device-test package, not a release.
+- **Device acceptance: NOT TESTED** — Xiaomi Pad 5 still needs a real SAF provider test for failed selection, grant rollback, and process restart.
+- **Safety/change control:** PR #7 and `main` untouched; no merge, new dependency, paid API, secret, root, permission bypass, or Wi-Fi Analyzer.
+- **Live Google Docs Handoff: SYNC FAILED** — no authorized Docs write/read connector is exposed in this runtime; this GitHub checkpoint is supplementary only.
