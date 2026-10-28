@@ -535,3 +535,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Regression:** the test fills all 32 slots, repeats the oldest ticket, adds a 33rd unique ticket, and verifies that the original oldest is evicted while ticket #2 and the newest ticket remain. The source QA job in [run 40689132789](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40689132789) passed on this exact source/test head.
 - **Android compile/device-test build:** the Debug build job in the same run is still **IN PROGRESS** at this checkpoint. The earlier docs-only commit did not trigger the path-filtered build, so the source/test commit carried the explicit `[device-test-build]` marker. Append the final APK SHA/artifact result only after the build/lint/signature/checksum steps finish.
 - **Device acceptance: NOT TESTED** — Xiaomi Pad 5 still needs real NSD failure/stale callback validation.
+
+
+## 2026-10-28 — M97 — Reject malformed SAF/InputStream read counts (NetKit PR #7)
+
+- **Source/test head before this ledger update:** `1fd885e2b1b3a53ceb783b4a293b3daa096508aa` on `automation/netkit-zip-stall-guard-20261023`; PR #7 remains based on `feature/netkit-reliability-20261023`. PR #6 and `main` were not modified.
+- **Functional change:** `StreamReadGuard` now accepts only EOF `-1`, transient zero, or a positive count no greater than the requested length. A malformed provider result can no longer be interpreted as EOF or passed to caller byte accounting. `DirectoryArchive` applies the same rule against its 64 KiB buffer before digest/ZIP writes, preventing a malformed SAF stream from silently producing a truncated archive.
+- **Regression tests added:** the shared-stream tests reject `-2` and `length + 1`; the ZIP tests reject malformed counts and verify the provider stream is closed. Existing transient-zero recovery and bounded permanent-stall cases remain.
+- **PASS — targeted local Kotlin harness:** malformed shared-stream counts rejected; transient zero reads still recover. This is an isolated helper harness, not a full repository run.
+- **CI: NOT VERIFIED:** the available GitHub workflow-run connector only returns pull-request-triggered runs and returned no run for the new push head; combined status also returned no status entries. Do not claim full source QA PASS until the exact-head GitHub Actions result is inspectable.
+- **Build/device:** no APK built; this is an input-stream contract regression. Android compile and full repository CI **NOT VERIFIED**; SAF provider behavior on Xiaomi Pad 5 **NOT TESTED**.
+- **Security/change control:** no new dependency, no Wi-Fi Analyzer, no Remote Control code, no merge, no `main` write, no paid API, no secret.
+- **Live Google Docs handoff:** pending this batch's separate authorized write/read attempt.
