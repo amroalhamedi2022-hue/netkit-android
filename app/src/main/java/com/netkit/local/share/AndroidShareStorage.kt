@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
+import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.UUID
@@ -36,6 +37,7 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
     fun shareSharedStorage() = directoryBrowser.setSharedStorage()
     fun stopFolderShare() = directoryBrowser.disable()
     override fun hasSharedDirectory(): Boolean = directoryBrowser.hasRoot()
+    override fun checksumManifestTempDirectory(): File = context.cacheDir
     override fun browseDirectory(directoryId: String, offset: Int, limit: Int): ShareBrowsePage =
         directoryBrowser.page(directoryId, offset, limit)
     override fun directoryItem(id: String): ShareItem? = directoryBrowser.item(id)

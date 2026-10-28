@@ -305,10 +305,16 @@ fun main() {
             override fun open(fileId: String): InputStream? =
                 payloads[fileId]?.let(::ByteArrayInputStream)
         }
+        val spoolDir = java.io.File.createTempFile("netkit-archive-spool-test-", ".dir")
+        check(spoolDir.delete() && spoolDir.mkdir())
         val bytes = ByteArrayOutputStream()
         val info: ArchiveResult
         ZipOutputStream(bytes).use { info = DirectoryArchive.write(
-            "root", source, it, includeChecksums = true) }
+            "root", source, it, includeChecksums = true,
+            checksumManifestTempDirectory = spoolDir) }
+        check(spoolDir.listFiles()?.isEmpty() == true) {
+            "Successful ZIP export left a checksum spool in the supplied private directory"
+        }
         val unzipped = linkedMapOf<String, ByteArray>()
         ZipInputStream(ByteArrayInputStream(bytes.toByteArray())).use { zip ->
             while (true) {
@@ -329,11 +335,16 @@ fun main() {
         val quotaFailure = runCatching {
             ZipOutputStream(ByteArrayOutputStream()).use {
                 DirectoryArchive.write("root", source, it, maximumBytes = 7,
-                    includeChecksums = true)
+                    includeChecksums = true,
+                    checksumManifestTempDirectory = spoolDir)
             }
         }.exceptionOrNull()
         check(quotaFailure is IllegalStateException &&
             quotaFailure.message == "Archive byte budget exceeded")
+        check(spoolDir.listFiles()?.isEmpty() == true) {
+            "Failed ZIP export left a checksum spool in the supplied private directory"
+        }
+        check(spoolDir.delete())
         // The checksum sidecar consumes one of the actual ZIP-entry quota slots.
         var quotaOpenCalls = 0
         val oneFile = object : ArchiveDirectorySource {

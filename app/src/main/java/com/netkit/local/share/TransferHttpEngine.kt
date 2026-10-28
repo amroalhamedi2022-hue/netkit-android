@@ -35,6 +35,8 @@ interface DirectoryShareStorage {
     fun directoryItem(id: String): ShareItem?
     fun openDirectoryItem(id: String): SharedStream?
     fun hasSharedDirectory(): Boolean
+    /** App-private temporary storage for bounded checksum sidecars during ZIP export. */
+    fun checksumManifestTempDirectory(): File? = null
 }
 class UploadHashMismatchException : IllegalStateException("Upload SHA-256 does not match")
 class UploadPermissionRevokedException : IllegalStateException("Browser upload consent revoked")
@@ -433,6 +435,7 @@ class TransferHttpEngine(
         ZipOutputStream(framed).use { zip ->
             zip.setLevel(Deflater.BEST_SPEED)
             DirectoryArchive.write(id, provider, zip, includeChecksums = true,
+                checksumManifestTempDirectory = store.checksumManifestTempDirectory(),
                 checkActive = { requireLiveShare() })
         }
         framed.finishResponse()

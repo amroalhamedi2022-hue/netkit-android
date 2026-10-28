@@ -142,6 +142,7 @@ object DirectoryArchive {
         maximumBytes: Long = 64L * 1024 * 1024 * 1024,
         includeChecksums: Boolean = false,
         maximumChecksumManifestBytes: Int = 64 * 1024 * 1024,
+        checksumManifestTempDirectory: File? = null,
         checkActive: () -> Unit = {}
     ): ArchiveResult {
         validateDocumentId(rootId)
@@ -155,7 +156,7 @@ object DirectoryArchive {
         // Optional checksum sidecar is reserved before visiting any untrusted SAF name.
         // It detects accidental transfer/extraction corruption, not server authenticity.
         val checksumSpool = if (includeChecksums) {
-            ChecksumManifestSpool.create(maximumChecksumManifestBytes.toLong())
+            ChecksumManifestSpool.create(maximumChecksumManifestBytes.toLong(), checksumManifestTempDirectory)
         } else null
         var checksumBytes = 0L
         val checksumName = "NetKit-SHA256SUMS.txt"
