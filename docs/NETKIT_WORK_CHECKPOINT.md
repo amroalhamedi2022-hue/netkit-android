@@ -143,3 +143,14 @@
 - **Targeted local helper harness: PASS. Full repository CI: NOT VERIFIED** because no exact-head workflow result/status was exposed by the available query. Android compile and Xiaomi Pad 5 provider acceptance: **NOT TESTED**. No APK built for this source-only guard.
 - PR #6 and `main` unchanged; PR #7 remains Draft with its existing stacked-base conflict. No dependency, Wi-Fi Analyzer, paid API, secret, or cross-project code.
 - Live Drive Handoff: **SYNC FAILED** until an authorized Google Docs write/read route is available.
+
+
+## 2026-10-28 — M99 — normalize SAF upload reservation folder scopes
+
+- **Production source:** `app/src/main/java/com/netkit/local/share/UploadNameReservations.kt` (commit [d97c0ff](https://github.com/amroalhamedi2022-hue/netkit-android/commit/d97c0ff1274f7f84ca89552c5b08d96528f806c8)).
+- **Regression tests:** `qa/UploadNameReservationsTest.kt` (final test commit [c2289ba](https://github.com/amroalhamedi2022-hue/netkit-android/commit/c2289ba9d46cc3da5ec2dc6901806cde06a93e5d)).
+- Folder segments in the in-memory upload reservation scope now use NFC normalization and invariant case folding, matching the conservative collision policy already used for destination names. The selected SAF tree URI remains exact and length-prefixed, so equivalent folder aliases in one tree collide safely while different tree URIs remain independent.
+- **CI on final source/test head: NOT VERIFIED.** The available workflow-run lookup returns PR-triggered runs only, while this branch gate is push-triggered; the previous M98 run is not evidence for this new head. Do not infer a pass from it.
+- **APK/build:** NOT BUILT; this is a pure JVM namespace policy change. **Real SAF provider acceptance:** NOT TESTED.
+- PR #7 remains Draft on `automation/netkit-zip-stall-guard-20261023`; PR #6 and `main` unchanged. No new dependency, merge, paid API, secret, Wi-Fi Analyzer, or Remote Control code.
+- **Live Google Docs handoff:** SYNC FAILED; no authorized Docs write/read connector is exposed in this runtime.
