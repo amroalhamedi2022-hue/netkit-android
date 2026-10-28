@@ -82,10 +82,8 @@ assert 'PeerDiscovery' in (root / 'app/src/main/java/com/netkit/local/app/NetKit
 peer_discovery = (root / 'app/src/main/java/com/netkit/local/connectivity/PeerDiscovery.kt').read_text()
 assert 'DiscoveryStateGate' in peer_discovery and 'discoveryGate.runIfActive(epoch)' in peer_discovery, \
     'DNS-SD peer publication must be serialized with stop/service-lost callbacks'
-assert 'NsdDiscoveryPolicy.isSafeAdvertisement(service.serviceType, serviceName)' in peer_discovery, \\
-    'Reject unsafe DNS-SD labels before resolving a peer'
-assert 'NsdDiscoveryPolicy.isSafeAdvertisement(info.serviceType, info.serviceName)' in peer_discovery, \\
-    'Revalidate resolved DNS-SD labels before publishing a peer'
+assert 'NsdDiscoveryPolicy.isSafeAdvertisement(service.serviceType, serviceName)' in peer_discovery, 'Reject unsafe DNS-SD labels before resolving a peer'
+assert 'NsdDiscoveryPolicy.isSafeAdvertisement(info.serviceType, info.serviceName)' in peer_discovery, 'Revalidate resolved DNS-SD labels before publishing a peer'
 assert (root / 'app/src/main/java/com/netkit/local/connectivity/DiscoveryStateGate.kt').is_file()
 assert 'createMulticastLock("NetKitPeerDiscovery")' in peer_discovery
 assert 'multicastLease.acquire()' in peer_discovery and 'multicastLease.release()' in peer_discovery
