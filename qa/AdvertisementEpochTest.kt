@@ -31,5 +31,25 @@ fun main() {
     check(epochs.isStopPending(second))
     check(epochs.completeStop(second))
     check(!epochs.isStopPending(second))
+    // The stop-ticket cap is intentional, but evicting an older ticket must be
+    // observable so the UI can warn that a delayed platform failure may go unreported.
+    val bounded = AdvertisementEpoch()
+    val issued = mutableListOf<Long>()
+    var evictions = 0
+    repeat(40) {
+        val token = bounded.begin()
+        issued += token
+        if (bounded.requestStop(token)) evictions++
+    }
+    check(evictions == 8) { "Expected explicit overflow signal for eight evicted tickets" }
+    check(issued.take(8).none { bounded.isStopPending(it) }) {
+        "The oldest tickets should be evicted at the bounded safety cap"
+    }
+    check(issued.drop(8).all { bounded.isStopPending(it) }) {
+        "The newest pending stops must remain tracked"
+    }
+    check(!bounded.completeStop(issued.first())) { "An evicted ticket must not be resurrected" }
+    check(bounded.completeStop(issued.last())) { "Newest stop ticket should still complete" }
+
     println("PASS: DNS-SD advertisement epochs fence stale callbacks and retain stop-failure evidence")
 }

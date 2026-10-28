@@ -31,17 +31,22 @@ internal class AdvertisementEpoch {
 
     /** Fence a requested stop while retaining enough state to report async failure. */
     @Synchronized
-    fun requestStop(token: Long) {
+    /** Returns true if a pending-stop ticket had to be evicted at the safety cap. */
+    @Synchronized
+    fun requestStop(token: Long): Boolean {
         if (active == token) active = null
         pendingStops.remove(token)
         pendingStops.add(token)
+        var evicted = false
         while (pendingStops.size > maxPendingStops) {
             val iterator = pendingStops.iterator()
             if (iterator.hasNext()) {
                 iterator.next()
                 iterator.remove()
+                evicted = true
             }
         }
+        return evicted
     }
 
     /** Returns true only for a stop that was actually awaiting a platform callback. */

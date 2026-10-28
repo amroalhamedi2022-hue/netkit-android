@@ -191,6 +191,13 @@ class PeerDiscovery(context: Context) {
         }
     }
 
+    private fun requestStopAdvertisement(epoch: Long) {
+        if (advertisementEpoch.requestStop(epoch)) {
+            discoveryWarning.value =
+                "تجاوز سجل إيقاف إعلانات الأجهزة الحد الآمن؛ قد يظل إعلان قديم ظاهرًا على الشبكة."
+        }
+    }
+
     fun advertise(port: Int) {
         stopAdvertising()
         if (!NsdDiscoveryPolicy.isValidPort(port)) {
@@ -216,7 +223,7 @@ class PeerDiscovery(context: Context) {
                 if (!advertisementEpoch.isCurrent(epoch)) {
                     // A stop may race Android's delayed registration callback. Fence it,
                     // but keep a pending ticket so failed cleanup is not silently lost.
-                    advertisementEpoch.requestStop(epoch)
+                    requestStopAdvertisement(epoch)
                     runCatching { manager.unregisterService(this) }
                         .onFailure {
                             advertisementEpoch.completeStop(epoch)
@@ -271,7 +278,7 @@ class PeerDiscovery(context: Context) {
         val epoch = registrationEpoch
         registration = null
         registrationEpoch = null
-        if (epoch != null) advertisementEpoch.requestStop(epoch)
+        if (epoch != null) requestStopAdvertisement(epoch)
         active?.let { listener ->
             runCatching { manager.unregisterService(listener) }
                 .onFailure {
