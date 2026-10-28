@@ -71,10 +71,12 @@ class PeerDiscovery(context: Context) {
                         resolveLedger.clear()
                         found.clear()
                         discoveryWarning.value = "توقف اكتشاف الأجهزة من النظام. أعد المحاولة."
+                        // Release while the gate is held so a new session cannot
+                        // acquire the same non-reference-counted lock before this release.
+                        releaseMulticastLease()
                         true
                     }
                 }
-                if (stopped) releaseMulticastLease()
             }
 
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
@@ -85,10 +87,10 @@ class PeerDiscovery(context: Context) {
                         resolveLedger.clear()
                         found.clear()
                         discoveryWarning.value = "تعذر بدء اكتشاف الأجهزة (رمز $errorCode)."
+                        releaseMulticastLease()
                         true
                     }
                 }
-                if (stopped) releaseMulticastLease()
             }
 
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
@@ -168,28 +170,24 @@ class PeerDiscovery(context: Context) {
             // release before acquisition and leave a leaked multicast lock.
             acquireMulticastLease()
         } ?: return
-        var startFailure: Throwable? = null
         discoveryGate.runIfActive(startedEpoch) {
             if (callback === listener) {
                 runCatching {
                     manager.discoverServices("_netkit._tcp.", NsdManager.PROTOCOL_DNS_SD, listener)
                 }.onFailure { failure ->
-                    startFailure = failure
                     discoveryGate.stop(startedEpoch) {
                         if (callback !== listener) false else {
                             callback = null
                             discoveryEpoch = null
                             resolveLedger.clear()
                             found.clear()
+                            discoveryWarning.value = "تعذر بدء اكتشاف الأجهزة: ${failure.localizedMessage.orEmpty()}"
+                            releaseMulticastLease()
                             true
                         }
                     }
                 }
             }
-        }
-        startFailure?.let {
-            discoveryWarning.value = "تعذر بدء اكتشاف الأجهزة: ${it.localizedMessage.orEmpty()}"
-            releaseMulticastLease()
         }
     }
 
@@ -262,9 +260,11 @@ class PeerDiscovery(context: Context) {
             discoveryEpoch = null
             resolveLedger.clear()
             found.clear()
+            // Keep lock release atomic with invalidating the epoch; a new start
+            // must not inherit a lock that the old stop releases afterward.
+            releaseMulticastLease()
         }
         active?.let { runCatching { manager.stopServiceDiscovery(it) } }
-        releaseMulticastLease()
     }
 
     fun close() { stop(); stopAdvertising() }
