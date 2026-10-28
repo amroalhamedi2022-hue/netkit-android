@@ -6,6 +6,7 @@ import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 
 /** LAN DNS-SD peer sightings. Discovery is NOT authentication or trusted pairing. */
 class PeerDiscovery(context: Context) {
@@ -14,6 +15,7 @@ class PeerDiscovery(context: Context) {
     private val manager = appContext.getSystemService(Context.NSD_SERVICE) as NsdManager
     private val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     val found = mutableStateListOf<Peer>()
+    val discoveryWarning = mutableStateOf<String?>(null)
     private val registry = PeerDiscoveryRegistry()
     private val multicastLockGuard = Any()
     private var multicastLeaseHeld = false
@@ -58,10 +60,13 @@ class PeerDiscovery(context: Context) {
     fun start() {
         if (callback != null) return
         found.clear()
+        discoveryWarning.value = null
         val scanGeneration = registry.beginScan()
         acquireMulticastLease()
         val listener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(serviceType: String) = Unit
+            override fun onDiscoveryStarted(serviceType: String) {
+                if (callback === this) discoveryWarning.value = null
+            }
             override fun onDiscoveryStopped(serviceType: String) {
                 // If Android stops discovery unexpectedly, invalidate outstanding
                 // resolve callbacks rather than letting them repopulate a dead scan.
@@ -69,11 +74,17 @@ class PeerDiscovery(context: Context) {
                     callback = null
                     registry.stop(scanGeneration)
                     found.clear()
+                    discoveryWarning.value = "توقف اكتشاف الأجهزة من النظام. أعد المحاولة."
                     releaseMulticastLease()
                 }
             }
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) { stop() }
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                discoveryWarning.value = "تعذر بدء اكتشاف الأجهزة (رمز $errorCode)."
+                stop()
+            }
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                discoveryWarning.value = "تعذر إيقاف اكتشاف الأجهزة بالكامل (رمز $errorCode)."
+            }
 
             override fun onServiceLost(service: NsdServiceInfo) {
                 if (callback !== this) return
@@ -124,6 +135,7 @@ class PeerDiscovery(context: Context) {
                 registry.stop(scanGeneration)
                 found.clear()
             }
+            discoveryWarning.value = "تعذر بدء اكتشاف الأجهزة: ${it.localizedMessage.orEmpty()}"
             releaseMulticastLease()
         }
     }
