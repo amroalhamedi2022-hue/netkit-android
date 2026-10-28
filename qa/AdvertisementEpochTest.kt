@@ -51,5 +51,25 @@ fun main() {
     check(!bounded.completeStop(issued.first())) { "An evicted ticket must not be resurrected" }
     check(bounded.completeStop(issued.last())) { "Newest stop ticket should still complete" }
 
+    // Re-requesting an already-pending stop must not refresh its age. Otherwise
+    // repeated stale callbacks could keep an old ticket alive and evict a newer one.
+    val ordered = AdvertisementEpoch()
+    val orderedTickets = mutableListOf<Long>()
+    repeat(32) {
+        val token = ordered.begin()
+        check(!ordered.requestStop(token))
+        orderedTickets += token
+    }
+    check(!ordered.requestStop(orderedTickets.first())) {
+        "A duplicate pending stop must not be counted as overflow or reordered"
+    }
+    val newest = ordered.begin()
+    check(ordered.requestStop(newest)) { "The 33rd unique stop must signal ledger overflow" }
+    check(!ordered.isStopPending(orderedTickets.first())) {
+        "Duplicate request improperly refreshed the oldest ticket"
+    }
+    check(ordered.isStopPending(orderedTickets[1]))
+    check(ordered.isStopPending(newest))
+
     println("PASS: DNS-SD advertisement epochs fence stale callbacks and retain stop-failure evidence")
 }

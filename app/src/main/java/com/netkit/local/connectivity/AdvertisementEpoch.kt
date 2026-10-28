@@ -36,7 +36,9 @@ internal class AdvertisementEpoch {
     @Synchronized
     fun requestStop(token: Long): Boolean {
         if (active == token) active = null
-        pendingStops.remove(token)
+        // Repeated callbacks must not refresh an old ticket's age and let it
+        // displace a newer unresolved stop when the bounded ledger fills.
+        if (token in pendingStops) return false
         pendingStops.add(token)
         var evicted = false
         while (pendingStops.size > maxPendingStops) {
