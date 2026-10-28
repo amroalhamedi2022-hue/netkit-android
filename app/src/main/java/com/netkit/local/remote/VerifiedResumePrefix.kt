@@ -51,6 +51,9 @@ object VerifiedResumePrefix {
         var zeros = 0
         while (true) {
             val count = stream.read(buffer, offset, length)
+            if (count < -1 || count > length) {
+                throw IOException("Resume verification stream returned invalid byte count $count for request $length")
+            }
             if (count != 0) return count
             if (++zeros >= 32) throw IOException("Resume verification stream stalled after 32 empty reads")
         }
