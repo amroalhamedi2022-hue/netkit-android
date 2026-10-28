@@ -7,6 +7,10 @@ package com.netkit.local.connectivity
 object NsdDiscoveryPolicy {
     fun isNetKitServiceType(value: String): Boolean =
         value.removeSuffix(".").equals("_netkit._tcp", ignoreCase = true)
+
+    /** Reject unsafe DNS-SD labels before resolve and again before publishing a peer. */
+    fun isSafeAdvertisement(serviceType: String, serviceName: String): Boolean =
+        isNetKitServiceType(serviceType) && PeerDisplayNamePolicy.isSafeServiceName(serviceName)
 }
 
 /** Deduplicates concurrent DNS-SD resolves and rejects stale callbacks after loss/stop. */
