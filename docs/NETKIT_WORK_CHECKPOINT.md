@@ -87,3 +87,16 @@
 - **APK SHA-256:** `b77d918cef26de73bfe3df43aa6733ec641c7079dc3a51c13920eed24cdcd433`. **Artifact ZIP SHA-256:** `b347b9f6157a73f5847d3eb53b0d34e3437444f23e35cd1ff0ddbccaf7085ffd`.
 - **NOT TESTED:** real Xiaomi Pad 5 IPv6-only/dual-stack visibility/reachability; Android↔Android pairing, full transfer resume and FTP/SFTP server acceptance remain open.
 - **PR safety:** PR #7 remains Draft and unmergeable; PR #6 untouched; no merge or main write.
+
+## M87 — 2026-10-28 — DNS-SD peer publication race and multicast-lock lifecycle
+
+- **Functional issue:** a resolved NSD peer could be appended after `onServiceLost` or discovery stop had already cleared the list, because the ticket check, ticket completion and UI-list mutation were separate operations. Start/stop could also race multicast-lock acquisition/release and leave a new scan without its lock.
+- **Source change:** added `connectivity/DiscoveryStateGate.kt` and wired it into `PeerDiscovery.kt`. Resolve completion, service loss, scan stop/restart and multicast lease transitions now serialize under one epoch gate. Stale listener callbacks cannot clear a newer scan or repopulate a stopped scan. The multicast lease is acquired/released while the epoch transition is held to avoid cross-session release races.
+- **Regression:** added `qa/DiscoveryStateGateTest.kt`, covering an in-flight resolve racing service loss, stale callback rejection after stop, and a fresh epoch after restart. Wired it into `qa/run_jvm_tests.sh` and required its production wiring in `qa/check_static.py`.
+- **Exact tested source head:** `4fc7e636afe768ba4f90f58e59ffbb2a4687aafe`.
+- **PASS — source QA:** [run 40633577419](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40633577419). Static checks, Kotlin/JVM HTTPS/SAF ZIP/session tests, persistent queue tests, and the new DNS-SD lifecycle race regression passed. Log confirms: `PASS: DNS-SD peer publication is serialized with loss, stop and restart`.
+- **PASS — Android compile/resource gate:** [run 40633577423](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40633577423). This compiled the Android source; no APK was produced.
+- **Build/device:** no APK build was justified for this state-machine fix. Xiaomi Pad 5 multicast/NSD lifecycle and Android↔Android discovery remain **NOT TESTED** on physical hardware.
+- **PR safety:** PR #7 remains Draft and unmergeable against its current base; PR #6 was not changed. No merge, no `main` write, no new dependency, no paid API, no secret or privilege change. No Wi-Fi Analyzer or Remote Control added.
+- **Live Google Docs handoff:** **SYNC FAILED** — no authorized Google Docs write/read connector is available in this run; this checkpoint is not a replacement for the live Drive document.
+
