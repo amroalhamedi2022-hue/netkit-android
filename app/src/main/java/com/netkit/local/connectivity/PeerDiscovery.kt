@@ -13,22 +13,39 @@ class PeerDiscovery(context: Context) {
     val found = mutableStateListOf<Peer>()
     private var callback: NsdManager.DiscoveryListener? = null
     private var registration: NsdManager.RegistrationListener? = null
+    private val discoveryEpoch = DiscoveryEpoch()
 
     fun start() {
         if (callback != null) return
         found.clear()
+        val generation = discoveryEpoch.begin()
         val listener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(serviceType: String) = Unit
-            override fun onDiscoveryStopped(serviceType: String) = Unit
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) { stop() }
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
-            override fun onServiceLost(service: NsdServiceInfo) { found.removeAll { it.name == service.serviceName } }
+            override fun onDiscoveryStarted(serviceType: String) {
+                if (!discoveryEpoch.isCurrent(generation)) return
+            }
+            override fun onDiscoveryStopped(serviceType: String) {
+                if (!discoveryEpoch.isCurrent(generation)) return
+            }
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                if (discoveryEpoch.isCurrent(generation)) stop()
+            }
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                // stop() already invalidates the generation; do not revive this listener.
+            }
+            override fun onServiceLost(service: NsdServiceInfo) {
+                if (!discoveryEpoch.isCurrent(generation)) return
+                found.removeAll { it.name == service.serviceName }
+            }
             @Suppress("DEPRECATION")
             override fun onServiceFound(service: NsdServiceInfo) {
+                if (!discoveryEpoch.isCurrent(generation)) return
                 if (!service.serviceType.startsWith("_netkit._tcp")) return
                 manager.resolveService(service, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
                     override fun onServiceResolved(info: NsdServiceInfo) {
+                        // NSD resolution is asynchronous and can finish after stop()/restart().
+                        // A stale callback must never repopulate the current device list.
+                        if (!discoveryEpoch.isCurrent(generation)) return
                         val ip = info.host?.hostAddress ?: return
                         val peer = Peer(info.serviceName, ip, info.port)
                         found.removeAll { it.name == peer.name }
@@ -39,7 +56,12 @@ class PeerDiscovery(context: Context) {
         }
         callback = listener
         runCatching { manager.discoverServices("_netkit._tcp.", NsdManager.PROTOCOL_DNS_SD, listener) }
-            .onFailure { callback = null }
+            .onFailure {
+                if (discoveryEpoch.isCurrent(generation)) {
+                    callback = null
+                    discoveryEpoch.invalidate()
+                }
+            }
     }
     fun advertise(port: Int) {
         stopAdvertising()
@@ -61,8 +83,11 @@ class PeerDiscovery(context: Context) {
         registration = null
     }
     fun stop() {
-        callback?.let { runCatching { manager.stopServiceDiscovery(it) } }
+        val listener = callback
         callback = null
+        // Invalidate before asking Android to stop; pending resolve callbacks may still arrive.
+        discoveryEpoch.invalidate()
+        listener?.let { runCatching { manager.stopServiceDiscovery(it) } }
     }
     fun close() { stop(); stopAdvertising() }
 }
