@@ -514,3 +514,15 @@ No merge, no main changes, no new dependency, no Wi-Fi Analyzer and no paid API.
 - **Android compile/APK: NOT BUILT / NOT TESTED** in this batch. Real Android NSD stop-failure behavior and Xiaomi Pad 5 acceptance remain **NOT TESTED**.
 - PR #6 and `main` untouched; no merge, new dependency, paid API, secret, root, permission bypass, or Wi-Fi Analyzer. PR #7 remains Draft and stacked-base mergeability remains unresolved.
 - Live Google Docs Handoff: **SYNC FAILED** — no authorized Docs write/read connector is available in this runtime; this ledger is supplementary, not a replacement.
+
+
+## 2026-10-28 — M96 — Surface DNS-SD stop-ledger overflow (PR #7)
+
+- **Functional source/test head:** `989bd72947baa6f4bcc8098a43e8deea312aca01`; the first Android compile exposed a duplicate `@Synchronized` annotation. Corrected in [`7c4c2974a1aaa635bd2501e4d52e0a09030a62b2`](https://github.com/amroalhamedi2022-hue/netkit-android/commit/7c4c2974a1aaa635bd2501e4d52e0a09030a62b2) without changing the behavior.
+- **Behavior:** `AdvertisementEpoch.requestStop` now signals when the bounded 32-ticket pending-stop ledger evicts an older ticket. `PeerDiscovery` turns that overflow into a visible warning that an older advertisement may still be present. The test fills 40 sequential stop requests, verifies eight evictions, confirms the newest 32 remain tracked, and rejects resurrection of an evicted ticket.
+- **PASS — exact-source QA:** [run 40688550026](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40688550026) passed on corrected source head `7c4c2974a1aaa635bd2501e4d52e0a09030a62b2`; DNS-SD address/name policy, resolve ledger, advertisement epochs, multicast lease and concurrent peer-publication tests passed.
+- **Initial failure retained:** [run 40688288084](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40688288084) failed on the first attempt because the new method accidentally carried two `@Synchronized` annotations; the corrected source is the exact head tested by run 40688550026.
+- **Targeted build reason:** the patch changes Android NSD callback handling, so one Debug APK compile/lint/metadata run is requested by this checkpoint commit to validate Android integration. This is a device-test build, not a release; result pending at entry creation.
+- **Device acceptance: NOT TESTED** — real DNS-SD stop failure and stale-registration callback behavior on Xiaomi Pad 5 remain open.
+- **Safety/change control:** PR #6 and `main` untouched; no merge, dependency, paid API, secret, root, permission bypass or Wi-Fi Analyzer. PR #7 remains Draft and its stacked base is not changed.
+- **Live Google Docs Handoff: SYNC FAILED** — no authorized Docs write/read connector is exposed; this repository ledger is supplementary only.
