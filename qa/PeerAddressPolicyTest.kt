@@ -1,6 +1,18 @@
 package com.netkit.local.connectivity
 
+import java.net.Inet6Address
 import java.net.InetAddress
+
+private fun mappedIpv4(a: Int, b: Int, c: Int, d: Int): InetAddress {
+    val bytes = ByteArray(16)
+    bytes[10] = 0xff.toByte()
+    bytes[11] = 0xff.toByte()
+    bytes[12] = a.toByte()
+    bytes[13] = b.toByte()
+    bytes[14] = c.toByte()
+    bytes[15] = d.toByte()
+    return Inet6Address.getByAddress(null, bytes, null)
+}
 
 fun main() {
     val allowed = listOf(
@@ -9,15 +21,38 @@ fun main() {
     )
     val denied = listOf(
         "8.8.8.8", "1.1.1.1", "172.15.1.1", "172.32.0.1",
-        "192.167.1.1", "127.0.0.1", "0.0.0.0", "224.0.0.1",
-        "::1", "::", "2001:4860:4860::8888", "ff02::1"
+        "192.167.1.1", "100.64.0.1", "127.0.0.1", "0.0.0.0", "224.0.0.1",
+        "::1", "::", "2001:4860:4860::8888", "fec0::1", "ff02::1"
     )
     allowed.forEach { ip ->
-        check(PeerAddressPolicy.isLocalPeer(InetAddress.getByName(ip))) { "Rejected valid local address: $ip" }
+        check(PeerAddressPolicy.isLocalPeer(InetAddress.getByName(ip))) {
+            "Rejected valid local address: $ip"
+        }
     }
     denied.forEach { ip ->
-        check(!PeerAddressPolicy.isLocalPeer(InetAddress.getByName(ip))) { "Accepted nonlocal address: $ip" }
+        check(!PeerAddressPolicy.isLocalPeer(InetAddress.getByName(ip))) {
+            "Accepted nonlocal address: $ip"
+        }
     }
+
+    // Force 16-byte Inet6Address instances so platform-specific mapped-address
+    // normalization cannot hide inconsistent policy behavior.
+    check(PeerAddressPolicy.isLocalPeer(mappedIpv4(192, 168, 50, 10))) {
+        "Accepted private IPv4-mapped IPv6 address was unexpectedly rejected"
+    }
+    check(PeerAddressPolicy.isLocalPeer(mappedIpv4(169, 254, 1, 2))) {
+        "Accepted link-local IPv4-mapped IPv6 address was unexpectedly rejected"
+    }
+    listOf(
+        mappedIpv4(8, 8, 8, 8),
+        mappedIpv4(127, 0, 0, 1),
+        mappedIpv4(100, 64, 0, 1)
+    ).forEach { address ->
+        check(!PeerAddressPolicy.isLocalPeer(address)) {
+            "Accepted a public/loopback/shared IPv4-mapped IPv6 address: $address"
+        }
+    }
+
     val displayable = PeerAddressPolicy.displayableLocalAddresses(
         listOf("192.168.1.10", "fd12:3456::1", "fe80::1", "8.8.8.8", "::1")
             .map(InetAddress::getByName)
