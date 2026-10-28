@@ -120,11 +120,28 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
             uploadDestinationSettings.edit().remove("tree_uri").commit()
             return null
         }
-        if (usableUploadFolder(uri, saved) == null) {
+        // A saved destination is retained while its exact persisted grant exists, even if
+        // a removable/cloud-backed provider is temporarily unavailable at process startup.
+        if (persistedUploadGrantStatus(uri, saved) == false) {
             uploadDestinationSettings.edit().remove("tree_uri").commit()
             return null
         }
         return uri
+    }
+
+    /**
+     * true = exact persisted read/write grant is present; false = known absent/mismatched;
+     * null = Android/provider state could not be inspected. Unknown must not erase the user's
+     * saved destination, because removable or cloud-backed SAF providers can be temporarily down.
+     */
+    private fun persistedUploadGrantStatus(uri: Uri, savedUri: String?): Boolean? = try {
+        val grant = context.contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }
+        UploadDestinationPolicy.hasPersistedGrant(
+            savedUri, grant?.uri?.toString(),
+            grant?.isReadPermission == true, grant?.isWritePermission == true
+        )
+    } catch (_: Exception) {
+        null
     }
 
     private fun usableUploadFolder(uri: Uri, savedUri: String?): DocumentFile? {
@@ -132,11 +149,13 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
         val grant = runCatching {
             context.contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }
         }.getOrNull()
-        val valid = UploadDestinationPolicy.canRestore(
-            savedUri, grant?.uri?.toString(),
-            grant?.isReadPermission == true, grant?.isWritePermission == true,
-            folder.isDirectory, folder.canWrite()
-        )
+        val valid = runCatching {
+            UploadDestinationPolicy.canRestore(
+                savedUri, grant?.uri?.toString(),
+                grant?.isReadPermission == true, grant?.isWritePermission == true,
+                folder.isDirectory, folder.canWrite()
+            )
+        }.getOrDefault(false)
         return folder.takeIf { valid }
     }
 
@@ -149,10 +168,14 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
 
     fun uploadFolderLabel(): String {
         val uri = uploadTree ?: return "لم يتم تحديد مجلد استقبال"
-        val folder = usableUploadFolder(uri, uploadDestinationSettings.getString("tree_uri", null))
+        val savedUri = uploadDestinationSettings.getString("tree_uri", null)
+        val folder = usableUploadFolder(uri, savedUri)
         if (folder == null) {
-            clearUploadDestinationIfCurrent(uri)
-            return "انتهت صلاحية مجلد الاستقبال؛ اختر المجلد مجددًا"
+            if (persistedUploadGrantStatus(uri, savedUri) == false) {
+                clearUploadDestinationIfCurrent(uri)
+                return "انتهت صلاحية مجلد الاستقبال؛ اختر المجلد مجددًا"
+            }
+            return "مجلد الاستقبال غير متاح مؤقتًا أو للكتابة؛ تحقق من موفر الملفات أو اختر مجلدًا آخر"
         }
         return folder.name ?: "مجلد استقبال محدد"
     }
@@ -165,8 +188,11 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
     override fun canUpload(): Boolean {
         if (!browserUploadsEnabled) return false
         val uri = uploadTree ?: return false
-        if (usableUploadFolder(uri, uploadDestinationSettings.getString("tree_uri", null)) != null) return true
-        clearUploadDestinationIfCurrent(uri)
+        val savedUri = uploadDestinationSettings.getString("tree_uri", null)
+        if (usableUploadFolder(uri, savedUri) != null) return true
+        if (persistedUploadGrantStatus(uri, savedUri) == false) {
+            clearUploadDestinationIfCurrent(uri)
+        }
         return false
     }
 
@@ -192,10 +218,14 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
     ): String = uploadLock.withLock {
         ensureSessionValid()
         val treeUri = uploadTree ?: error("No destination folder")
-        val folder = usableUploadFolder(treeUri, uploadDestinationSettings.getString("tree_uri", null))
+        val savedUri = uploadDestinationSettings.getString("tree_uri", null)
+        val folder = usableUploadFolder(treeUri, savedUri)
             ?: run {
-                clearUploadDestinationIfCurrent(treeUri)
-                error("Upload destination permission expired; choose the folder again")
+                if (persistedUploadGrantStatus(treeUri, savedUri) == false) {
+                    clearUploadDestinationIfCurrent(treeUri)
+                    error("Upload destination permission expired; choose the folder again")
+                }
+                error("Upload destination is temporarily unavailable or read-only; reconnect the provider or choose another folder")
             }
         val chosen = uniqueName(folder, fileName)
         // Write into a private-looking temporary document and rename only after full receipt.
