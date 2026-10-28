@@ -428,10 +428,14 @@ fun main() {
     }
     run {
         // Checksum lines are budgeted incrementally, before a huge manifest can accumulate in RAM.
+        var opens = 0
         val source = object : ArchiveDirectorySource {
             override fun list(folderId: String, offset: Int, limit: Int) =
                 ArchivePage(listOf(ArchiveFile("f", "long-name.txt", false)), null)
-            override fun open(fileId: String): InputStream = ByteArrayInputStream(byteArrayOf(1))
+            override fun open(fileId: String): InputStream {
+                opens++
+                return ByteArrayInputStream(byteArrayOf(1))
+            }
         }
         val error = runCatching {
             ZipOutputStream(ByteArrayOutputStream()).use {
@@ -440,6 +444,9 @@ fun main() {
             }
         }.exceptionOrNull()
         check(error is IllegalStateException && error.message == "Archive checksum manifest too large")
+        check(opens == 0) {
+            "Checksum manifest budget must be checked before opening or streaming SAF file content"
+        }
     }
     run {
         // A faulty SAF provider must not repeat the same page forever.
