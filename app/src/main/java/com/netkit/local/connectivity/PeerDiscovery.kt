@@ -214,12 +214,24 @@ class PeerDiscovery(context: Context) {
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
                 if (!advertisementEpoch.isCurrent(epoch)) {
+                    // A stop may race Android's delayed registration callback. Fence it,
+                    // but keep a pending ticket so failed cleanup is not silently lost.
+                    advertisementEpoch.requestStop(epoch)
                     runCatching { manager.unregisterService(this) }
+                        .onFailure {
+                            advertisementEpoch.completeStop(epoch)
+                            discoveryWarning.value =
+                                "تعذر إيقاف إعلان الجهاز القديم: ${it.localizedMessage.orEmpty()}"
+                        }
                 }
             }
 
             override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
-                if (!advertisementEpoch.isCurrent(epoch)) return
+                if (!advertisementEpoch.isCurrent(epoch)) {
+                    // Registration never became active; no unregister callback will follow.
+                    advertisementEpoch.completeStop(epoch)
+                    return
+                }
                 advertisementEpoch.stop(epoch)
                 if (registration === this) registration = null
                 if (registrationEpoch == epoch) registrationEpoch = null
@@ -227,6 +239,7 @@ class PeerDiscovery(context: Context) {
             }
 
             override fun onServiceUnregistered(info: NsdServiceInfo) {
+                if (advertisementEpoch.completeStop(epoch)) return
                 if (advertisementEpoch.isCurrent(epoch) && registration === this) {
                     advertisementEpoch.stop(epoch)
                     registration = null
@@ -235,8 +248,9 @@ class PeerDiscovery(context: Context) {
             }
 
             override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {
-                if (advertisementEpoch.isCurrent(epoch)) {
-                    discoveryWarning.value = "تعذر إيقاف إعلان الجهاز (رمز $errorCode)."
+                val requestedStop = advertisementEpoch.completeStop(epoch)
+                if (requestedStop || advertisementEpoch.isCurrent(epoch)) {
+                    discoveryWarning.value = "تعذر إيقاف إعلان الجهاز (رمز $errorCode). قد يظل ظاهرًا على الشبكة."
                 }
             }
         }
@@ -257,8 +271,15 @@ class PeerDiscovery(context: Context) {
         val epoch = registrationEpoch
         registration = null
         registrationEpoch = null
-        if (epoch != null) advertisementEpoch.stop(epoch)
-        active?.let { runCatching { manager.unregisterService(it) } }
+        if (epoch != null) advertisementEpoch.requestStop(epoch)
+        active?.let { listener ->
+            runCatching { manager.unregisterService(listener) }
+                .onFailure {
+                    if (epoch != null) advertisementEpoch.completeStop(epoch)
+                    discoveryWarning.value =
+                        "تعذر إيقاف إعلان الجهاز: ${it.localizedMessage.orEmpty()}. قد يظل ظاهرًا على الشبكة."
+                }
+        }
     }
 
     fun stop() {
