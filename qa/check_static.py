@@ -84,6 +84,13 @@ assert 'DiscoveryStateGate' in peer_discovery and 'discoveryGate.runIfActive(epo
     'DNS-SD peer publication must be serialized with stop/service-lost callbacks'
 assert 'NsdDiscoveryPolicy.isSafeAdvertisement(service.serviceType, serviceName)' in peer_discovery, 'Reject unsafe DNS-SD labels before resolving a peer'
 assert 'NsdDiscoveryPolicy.isSafeAdvertisement(info.serviceType, info.serviceName)' in peer_discovery, 'Revalidate resolved DNS-SD labels before publishing a peer'
+advertise_start = peer_discovery.index("fun advertise(port: Int)")
+advertise_end = peer_discovery.index("fun stopAdvertising()", advertise_start)
+advertise_body = peer_discovery[advertise_start:advertise_end]
+assert "NsdDiscoveryPolicy.isValidPort(port)" in advertise_body, "Reject invalid NSD advertisement ports before calling setPort"
+assert advertise_body.index("isValidPort(port)") < advertise_body.index("setPort(port)"), "NSD advertisement port must be validated before setPort"
+assert "PeerDisplayNamePolicy.isSafeServiceName(name)" in advertise_body, "Validate the locally generated NSD label before registration"
+assert "!NsdDiscoveryPolicy.isValidPort(info.port)" in peer_discovery, "Reject invalid resolved NSD ports"
 assert (root / 'app/src/main/java/com/netkit/local/connectivity/DiscoveryStateGate.kt').is_file()
 assert 'createMulticastLock("NetKitPeerDiscovery")' in peer_discovery
 assert 'multicastLease.acquire()' in peer_discovery and 'multicastLease.release()' in peer_discovery
