@@ -626,4 +626,65 @@ fun main() {
             tooLong.message == "Colliding or too-long archive path")
     }
 
+
+    run {
+        // The checksum sidecar is part of the total archive byte budget and should
+        // be rejected before a provider stream is opened when its line cannot fit.
+        var openCalls = 0
+        val tinyBudgetSource = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("tiny", "payload.bin", false)), null)
+            override fun open(fileId: String): InputStream? {
+                openCalls++
+                return ByteArrayInputStream(byteArrayOf(1))
+            }
+        }
+        val tooSmall = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", tinyBudgetSource, it,
+                    maximumBytes = 10, includeChecksums = true)
+            }
+        }.exceptionOrNull()
+        check(tooSmall is IllegalStateException &&
+            tooSmall.message == "Archive byte budget exceeded")
+        check(openCalls == 0) { "Checksum bytes must be reserved before opening SAF content" }
+    }
+    run {
+        // A file must not consume bytes already reserved for its checksum line.
+        // With a 78-byte line and 178-byte total budget, only 100 file bytes fit.
+        val payload = ByteArray(200) { it.toByte() }
+        var bytesRead = 0
+        val metered = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int) =
+                ArchivePage(listOf(ArchiveFile("large", "payload.bin", false)), null)
+            override fun open(fileId: String): InputStream = object : InputStream() {
+                private var index = 0
+                override fun read(): Int {
+                    if (index >= payload.size) return -1
+                    bytesRead++
+                    return payload[index++].toInt() and 255
+                }
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    if (index >= payload.size) return -1
+                    val count = minOf(1, len, payload.size - index)
+                    payload.copyInto(b, off, index, index + count)
+                    index += count
+                    bytesRead += count
+                    return count
+                }
+            }
+        }
+        val failure = runCatching {
+            ZipOutputStream(ByteArrayOutputStream()).use {
+                DirectoryArchive.write("root", metered, it,
+                    maximumBytes = 178, includeChecksums = true)
+            }
+        }.exceptionOrNull()
+        check(failure is IllegalStateException &&
+            failure.message == "Archive byte budget exceeded")
+        check(bytesRead == 101) {
+            "Expected 100 data bytes plus the first over-budget read, got $bytesRead"
+        }
+    }
+
 }
