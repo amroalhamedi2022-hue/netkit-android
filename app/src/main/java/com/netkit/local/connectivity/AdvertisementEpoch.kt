@@ -29,9 +29,10 @@ internal class AdvertisementEpoch {
         if (active == token) active = null
     }
 
-    /** Fence a requested stop while retaining enough state to report async failure. */
-    @Synchronized
-    /** Returns true if a pending-stop ticket had to be evicted at the safety cap. */
+    /**
+     * Fence a requested stop while retaining enough state to report async failure.
+     * @return true if a pending-stop ticket had to be evicted at the safety cap.
+     */
     @Synchronized
     fun requestStop(token: Long): Boolean {
         if (active == token) active = null
