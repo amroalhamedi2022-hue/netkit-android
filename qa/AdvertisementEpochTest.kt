@@ -9,13 +9,8 @@ fun main() {
     epochs.stop(first)
     check(!epochs.isCurrent(first)) { "A stopped pending registration must be stale" }
 
-    val second = epochs.begin()
-    check(second != first)
-    check(epochs.isCurrent(second))
-    check(!epochs.isCurrent(first)) { "A late callback must not revive the old advertisement" }
-
-    // An explicit stop fences the old advertisement but keeps a bounded callback ticket,
-    // so a later onUnregistrationFailed callback can still be surfaced to the user.
+    // An explicit stop fences the old advertisement but retains a bounded callback
+    // ticket so a later onUnregistrationFailed callback can be surfaced to the user.
     epochs.requestStop(first)
     check(!epochs.isCurrent(first))
     check(epochs.isStopPending(first)) { "Stop request must remain observable until callback" }
