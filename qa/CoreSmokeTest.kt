@@ -60,6 +60,24 @@ fun main(args: Array<String>) {
         check(attempts == 33) { "Unexpected zero-read retry budget: $attempts" }
     }
     run {
+        // A non-conforming provider must not return an impossible count that
+        // the caller mistakes for EOF or uses beyond the requested buffer.
+        for (reported in listOf(-2, 9)) {
+            val malformed = object : InputStream() {
+                override fun read(): Int = -1
+                override fun read(b: ByteArray, off: Int, len: Int): Int =
+                    if (reported == -2) -2 else len + 1
+            }
+            val error = runCatching {
+                StreamReadGuard.read(malformed, ByteArray(8), 0, 8)
+            }.exceptionOrNull()
+            check(error is java.io.IOException &&
+                error.message == "Shared stream provider returned invalid read count: $reported") {
+                "Invalid provider count $reported was not rejected: $error"
+            }
+        }
+    }
+    run {
         // Cancellation while backing off must promptly release a worker instead
         // of waiting for all 32 malformed-provider retries.
         val enteredRead = CountDownLatch(1)
