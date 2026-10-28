@@ -75,6 +75,16 @@ fun main() {
         check(unicodeNames.reserve("same.txt", scope = treeA) { false } == "same.txt")
         check(unicodeNames.reserve("same.txt", scope = treeB) { false } == "same.txt")
         check(unicodeNames.reserve("same.txt", scope = treeA) { false } == "same (2).txt")
+        // Folder aliases must share a reservation scope even when a SAF provider
+        // normalizes Unicode or treats case as equivalent.
+        val folderScopeNfc = uploadReservationScope(
+            "content://provider/tree/alpha", listOf("caf\\u00e9", "Reports"))
+        val folderScopeAlias = uploadReservationScope(
+            "content://provider/tree/alpha", listOf("cafe\\u0301", "REPORTS"))
+        check(folderScopeNfc == folderScopeAlias)
+        val folderScopedReservations = UploadNameReservations()
+        check(folderScopedReservations.reserve("notes.txt", scope = folderScopeNfc) { false } == "notes.txt")
+        check(folderScopedReservations.reserve("notes.txt", scope = folderScopeAlias) { false } == "notes (2).txt")
     }
 
     // A provider may report a successful rename before findFile() reflects it.
