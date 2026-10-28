@@ -3,170 +3,120 @@ package com.netkit.local.connectivity
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
-import android.net.wifi.WifiManager
 import android.os.Build
-import java.util.concurrent.atomic.AtomicBoolean
 import androidx.compose.runtime.mutableStateListOf
 
 /** LAN DNS-SD peer sightings. Discovery is NOT authentication or trusted pairing. */
 class PeerDiscovery(context: Context) {
     data class Peer(val name: String, val address: String, val port: Int)
-    private val appContext = context.applicationContext
-    private val manager = appContext.getSystemService(Context.NSD_SERVICE) as NsdManager
-    private val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-    private val androidMulticastLock = wifi.createMulticastLock("NetKitPeerDiscovery").apply {
-        setReferenceCounted(false)
-    }
-    private val multicastLease = MulticastLockLease(
-        acquireAction = { if (!androidMulticastLock.isHeld) androidMulticastLock.acquire() },
-        releaseAction = { if (androidMulticastLock.isHeld) androidMulticastLock.release() }
-    )
-    val discoveryWarning = androidx.compose.runtime.mutableStateOf<String?>(null)
+    private val manager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
     val found = mutableStateListOf<Peer>()
+    private val registry = PeerDiscoveryRegistry()
     private var callback: NsdManager.DiscoveryListener? = null
-    private val advertisementLock = Any()
-    private val advertisementEpoch = AdvertisementEpoch()
-    private data class AdvertisementRegistration(
-        val epoch: Long,
-        val listener: NsdManager.RegistrationListener
-    )
-    private var registration: AdvertisementRegistration? = null
-    private var discoveryEpoch = 0L
-    private val resolutionLedger = NsdResolveLedger(maxPending = 128)
+    private var registration: NsdManager.RegistrationListener? = null
 
     fun start() {
         if (callback != null) return
         found.clear()
-        resolutionLedger.clear()
-        discoveryWarning.value = null
-        runCatching { multicastLease.acquire() }.onFailure {
-            // Discovery can still work on some interfaces, but never hide the degraded receive path.
-            discoveryWarning.value = "تعذر تفعيل استقبال multicast؛ قد لا تظهر بعض الأجهزة."
-        }
-        val epoch = ++discoveryEpoch
+        val scanGeneration = registry.beginScan()
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) = Unit
             override fun onDiscoveryStopped(serviceType: String) {
-                if (epoch == discoveryEpoch) stop()
+                // If Android stops discovery unexpectedly, invalidate outstanding
+                // resolve callbacks rather than letting them repopulate a dead scan.
+                if (callback === this) {
+                    callback = null
+                    registry.stop(scanGeneration)
+                    found.clear()
+                }
             }
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                if (epoch == discoveryEpoch) stop()
-            }
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) { stop() }
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+
             override fun onServiceLost(service: NsdServiceInfo) {
-                if (epoch != discoveryEpoch) return
-                // Invalidate an in-flight resolve: its late callback must not resurrect a lost peer.
-                resolutionLedger.invalidate(service.serviceName)
-                found.removeAll { it.name == service.serviceName }
+                if (callback !== this) return
+                if (registry.markLost(scanGeneration, service.serviceName)) {
+                    found.removeAll { it.name == service.serviceName }
+                }
             }
+
             @Suppress("DEPRECATION")
             override fun onServiceFound(service: NsdServiceInfo) {
-                if (epoch != discoveryEpoch || !NsdDiscoveryPolicy.isNetKitServiceType(service.serviceType)) return
-                val name = service.serviceName
-                // Service names are unauthenticated network input. Reject spoofing controls,
-                // malformed Unicode and overlong labels before allocating an async resolve.
-                if (!PeerDisplayNamePolicy.isSafeServiceName(name)) return
-                // NSD advertisements are untrusted. Deduplicate in-flight resolves and cap
-                // outstanding work so repeated announcements cannot flood the resolver.
-                val ticket = resolutionLedger.begin(name) ?: return
-                runCatching {
-                    manager.resolveService(service, object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                            if (epoch == discoveryEpoch) resolutionLedger.finish(name, ticket)
+                if (callback !== this || !service.serviceType.startsWith("_netkit._tcp")) return
+                val ticket = registry.requestResolve(scanGeneration, service.serviceName) ?: return
+                val resolveListener = object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                        if (callback === listener) registry.markResolveFailed(ticket)
+                    }
+
+                    override fun onServiceResolved(info: NsdServiceInfo) {
+                        if (callback !== listener || !registry.isCurrent(ticket)) return
+                        val host = info.host
+                        if (info.serviceName != ticket.serviceName ||
+                            !info.serviceType.startsWith("_netkit._tcp") ||
+                            info.port !in 1..65535 ||
+                            host == null ||
+                            !PeerAddressPolicy.isLocalPeer(host)
+                        ) {
+                            registry.markResolveFailed(ticket)
+                            return
                         }
-                        override fun onServiceResolved(info: NsdServiceInfo) {
-                            if (epoch != discoveryEpoch || !resolutionLedger.finish(name, ticket)) return
-                            val host = info.host ?: return
-                            if (!PeerAddressPolicy.isLocalPeer(host) || info.port !in 1..65535) return
-                            val peer = Peer(name, host.hostAddress ?: return, info.port)
-                            found.removeAll { it.name == peer.name }
-                            if (found.size >= 128) found.removeAt(0)
-                            found.add(peer)
-                        }
-                    })
-                }.onFailure {
-                    resolutionLedger.finish(name, ticket)
+                        val ip = host.hostAddress
+                        if (!registry.markResolved(ticket)) return
+                        val peer = Peer(info.serviceName, ip, info.port)
+                        // Keep same-named peers at distinct local endpoints separate.
+                        found.removeAll { it.name == peer.name && it.address == peer.address && it.port == peer.port }
+                        found.add(peer)
+                    }
                 }
+                runCatching { manager.resolveService(service, resolveListener) }
+                    .onFailure { registry.markResolveFailed(ticket) }
             }
         }
         callback = listener
-        runCatching { manager.discoverServices("_netkit._tcp.", NsdManager.PROTOCOL_DNS_SD, listener) }
-            .onFailure {
+        runCatching {
+            manager.discoverServices("_netkit._tcp.", NsdManager.PROTOCOL_DNS_SD, listener)
+        }.onFailure {
+            if (callback === listener) {
                 callback = null
-                discoveryEpoch++
-                resolutionLedger.clear()
-                runCatching { multicastLease.release() }
-                discoveryWarning.value = "تعذر بدء اكتشاف DNS-SD على هذه الشبكة."
+                registry.stop(scanGeneration)
+                found.clear()
             }
+        }
     }
+
     fun advertise(port: Int) {
         stopAdvertising()
         if (port <= 0) return
         val name = "NetKit-${Build.MODEL.take(16).replace(Regex("[^a-zA-Z0-9_-]"), "-")}"
-        val service = NsdServiceInfo().apply { serviceName = name; serviceType = "_netkit._tcp."; setPort(port) }
-        val epoch = advertisementEpoch.begin()
-        val unregisterRetry = AtomicBoolean(false)
+        val service = NsdServiceInfo().apply {
+            serviceName = name
+            serviceType = "_netkit._tcp."
+            setPort(port)
+        }
         val listener = object : NsdManager.RegistrationListener {
-            override fun onServiceRegistered(info: NsdServiceInfo) {
-                // registerService is asynchronous: stopAdvertising may have run before this callback.
-                // A stale listener must immediately revoke its late registration.
-                if (!advertisementEpoch.isCurrent(epoch)) {
-                    runCatching { manager.unregisterService(this) }
-                }
-            }
-            override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
-                advertisementEpoch.stop(epoch)
-                synchronized(advertisementLock) {
-                    if (registration?.epoch == epoch) registration = null
-                }
-            }
-            override fun onServiceUnregistered(info: NsdServiceInfo) {
-                advertisementEpoch.stop(epoch)
-                synchronized(advertisementLock) {
-                    if (registration?.epoch == epoch) registration = null
-                }
-            }
-            override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {
-                // A failed early unregister can precede onServiceRegistered. Retry once here
-                // only for a stale listener; onServiceRegistered also handles that ordering.
-                if (!advertisementEpoch.isCurrent(epoch) && unregisterRetry.compareAndSet(false, true)) {
-                    runCatching { manager.unregisterService(this) }
-                }
-            }
+            override fun onServiceRegistered(info: NsdServiceInfo) = Unit
+            override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) = Unit
+            override fun onServiceUnregistered(info: NsdServiceInfo) = Unit
+            override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) = Unit
         }
-        synchronized(advertisementLock) {
-            registration = AdvertisementRegistration(epoch, listener)
-        }
+        registration = listener
         runCatching { manager.registerService(service, NsdManager.PROTOCOL_DNS_SD, listener) }
-            .onFailure {
-                advertisementEpoch.stop(epoch)
-                synchronized(advertisementLock) {
-                    if (registration?.epoch == epoch) registration = null
-                }
-            }
+            .onFailure { registration = null }
     }
+
     fun stopAdvertising() {
-        val current = synchronized(advertisementLock) {
-            val value = registration
-            if (value != null) {
-                // Invalidate the callback before touching the platform API; unregister may race
-                // registration and throw, in which case onServiceRegistered must retry cleanup.
-                advertisementEpoch.stop(value.epoch)
-                registration = null
-            }
-            value
-        }
-        current?.let { runCatching { manager.unregisterService(it.listener) } }
+        registration?.let { runCatching { manager.unregisterService(it) } }
+        registration = null
     }
+
     fun stop() {
-        discoveryEpoch++
-        resolutionLedger.clear()
-        found.clear()
-        callback?.let { runCatching { manager.stopServiceDiscovery(it) } }
+        val active = callback
         callback = null
-        runCatching { multicastLease.release() }.onFailure {
-            discoveryWarning.value = "تعذر تحرير قفل استقبال multicast؛ أعد فتح شاشة الأجهزة للتحقق."
-        }
+        registry.stop()
+        active?.let { runCatching { manager.stopServiceDiscovery(it) } }
+        found.clear()
     }
+
     fun close() { stop(); stopAdvertising() }
 }
