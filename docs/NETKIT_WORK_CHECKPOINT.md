@@ -204,3 +204,17 @@ No merge, no main changes, no new dependency or paid API.
 - **Device acceptance:** **NOT TESTED** — still requires Xiaomi Pad 5 with a user-selected SAF destination and a controlled share-expiry/rollback scenario. Compile success alone is not provider/device acceptance.
 - **Safety:** no dependency, paid API, secret, root, merge, or `main` write. Browser upload remains opt-in and the temporary share lease remains authoritative.
 - **Live Google Docs handoff:** **SYNC FAILED** — no authorized Docs write/read connector is available in this run.
+
+
+## 2026-10-28 — M89: restrict DNS-SD sightings to LAN-scoped addresses (PR #6)
+
+- **Scope:** `feature/netkit-reliability-20261023` / PR #6 only. PR #7 and `main` were not changed.
+- **Functional change:** added `LanPeerAddressPolicy` and apply it to resolved `NsdServiceInfo.host` values before publishing a peer. Accepted address classes are RFC1918 IPv4, IPv4 link-local, IPv6 ULA (`fc00::/7`) and IPv6 link-local (`fe80::/10`), including IPv4-mapped IPv6 only when the embedded IPv4 address is in the same allowlist. Loopback, unspecified, multicast, CGNAT, documentation/global IPv4, global/site-local IPv6 and other unsupported address forms are rejected. A disallowed re-resolution also removes the previous entry with that service name.
+- **Security boundary:** this is a defense-in-depth address filter, not authentication and not proof that a route is physically on the same Wi-Fi; private VPN routes can still exist. DNS-SD sightings never grant trust or transfer permission.
+- **Regression:** new pure-JVM `qa/LanPeerAddressPolicyTest.kt` covers IPv4/IPv6 allowed and denied boundaries; `qa/run_jvm_tests.sh` runs it and `qa/check_static.py` asserts the filter is wired into `PeerDiscovery`.
+- **Exact source/test SHA:** `824b4fbfb00047253ba05301f42578b512175a4e`.
+- **PASS — exact-source QA:** [run 40644417127](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40644417127) and PR-triggered [run 40644411018](https://github.com/amroalhamedi2022-hue/netkit-android/actions/runs/40644411018). Static checks, Kotlin/JVM HTTPS/SAF/ZIP/session/queue tests and the new LAN-address regression passed. Log evidence: “PASS: DNS-SD peer addresses are restricted to private/link-local IPv4 and ULA/link-local IPv6”.
+- **Targeted Android compile/package:** requested by this checkpoint commit as a one-off device-test build because the changed guard is called from Android NSD resolution; result pending at checkpoint creation. This is not a final release.
+- **Device acceptance:** NOT TESTED — Xiaomi Pad 5 must still discover legitimate IPv4/IPv6 LAN peers, reject out-of-scope addresses, and verify stop/restart behavior on a real LAN.
+- **Safety:** no new dependency, paid API, secret, root, permission bypass, merge or `main` write. PR #7 remains separate and unchanged.
+- **Live Google Docs Handoff:** SYNC FAILED — no authorized Google Docs write/read connector is available in this run; this checkpoint is not a substitute for the live Drive document.
