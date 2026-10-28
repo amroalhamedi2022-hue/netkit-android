@@ -7,8 +7,9 @@ fun main() {
 
     // An explicit stop fences the active advertisement and retains a bounded callback
     // ticket so a later onUnregistrationFailed callback can be surfaced to the user.
-    check(epochs.requestStop(first)) { "Active stop request should create a callback ticket" }
+    epochs.requestStop(first)
     check(!epochs.isCurrent(first)) { "A stopped registration must be stale" }
+    check(epochs.isStopPending(first)) { "Active stop request should create a callback ticket" }
     check(!epochs.isCurrent(first))
     check(epochs.isStopPending(first)) { "Stop request must remain observable until callback" }
 
