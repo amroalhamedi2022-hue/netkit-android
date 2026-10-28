@@ -10,6 +10,7 @@ import java.io.InterruptedIOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicLong
 import java.net.URI
 import java.net.InetAddress
 import java.nio.charset.StandardCharsets
@@ -330,6 +331,79 @@ fun main(args: Array<String>) {
         check(runCatching { java.net.Socket("127.0.0.1", engine.port).use { } }.isFailure)
         println("PASS: index/list, auth denial, socket cleanup, fixed/chunked/resumable downloads, 6 MiB exact upload, SHA-256 verified upload/mismatch/invalid-digest, filenames, upload consent, max-size, closed listener")
     }
+    // Active downloads and recursive ZIP exports must stop when the bearer lease expires,
+    // not merely reject the next HTTP request. Injected monotonic time makes this deterministic.
+    fun assertMidStreamLeaseExpiry(path: String, archive: Boolean) {
+        val clock = AtomicLong(0L)
+        fun expiringStream(): InputStream = object : InputStream() {
+            private var emitted = false
+            override fun read(): Int {
+                val one = ByteArray(1)
+                val count = read(one, 0, 1)
+                return if (count < 0) -1 else one[0].toInt() and 0xff
+            }
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (emitted) return -1
+                emitted = true
+                clock.set(1_500_000_000L) // advance beyond the 1-second share lease mid-read
+                val count = minOf(length, initial.size)
+                System.arraycopy(initial, 0, buffer, offset, count)
+                return count
+            }
+        }
+        val slowStore = object : ShareStorage by store, DirectoryShareStorage by store {
+            override fun open(id: String): SharedStream? =
+                if (!archive && id == itemId) SharedStream(expiringStream(), initial.size.toLong())
+                else store.open(id)
+
+            override fun openDirectoryItem(id: String): SharedStream? =
+                if (archive && id == nestedId) SharedStream(expiringStream(), initial.size.toLong())
+                else store.openDirectoryItem(id)
+        }
+        TransferHttpEngine(
+            serverSsl.serverSocketFactory,
+            slowStore,
+            sessionLifetimeMillis = 1_000L,
+            nowNanos = { clock.get() }
+        ).use { timed ->
+            timed.start()
+            val url = URI("https://127.0.0.1:${timed.port}/s/${timed.token}$path").toURL()
+            val connection = url.openConnection() as HttpsURLConnection
+            connection.sslSocketFactory = clientSsl.socketFactory
+            connection.hostnameVerifier = HostnameVerifier { _, _ -> true }
+            try {
+                check(connection.responseCode == 200) { "Transfer should start before the injected expiry" }
+                val received = java.io.ByteArrayOutputStream()
+                val failure = runCatching {
+                    connection.inputStream.use { input ->
+                        val buffer = ByteArray(4096)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            received.write(buffer, 0, count)
+                        }
+                    }
+                }.exceptionOrNull()
+                check(clock.get() >= 1_000_000_000L) { "The stream did not cross the lease deadline" }
+                check(failure is IOException) {
+                    "Expired ${if (archive) "ZIP" else "file"} transfer must end as an incomplete HTTP body, got $failure"
+                }
+                if (!archive) {
+                    check(received.size() == 0) { "No file bytes may be sent after the lease expires" }
+                } else {
+                    check(!String(received.toByteArray(), StandardCharsets.UTF_8).contains("NetKit test payload")) {
+                        "ZIP file payload must not be emitted after the lease expires"
+                    }
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+    }
+    assertMidStreamLeaseExpiry("/file/$itemId", archive = false)
+    assertMidStreamLeaseExpiry("/browse-archive/$folderId", archive = true)
+    println("PASS: active file and recursive ZIP downloads are revoked mid-stream when the share lease expires")
+
     // End-to-end TLS regression: expired tokens must reject real HTTPS requests, not just report a timer.
     TransferHttpEngine(serverSsl.serverSocketFactory, store, sessionLifetimeMillis = 40L).use { timed ->
         timed.start()
