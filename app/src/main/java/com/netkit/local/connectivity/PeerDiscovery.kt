@@ -112,8 +112,8 @@ class PeerDiscovery(context: Context) {
 
             @Suppress("DEPRECATION")
             override fun onServiceFound(service: NsdServiceInfo) {
-                if (!NsdDiscoveryPolicy.isNetKitServiceType(service.serviceType)) return
                 val serviceName = service.serviceName
+                if (!NsdDiscoveryPolicy.isSafeAdvertisement(service.serviceType, serviceName)) return
                 val discoveryListener = this
                 val ticket = discoveryGate.withActive(epoch) {
                     if (callback === discoveryListener) resolveLedger.begin(serviceName) else null
@@ -128,7 +128,7 @@ class PeerDiscovery(context: Context) {
                     override fun onServiceResolved(info: NsdServiceInfo) {
                         val host = info.host
                         if (info.serviceName != serviceName ||
-                            !NsdDiscoveryPolicy.isNetKitServiceType(info.serviceType) ||
+                            !NsdDiscoveryPolicy.isSafeAdvertisement(info.serviceType, info.serviceName) ||
                             info.port !in 1..65535 ||
                             host == null ||
                             !PeerAddressPolicy.isLocalPeer(host)
