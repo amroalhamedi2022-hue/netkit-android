@@ -2,8 +2,14 @@ package com.netkit.local.share
 
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.IOException
+import java.io.InterruptedIOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.zip.ZipOutputStream
+import java.util.zip.Deflater
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
@@ -18,6 +24,20 @@ import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLServerSocketFactory
 import kotlin.concurrent.thread
 
+/**
+ * Accept only non-global peers for the local HTTPS share. IPv6 unique-local
+ * (fc00::/7) is private LAN space too; Java's isSiteLocalAddress() does not
+ * classify it as site-local. This is a network-scope guard, not peer auth.
+ */
+internal fun isAllowedLanPeer(address: InetAddress): Boolean {
+    if (address.isSiteLocalAddress || address.isLinkLocalAddress || address.isLoopbackAddress) {
+        return true
+    }
+    val bytes = address.address
+    return address is Inet6Address && bytes.size == 16 &&
+        (bytes[0].toInt() and 0xFE) == 0xFC
+}
+
 /** Java/JVM-only transport core. Android storage and certificate code are adapters. */
 data class ShareItem(val id: String, val name: String, val length: Long?)
 data class SharedStream(val stream: InputStream, val length: Long?)
@@ -31,24 +51,165 @@ interface DirectoryShareStorage {
 }
 class UploadHashMismatchException : IllegalStateException("Upload SHA-256 does not match")
 
+/** Raised when a browser upload outlives or loses its temporary HTTPS share lease. */
+class UploadSessionExpiredException : IOException("Sharing session expired during upload")
+
+/**
+ * Re-checks both the bearer-session lease and an absolute per-request body deadline.
+ * SO_TIMEOUT alone is only a per-read idle timeout: a peer could otherwise drip a
+ * byte before every timeout and occupy one of the bounded upload workers until the
+ * share lease expires. Each blocking read is capped to the smaller remaining budget.
+ */
+internal class LeaseBoundUploadInputStream(
+    private val delegate: InputStream,
+    private val socket: java.net.Socket,
+    private val bodyTimeoutMillis: Int,
+    private val lease: SessionLease,
+    private val nowNanos: () -> Long = System::nanoTime
+) : InputStream() {
+    private val bodyStartedAtNanos = nowNanos()
+    private val bodyTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(bodyTimeoutMillis.toLong())
+
+    init {
+        require(bodyTimeoutMillis in 1..600_000) { "Body timeout must be between 1 ms and 10 min" }
+    }
+
+    private fun remainingBodyNanos(): Long {
+        val elapsed = nowNanos() - bodyStartedAtNanos
+        if (elapsed < 0L || elapsed >= bodyTimeoutNanos) {
+            throw java.net.SocketTimeoutException("Upload body exceeded absolute deadline")
+        }
+        return bodyTimeoutNanos - elapsed
+    }
+
+    private fun beforeRead() {
+        val bodyRemainingNanos = remainingBodyNanos()
+        if (!lease.isValid()) throw UploadSessionExpiredException()
+        val leaseRemaining = lease.remainingMillis()
+        if (leaseRemaining <= 0L) throw UploadSessionExpiredException()
+        val bodyRemainingMillis = ((bodyRemainingNanos + 999_999L) / 1_000_000L).coerceAtLeast(1L)
+        socket.soTimeout = minOf(bodyRemainingMillis, leaseRemaining).coerceAtLeast(1L).toInt()
+    }
+
+    private inline fun guardedRead(read: () -> Int): Int {
+        beforeRead()
+        return try {
+            val count = read()
+            remainingBodyNanos()
+            if (!lease.isValid()) throw UploadSessionExpiredException()
+            count
+        } catch (timeout: java.net.SocketTimeoutException) {
+            if (!lease.isValid()) throw UploadSessionExpiredException()
+            // Preserve an idle socket timeout, but prefer the absolute-deadline
+            // diagnosis when a slow trickle consumed the complete body budget.
+            remainingBodyNanos()
+            throw timeout
+        }
+    }
+
+    override fun read(): Int = guardedRead { delegate.read() }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        return guardedRead { delegate.read(buffer, offset, length) }
+    }
+
+    override fun close() = delegate.close()
+}
+
+/** Bounds repeated zero-byte reads from a malformed provider/socket stream. */
+internal object StreamReadGuard {
+    private const val MAX_CONSECUTIVE_ZERO_READS = 32
+
+    fun read(input: InputStream, buffer: ByteArray, offset: Int, length: Int): Int {
+        require(length > 0) { "StreamReadGuard requires a positive read length" }
+        var zeroReads = 0
+        while (true) {
+            if (Thread.currentThread().isInterrupted) {
+                throw InterruptedIOException("Shared stream read cancelled")
+            }
+            val count = input.read(buffer, offset, length)
+            if (count != 0) return count
+            zeroReads++
+            if (zeroReads > MAX_CONSECUTIVE_ZERO_READS) {
+                throw IOException("Input stream stalled after $zeroReads consecutive zero-byte reads")
+            }
+            // Bound CPU use for broken SAF providers while keeping retries responsive.
+            val delayMillis = minOf(16L, (1 shl (zeroReads - 1).coerceAtMost(4)).toLong())
+            try {
+                Thread.sleep(delayMillis)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw InterruptedIOException("Shared stream read cancelled").also {
+                    it.initCause(interrupted)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Read one positive chunk from a request body with a declared Content-Length.
+ * EOF before that length is an upload failure, not a byte count to pass to OutputStream.write.
+ */
+internal fun readRequiredUploadChunk(input: InputStream, buffer: ByteArray, length: Int): Int {
+    require(length > 0) { "Upload read length must be positive" }
+    val count = StreamReadGuard.read(input, buffer, 0, length)
+    if (count < 0) throw java.io.EOFException("Connection closed before complete upload")
+    check(count > 0) { "Upload stream made no progress" }
+    return count
+}
+
 interface ShareStorage {
     fun items(): List<ShareItem>
     fun open(id: String): SharedStream?
     fun canUpload(): Boolean
     fun maxUploadSize(): Long = 16L * 1024 * 1024 * 1024
     fun upload(fileName: String, body: InputStream, length: Long, expectedSha256: String?, progress: (Long) -> Unit): String
+
+    /**
+     * Upload with a live authorization check. Platform stores that publish to SAF
+     * must override this method and check immediately before publication; the
+     * default preserves compatibility for test stores and checks before/after I/O.
+     */
+    fun uploadGuarded(
+        fileName: String,
+        body: InputStream,
+        length: Long,
+        expectedSha256: String?,
+        ensureSessionValid: () -> Unit,
+        progress: (Long) -> Unit
+    ): String {
+        ensureSessionValid()
+        val stored = upload(fileName, body, length, expectedSha256) { current ->
+            ensureSessionValid()
+            progress(current)
+        }
+        ensureSessionValid()
+        return stored
+    }
 }
 
 class TransferHttpEngine(
     private val sslFactory: SSLServerSocketFactory,
     private val storage: ShareStorage,
-    private val progress: (Long, Long) -> Unit = { _, _ -> }
+    private val progress: (Long, Long) -> Unit = { _, _ -> },
+    sessionLifetimeMillis: Long = 30L * 60 * 1000,
+    private val headerTimeoutMillis: Int = 10_000,
+    private val bodyTimeoutMillis: Int = 90_000,
+    private val nowNanos: () -> Long = System::nanoTime
 ) : AutoCloseable {
+    init {
+        require(headerTimeoutMillis in 1..120_000) { "Header timeout must be between 1 ms and 120 s" }
+        require(bodyTimeoutMillis in 1..600_000) { "Body timeout must be between 1 ms and 10 min" }
+    }
     companion object { private const val MAX_UPLOAD = 16L * 1024 * 1024 * 1024 } // 16 GiB hard guard
     private val rng = SecureRandom()
     private val secret = ByteArray(24).also(rng::nextBytes)
     val token: String = Base64.getUrlEncoder().withoutPadding().encodeToString(secret)
     private val prefix = "/s/$token"
+    private val lease = SessionLease(sessionLifetimeMillis, nowNanos)
+    val sessionRemainingMillis: Long get() = lease.remainingMillis()
     private val pool = ThreadPoolExecutor(
         4, 4, 0, TimeUnit.SECONDS, ArrayBlockingQueue(12),
         ThreadPoolExecutor.AbortPolicy()
@@ -71,9 +232,7 @@ class TransferHttpEngine(
             while (alive) {
                 try {
                     val client = server.accept()
-                    if (!client.inetAddress.isSiteLocalAddress &&
-                        !client.inetAddress.isLinkLocalAddress &&
-                        !client.inetAddress.isLoopbackAddress) {
+                    if (!isAllowedLanPeer(client.inetAddress)) {
                         client.close()
                         continue
                     }
@@ -95,6 +254,7 @@ class TransferHttpEngine(
     }
 
     override fun close() {
+        lease.revoke()
         alive = false
         runCatching { listener?.close() }
         listener = null
@@ -109,25 +269,32 @@ class TransferHttpEngine(
     private fun handle(client: Socket) {
         try {
             client.use { socket ->
-                socket.soTimeout = 90_000
                 val out = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
                 try {
                     val input = BufferedInputStream(socket.getInputStream(), 64 * 1024)
-                    val line = readLine(input, 4096) ?: return
+                    // One absolute deadline covers the request line AND every header.
+                    // SO_TIMEOUT alone is per read and can be defeated by a slowloris
+                    // sending one byte just before each timeout.
+                    val headerDeadlineNanos = System.nanoTime() +
+                        TimeUnit.MILLISECONDS.toNanos(headerTimeoutMillis.toLong())
+                    val line = readLine(input, 4096, socket, headerDeadlineNanos) ?: return
                     val parts = line.split(' ')
                     if (parts.size != 3 || parts[2] != "HTTP/1.1") return fail(out, 400, "Invalid request")
                     val method = parts[0]
                     val path = parts[1].substringBefore('?')
                     val query = parts[1].substringAfter('?', "")
-                    val headers = readHeaders(input)
+                    val headers = readHeaders(input, socket, headerDeadlineNanos)
+                    socket.soTimeout = bodyTimeoutMillis
                     if (path != prefix && !path.startsWith("$prefix/")) return fail(out, 404, "Not found")
+                    if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
                     when {
                         method == "GET" && (path == prefix || path == "$prefix/") -> html(out)
                         method == "GET" && path == "$prefix/list" -> list(out)
                         method == "GET" && path == "$prefix/browse" -> browse(out, query)
                         method == "GET" && path.startsWith("$prefix/browse-file/") -> download(out, path.removePrefix("$prefix/browse-file/"), headers["range"], folderMode = true)
+                        method == "GET" && path.startsWith("$prefix/browse-archive/") -> downloadArchive(out, path.removePrefix("$prefix/browse-archive/"))
                         method == "GET" && path.startsWith("$prefix/file/") -> download(out, path.removePrefix("$prefix/file/"), headers["range"])
-                        method == "POST" && path == "$prefix/upload" -> upload(input, out, headers)
+                        method == "POST" && path == "$prefix/upload" -> upload(input, out, headers, socket)
                         else -> fail(out, 405, "Unsupported route")
                     }
                 } catch (_: Exception) {
@@ -142,9 +309,22 @@ class TransferHttpEngine(
         }
     }
 
-    private fun readLine(input: InputStream, max: Int): String? {
+    private fun readLine(
+        input: InputStream,
+        max: Int,
+        socket: Socket? = null,
+        deadlineNanos: Long? = null
+    ): String? {
         val bytes = java.io.ByteArrayOutputStream()
         while (true) {
+            if (socket != null && deadlineNanos != null) {
+                val remainingNanos = deadlineNanos - System.nanoTime()
+                if (remainingNanos <= 0L) {
+                    throw java.net.SocketTimeoutException("Request header deadline exceeded")
+                }
+                val remainingMillis = maxOf(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos))
+                socket.soTimeout = minOf(remainingMillis, Int.MAX_VALUE.toLong()).toInt()
+            }
             val c = input.read()
             if (c < 0) return if (bytes.size() == 0) null else throw IllegalArgumentException("Truncated headers")
             if (c == 10) {
@@ -155,11 +335,12 @@ class TransferHttpEngine(
             bytes.write(c)
         }
     }
-    private fun readHeaders(input: InputStream): Map<String, String> {
+    private fun readHeaders(input: InputStream, socket: Socket, deadlineNanos: Long): Map<String, String> {
         val headers = mutableMapOf<String, String>()
         var used = 0
         while (true) {
-            val line = readLine(input, 4096) ?: throw IllegalArgumentException("Missing header terminator")
+            val line = readLine(input, 4096, socket, deadlineNanos)
+                ?: throw IllegalArgumentException("Missing header terminator")
             used += line.length
             require(used < 32_768) { "Headers too long" }
             if (line.isEmpty()) return headers
@@ -178,7 +359,7 @@ class TransferHttpEngine(
     )
 
     private fun head(out: OutputStream, status: Int, type: String, length: Long?, extra: Map<String,String> = emptyMap()) {
-        val reasons = mapOf(200 to "OK", 201 to "Created", 206 to "Partial Content", 400 to "Bad Request", 403 to "Forbidden", 404 to "Not Found", 405 to "Method Not Allowed", 409 to "Conflict", 413 to "Content Too Large", 416 to "Range Not Satisfiable", 422 to "Unprocessable Content", 500 to "Server Error")
+        val reasons = mapOf(200 to "OK", 201 to "Created", 206 to "Partial Content", 400 to "Bad Request", 403 to "Forbidden", 404 to "Not Found", 405 to "Method Not Allowed", 409 to "Conflict", 410 to "Gone", 413 to "Content Too Large", 416 to "Range Not Satisfiable", 422 to "Unprocessable Content", 500 to "Server Error")
         val sb = StringBuilder("HTTP/1.1 $status ${reasons[status] ?: "Error"}\r\n")
         val headers = commonHeaders() + extra + mapOf("Content-Type" to type, "Connection" to "close") +
             if (length == null) mapOf("Transfer-Encoding" to "chunked") else mapOf("Content-Length" to length.toString())
@@ -222,6 +403,58 @@ class TransferHttpEngine(
         response(out, 200, """{"entries":[$content],"nextOffset":$next,"enabled":true}""", "application/json; charset=utf-8")
     }
 
+    /** Fail closed if a transfer outlives the share token that authorized it. */
+    private fun ensureLeaseActiveForStreaming() {
+        if (!lease.isValid()) throw IOException("Sharing session expired during transfer")
+    }
+
+    /** Stream the authorized folder tree as ZIP without staging a copy on Android. */
+    private fun downloadArchive(out: OutputStream, id: String) {
+        val store = storage as? DirectoryShareStorage ?: return fail(out, 404, "Folder sharing unavailable")
+        if (!store.hasSharedDirectory() || (id != "root" && !id.matches(Regex("[a-fA-F0-9-]{36}")))) {
+            return fail(out, 404, "Folder not shared")
+        }
+        val provider = object : ArchiveDirectorySource {
+            override fun list(folderId: String, offset: Int, limit: Int): ArchivePage {
+                val page = store.browseDirectory(folderId, offset, limit)
+                return ArchivePage(page.entries.map { ArchiveFile(it.id, it.name, it.directory) }, page.nextOffset)
+            }
+            override fun open(fileId: String): InputStream? = store.openDirectoryItem(fileId)?.stream
+        }
+        val name = if (id == "root") "NetKit-shared-storage.zip" else "NetKit-folder.zip"
+        val encoded = URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+        if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
+        head(out, 200, "application/zip", null,
+            mapOf("Content-Disposition" to "attachment; filename*=UTF-8''$encoded"))
+        val framed = object : OutputStream() {
+            private var finished = false
+            override fun write(byte: Int) = write(byteArrayOf(byte.toByte()), 0, 1)
+            override fun write(bytes: ByteArray, offset: Int, count: Int) {
+                if (count <= 0) return
+                ensureLeaseActiveForStreaming()
+                check(!finished)
+                out.write((count.toString(16) + "\r\n").toByteArray(StandardCharsets.US_ASCII))
+                out.write(bytes, offset, count)
+                out.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
+            }
+            // ZipOutputStream.close() must not signal a successful HTTP response
+            // if exporting a file fails halfway through. Only finishResponse() does.
+            override fun close() = Unit
+            fun finishResponse() {
+                if (!finished) {
+                    ensureLeaseActiveForStreaming()
+                    finished = true
+                    out.write("0\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
+                }
+            }
+        }
+        ZipOutputStream(framed).use { zip ->
+            zip.setLevel(Deflater.BEST_SPEED)
+            DirectoryArchive.write(id, provider, zip, checkActive = { ensureLeaseActiveForStreaming() })
+        }
+        framed.finishResponse()
+    }
+
     /** Single RFC 7233 byte ranges enable clients to resume DOWNLOADS.
      *  Android SAF streams can be non-seekable: we discard bytes to reach the requested offset.
      *  Unknown-length streams ignore Range and continue chunked, which HTTP allows.
@@ -237,9 +470,11 @@ class TransferHttpEngine(
         val source = (if (folderMode) directory?.openDirectoryItem(id) else storage.open(id))
             ?: return fail(out, 404, "File unavailable")
         source.stream.use { input ->
+            if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
             val total = source.length?.takeIf { it >= 0L }
             val filename = URLEncoder.encode(item.name, "UTF-8").replace("+", "%20")
             val extra = mapOf("Content-Disposition" to "attachment; filename*=UTF-8''$filename")
+            if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
             if (total != null) {
                 val range = if (rangeHeader != null) parseSingleRange(rangeHeader, total) else null
                 if (rangeHeader != null && range == null) {
@@ -251,6 +486,7 @@ class TransferHttpEngine(
                 val last = range?.last ?: (total - 1L)
                 // Don't advertise successful partial content before we can actually skip to it.
                 if (first > 0L && !discardExactly(input, first)) return fail(out, 500, "File became shorter")
+                if (!lease.isValid()) return fail(out, 410, "Sharing session expired")
                 val count = if (range != null) last - first + 1 else total
                 val rangeHeaders = if (range != null)
                     mapOf("Content-Range" to "bytes $first-$last/$total", "Accept-Ranges" to "bytes")
@@ -259,8 +495,10 @@ class TransferHttpEngine(
                 var remaining = count
                 val buffer = ByteArray(64 * 1024)
                 while (remaining > 0L) {
-                    val n = input.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                    ensureLeaseActiveForStreaming()
+                    val n = StreamReadGuard.read(input, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
                     if (n < 0) break // Client detects a truncated Content-Length.
+                    ensureLeaseActiveForStreaming()
                     if (n == 0) continue
                     out.write(buffer, 0, n)
                     remaining -= n
@@ -269,12 +507,15 @@ class TransferHttpEngine(
                 head(out, 200, "application/octet-stream", null, extra)
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
-                    val n = input.read(buffer)
+                    ensureLeaseActiveForStreaming()
+                    val n = StreamReadGuard.read(input, buffer, 0, buffer.size)
                     if (n < 0) break
+                    ensureLeaseActiveForStreaming()
                     if (n == 0) continue
                     out.write("${n.toString(16)}\r\n".toByteArray(StandardCharsets.US_ASCII))
                     out.write(buffer, 0, n); out.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
                 }
+                ensureLeaseActiveForStreaming()
                 out.write("0\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
             }
         }
@@ -306,14 +547,14 @@ class TransferHttpEngine(
         while (remaining > 0L) {
             val skipped = stream.skip(remaining)
             if (skipped > 0) { remaining -= skipped; continue }
-            val n = stream.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+            val n = StreamReadGuard.read(stream, buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
             if (n < 0) return false
             if (n > 0) remaining -= n
         }
         return true
     }
 
-    private fun upload(input: InputStream, out: OutputStream, h: Map<String,String>) {
+    private fun upload(input: InputStream, out: OutputStream, h: Map<String,String>, socket: java.net.Socket) {
         if (!storage.canUpload()) return fail(out, 409, "Choose upload folder on Android first")
         if (h["transfer-encoding"] != null) return fail(out, 400, "Chunked uploads not supported")
         val length = h["content-length"]?.toLongOrNull() ?: return fail(out, 400, "Content-Length required")
@@ -326,16 +567,49 @@ class TransferHttpEngine(
         if (expectedSha256 != null && !expectedSha256.matches(Regex("[0-9a-fA-F]{64}"))) {
             return fail(out, 400, "Invalid SHA-256")
         }
+        val ensureSessionValid: () -> Unit = {
+            if (!lease.isValid()) throw UploadSessionExpiredException()
+        }
+        val guardedBody = LeaseBoundUploadInputStream(input, socket, bodyTimeoutMillis, lease)
         try {
-            val stored = storage.upload(name, input, length, expectedSha256) { current -> progress(current, length) }
+            val stored = storage.uploadGuarded(name, guardedBody, length, expectedSha256, ensureSessionValid) { current ->
+                ensureSessionValid()
+                progress(current, length)
+            }
+            ensureSessionValid()
             response(out, 201, "Saved: $stored")
+        } catch (_: UploadSessionExpiredException) {
+            fail(out, 410, "Sharing session expired during upload")
+        } catch (timeout: java.net.SocketTimeoutException) {
+            if (!lease.isValid()) fail(out, 410, "Sharing session expired during upload")
+            else fail(out, 408, "Upload body timed out")
         } catch (_: UploadHashMismatchException) {
             fail(out, 422, "Upload SHA-256 mismatch. File was not committed")
         } catch (_: Exception) { fail(out, 500, "Could not save upload") }
     }
-    private fun validName(v: String): Boolean = v.isNotBlank() && v.length <= 180 &&
-        v != "." && v != ".." && !v.contains('/') && !v.contains('\\') &&
-        v.none { it.code < 32 || it.code == 127 } && !v.startsWith(".netkit-")
+    private fun validName(v: String): Boolean {
+        if (v.isBlank() || v.length > 180 || v == "." || v == ".." ||
+            v.endsWith(".") || v.endsWith(" ") ||
+            v.contains('/') || v.contains('\\') ||
+            v.any { it in "<>:\"|?*" } ||
+            v.startsWith(".netkit-", ignoreCase = true) ||
+            Regex("""^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$""",
+                RegexOption.IGNORE_CASE).containsMatchIn(v)) return false
+
+        // Reject terminal/control and invisible directional spoofing characters,
+        // while retaining ordinary Arabic, emoji, and other valid Unicode names.
+        var offset = 0
+        while (offset < v.length) {
+            val cp = Character.codePointAt(v, offset)
+            if (cp < 0x20 || cp in 0x7f..0x9f || cp == 0xfffd ||
+                cp == 0x00ad || cp == 0x034f || cp == 0x061c || cp == 0x180e ||
+                cp in 0x200b..0x200f || cp in 0x2028..0x202e ||
+                cp in 0x2060..0x206f || cp == 0xfeff ||
+                cp in 0xfff9..0xfffb || cp in 0xe0000..0xe007f) return false
+            offset += Character.charCount(cp)
+        }
+        return true
+    }
 
     private fun html(out: OutputStream) = response(out, 200, """
         <!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8" />
@@ -424,6 +698,7 @@ class TransferHttpEngine(
             if(entry.directory) {
               const b=document.createElement('button');b.className='secondary';
               b.textContent='📁 '+entry.name;b.onclick=()=>folderLink(entry.id);li.append(b);
+              const zip=document.createElement('a');zip.href=base+'/browse-archive/'+encodeURIComponent(entry.id);zip.textContent=' ⬇ ZIP';zip.style.marginInlineStart='14px';li.append(zip);
             } else {
               const a=document.createElement('a');a.textContent='📄 '+entry.name+' · '+(entry.length==null?'حجم غير معروف':humanBytes(entry.length));
               a.href=base+'/browse-file/'+encodeURIComponent(entry.id);li.append(a);
