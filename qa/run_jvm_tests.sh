@@ -108,3 +108,8 @@ java -jar "$TEMP_DIR/nsd-advertisement-epoch.jar"
 # Android NSD discovery owns a short-lived multicast lock; test its lease lifecycle without a device.
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/MulticastLockLease.kt" "$ROOT/qa/MulticastLockLeaseTest.kt" -include-runtime -d "$TEMP_DIR/multicast-lock.jar"
 java -jar "$TEMP_DIR/multicast-lock.jar"
+
+# Peer discovery lifecycle: duplicate DNS-SD events and stale callbacks must not revive stopped scans.
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/PeerDiscoveryRegistry.kt" \
+  "$ROOT/qa/PeerDiscoveryRegistryTest.kt" -include-runtime -d "$TEMP_DIR/peer-discovery-registry.jar"
+java -jar "$TEMP_DIR/peer-discovery-registry.jar"
