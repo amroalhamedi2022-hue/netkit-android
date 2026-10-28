@@ -89,17 +89,24 @@ class AndroidShareStorage(private val context: Context) : ShareStorage, Director
             }
             uploadTree = uri
         } catch (failure: Throwable) {
-            // Roll back only flags newly granted by this selection attempt.
-            // Keep pre-existing read/write permission bits intact.
-            val currentGrant = persistedGrantFlags(uri)
-            if (currentGrant != null) {
+            // Roll back only flags acquired by this attempt. A provider/API failure
+            // during rollback must be visible and must retain the original failure.
+            FailedUploadGrantRollback.onFailure(failure) {
+                val currentGrant = persistedGrantFlags(uri)
+                    ?: throw IOException("Could not inspect persisted SAF grants during rollback")
                 val added = UploadDestinationPolicy.newlyGranted(previousGrant, currentGrant)
                 val releaseFlags =
                     (if (added.read) Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
                     (if (added.write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
                 if (releaseFlags != 0) {
-                    runCatching {
-                        context.contentResolver.releasePersistableUriPermission(uri, releaseFlags)
+                    context.contentResolver.releasePersistableUriPermission(uri, releaseFlags)
+                    val after = persistedGrantFlags(uri)
+                        ?: throw IOException("Could not verify persisted SAF grants after rollback")
+                    check(!added.read || !after.read) {
+                        "Newly acquired SAF read grant remains after rollback"
+                    }
+                    check(!added.write || !after.write) {
+                        "Newly acquired SAF write grant remains after rollback"
                     }
                 }
             }

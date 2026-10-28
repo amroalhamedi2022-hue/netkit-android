@@ -32,6 +32,10 @@ kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/UploadDestinationPolicy.
   "$ROOT/qa/UploadDestinationPolicyTest.kt" -include-runtime -d "$TEMP_DIR/upload-destination.jar"
 java -jar "$TEMP_DIR/upload-destination.jar"
 
+kotlinc "$ROOT/app/src/main/java/com/netkit/local/share/FailedUploadGrantRollback.kt" \
+  "$ROOT/qa/FailedUploadGrantRollbackTest.kt" -include-runtime -d "$TEMP_DIR/upload-grant-rollback.jar"
+java -jar "$TEMP_DIR/upload-grant-rollback.jar"
+
 # NSD callback generation gate is pure Kotlin so stale-result lifecycle can be tested without an emulator.
 kotlinc "$ROOT/app/src/main/java/com/netkit/local/connectivity/DiscoveryEpoch.kt" \
   "$ROOT/qa/DiscoveryEpochTest.kt" -include-runtime -d "$TEMP_DIR/discovery-epoch.jar"
