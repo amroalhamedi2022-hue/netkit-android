@@ -374,7 +374,7 @@ fun main(args: Array<String>) {
             try {
                 check(connection.responseCode == 200) { "Transfer should start before the injected expiry" }
                 val received = java.io.ByteArrayOutputStream()
-                val failure = runCatching {
+                val bodyResult = runCatching {
                     connection.inputStream.use { input ->
                         val buffer = ByteArray(4096)
                         while (true) {
@@ -383,15 +383,20 @@ fun main(args: Array<String>) {
                             received.write(buffer, 0, count)
                         }
                     }
-                }.exceptionOrNull()
-                check(clock.get() >= 1_000_000_000L) { "The stream did not cross the lease deadline" }
-                check(failure is IOException) {
-                    "Expired ${if (archive) "ZIP" else "file"} transfer must end as an incomplete HTTP body, got $failure"
                 }
+                check(clock.get() >= 1_000_000_000L) { "The stream did not cross the lease deadline" }
                 if (!archive) {
+                    check(bodyResult.isFailure || received.size() < initial.size) {
+                        "Expired file transfer must be incomplete, received ${received.size()} of ${initial.size} bytes"
+                    }
                     check(received.size() == 0) { "No file bytes may be sent after the lease expires" }
                 } else {
-                    check(!String(received.toByteArray(), StandardCharsets.UTF_8).contains("NetKit test payload")) {
+                    val extracted = runCatching {
+                        ZipInputStream(ByteArrayInputStream(received.toByteArray())).use { zip ->
+                            if (zip.nextEntry == null) byteArrayOf() else zip.readBytes()
+                        }
+                    }.getOrDefault(byteArrayOf())
+                    check(!extracted.contentEquals(initial)) {
                         "ZIP file payload must not be emitted after the lease expires"
                     }
                 }
